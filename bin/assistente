@@ -20,6 +20,18 @@ NET_CIDR="10.77.0.1/24"
 
 die() { echo "assistente: $*" >&2; exit 1; }
 
+# Quem acabou de entrar no grupo incus-admin só o ganha na sessão depois de logout/login; até
+# lá o socket do incus nega acesso. Nesse caso roda de novo via sg.
+INCUS_SOCK="/var/lib/incus/unix.socket"
+if command -v incus >/dev/null && [ -S "$INCUS_SOCK" ] && [ ! -w "$INCUS_SOCK" ]; then
+  [[ " $(id -nG "$USER") " == *" incus-admin "* ]] \
+    || die "sem permissão no incus: sudo usermod -aG incus-admin $USER e faça logout/login"
+  [ -z "${ASSISTENTE_SG:-}" ] || die "sem permissão no incus mesmo via sg incus-admin"
+  echo "assistente: sessão sem o grupo incus-admin (falta logout/login); rodando via sg por agora" >&2
+  export ASSISTENTE_SG=1
+  exec sg incus-admin -c "$(printf '%q ' "$0" "$@")"
+fi
+
 # Lê uma chave da config: cfg vm.name
 cfg() {
   [ -f "$CONF" ] || die "sem $CONF (rode ./instalar.sh)"

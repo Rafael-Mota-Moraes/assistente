@@ -6,7 +6,20 @@ set -euo pipefail
 
 USER_NAME="${1:?uso: provisionar.sh <usuario>}"
 HOME_DIR="/home/$USER_NAME"
+USER_UID="$(id -u "$USER_NAME")"
 as_user() { sudo -u "$USER_NAME" -H bash -lc "$1"; }
+# systemctl --user a partir de root (incus exec) não tem bus de sessão; linger + user@ + env.
+user_systemctl() {
+  loginctl enable-linger "$USER_NAME" 2>/dev/null || true
+  local runtime="/run/user/$USER_UID"
+  if [ ! -S "$runtime/bus" ]; then
+    systemctl start "user@${USER_UID}.service"
+  fi
+  sudo -u "$USER_NAME" -H \
+    XDG_RUNTIME_DIR="$runtime" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+    systemctl --user "$@"
+}
 
 AI_JAIL_VERSION="2.10.0"
 AI_JAIL_URL="https://github.com/akitaonrails/ai-jail/releases/download/v${AI_JAIL_VERSION}/ai-jail-linux-x86_64.tar.gz"
@@ -80,22 +93,55 @@ else
 fi
 
 echo "==> ai-memory (servidor local, F5.0)"
-loginctl enable-linger "$USER_NAME" 2>/dev/null || true
-read -r MIRROR PORT <<< "$(python3 - "$HOME_DIR" <<'PY'
+read -r MIRROR DATA PORT <<< "$(python3 - "$HOME_DIR" <<'PY'
 import os, sys, tomllib
 home = sys.argv[1]
 cfg = tomllib.load(open(os.path.join(home, ".config/assistente/assistente.toml"), "rb"))
 mem = cfg["memory"]
-print(os.path.expanduser(mem["mirror_dir"]), mem.get("port", 49374))
+
+def expand(path: str) -> str:
+    if path.startswith("~/"):
+        return os.path.join(home, path[2:])
+    if path == "~":
+        return home
+    return path
+
+mirror = expand(mem["mirror_dir"])
+data = expand(mem.get("data_dir", "~/.local/share/assistente/ai-memory"))
+print(mirror, data, mem.get("port", 49374))
 PY
 )"
-install -d -o "$USER_NAME" -g "$USER_NAME" "$MIRROR"
-as_user "test -f '$MIRROR/config.toml' || AI_MEMORY_DATA_DIR='$MIRROR' ai-memory init --data-dir '$MIRROR'"
+install -d -o "$USER_NAME" -g "$USER_NAME" "$MIRROR/wiki" "$DATA"
+# Wiki no espelho virtiofs; SQLite em disco local. Symlink é recusado pelo ai-memory.
+if mountpoint -q "$DATA/wiki"; then
+  umount "$DATA/wiki"
+fi
+as_user "rm -rf '$DATA/wiki'"
+install -d -o "$USER_NAME" -g "$USER_NAME" "$DATA/wiki"
+WIKI_UNIT="$(systemd-escape -p --suffix=mount "$DATA/wiki")"
+rm -f /etc/systemd/system/assistente-ai-memory-wiki.mount
+cat > "/etc/systemd/system/$WIKI_UNIT" <<EOF
+[Unit]
+Description=ai-memory wiki (espelho do host via bind)
+
+[Mount]
+What=$MIRROR/wiki
+Where=$DATA/wiki
+Type=none
+Options=bind
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now "$WIKI_UNIT"
+as_user "test -f '$DATA/config.toml' || AI_MEMORY_DATA_DIR='$DATA' ai-memory init --data-dir '$DATA'"
 install -d -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR/.config/systemd/user"
-sed -e "s|@HOME@|$HOME_DIR|g" -e "s|@MIRROR@|$MIRROR|g" -e "s/@PORT@/$PORT/g" \
+sed -e "s|@HOME@|$HOME_DIR|g" -e "s|@DATA_DIR@|$DATA|g" -e "s/@PORT@/$PORT/g" \
   /tmp/assistente/ai-memory.service > "$HOME_DIR/.config/systemd/user/ai-memory.service"
 chown "$USER_NAME:" "$HOME_DIR/.config/systemd/user/ai-memory.service"
-as_user "systemctl --user daemon-reload && systemctl --user enable --now ai-memory.service"
+user_systemctl daemon-reload
+user_systemctl enable --now ai-memory.service
 # Hooks/MCP por perfil: bin/assistente agentes configurar
 
 echo "==> pastas por perfil"

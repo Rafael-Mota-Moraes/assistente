@@ -49,11 +49,19 @@ pub struct NotebookConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryConfig {
+    /// Wiki git no host (virtiofs rw na VM). Spec 06.
     pub mirror_dir: PathBuf,
     pub mirror_every_minutes: u32,
+    /// SQLite, modelos e spool: disco local da VM (virtiofs quebra WAL/shm do SQLite).
+    #[serde(default = "default_memory_data_dir")]
+    pub data_dir: PathBuf,
     /// Porta HTTP do servidor local na VM (F5.0).
     #[serde(default = "default_memory_port")]
     pub port: u16,
+}
+
+fn default_memory_data_dir() -> PathBuf {
+    PathBuf::from("~/.local/share/assistente/ai-memory")
 }
 
 fn default_memory_port() -> u16 {
@@ -127,6 +135,7 @@ impl Config {
     fn expand_paths(&mut self, home: &Path) {
         self.hub.token_file = expand_home(&self.hub.token_file, home);
         self.memory.mirror_dir = expand_home(&self.memory.mirror_dir, home);
+        self.memory.data_dir = expand_home(&self.memory.data_dir, home);
         for profile in self.profiles.values_mut() {
             profile.root = expand_home(&profile.root, home);
             profile.ssh_key = profile.ssh_key.as_deref().map(|p| expand_home(p, home));

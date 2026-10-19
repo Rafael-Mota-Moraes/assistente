@@ -1,6 +1,6 @@
 # 03 — Interface
 
-Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F6.6.
+Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6.
 
 ## Tecnologia
 
@@ -58,6 +58,7 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
 | VM parada / não criada | Ponto amarelo/vermelho + botão ligar (F1.5) |
 | hubd fora do ar | Área central "Sem conexão com o hubd" com o erro e como resolver |
 | Notebook/túnel caído | 9router vermelho; memória local verde após F5.0 (hoje ai-memory pode vermelho se ainda via túnel) |
+| Memória (F5.6) | Clique no ponto **ai-memory** abre painel: paths (`data_dir` / `mirror_dir`), erro do probe, último commit do wiki, sync (F5.4), link para web UI |
 | Modo dormir ativo | Botão vira "Dormindo… (tarefa N, log)" com parar; de manhã, modal "Bom dia" (F6.6) |
 
 ## Atalhos (F2.4)

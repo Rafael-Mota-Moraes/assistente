@@ -2,11 +2,12 @@
 [Unit]
 Description=ai-memory (servidor local do Assistente)
 After=network-online.target
+RequiresMountsFor=@DATA_DIR@/wiki
 Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=AI_MEMORY_DATA_DIR=@MIRROR@
+Environment=AI_MEMORY_DATA_DIR=@DATA_DIR@
 ExecStart=@HOME@/.local/bin/ai-memory serve --transport http --bind 127.0.0.1:@PORT@ --enable-api --enable-web
 Restart=on-failure
 RestartSec=3

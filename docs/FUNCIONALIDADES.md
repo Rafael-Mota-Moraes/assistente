@@ -75,6 +75,8 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: dormir usa réplica atualizada; backup inclui wiki completo. Como testar: `git -C <espelho> log` + ensaio dormir.
 - [ ] **F5.5 Painel de memória.** Web UI do ai-memory embutida apontando para o servidor **local** (VM); depois busca nativa.
   Pronto quando: ver páginas do projeto sem sair do app. Como testar: manual.
+- [ ] **F5.6 Acompanhar memória (operacional).** Além do ponto na barra: painel ou drawer na UI (ex.: clique em **ai-memory**) e `GET /api/memory` enriquecido — `data_dir`, `mirror_dir`, saúde, `last_error`, versão do servidor, último commit do wiki (`git log -1` em `mirror_dir/wiki`), estado do sync (F5.4 quando existir), atalho para web UI local (proxy ou embed mínimo). Opcional: `bin/assistente memoria status` no host via hubd.
+  Pronto quando: dá para ver por que está vermelho, onde ficam wiki/SQLite e o que mudou no wiki sem SSH na VM. Como testar: parar `ai-memory`, abrir o painel e conferir erro + paths; subir de novo e ver verde com commit recente.
 
 ## F6 — Modo hora de dormir
 

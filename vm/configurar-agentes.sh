@@ -55,12 +55,20 @@ mv "$OC.novo" "$OC"
 rm -f "$OC".bak-*
 
 echo "==> token do ai-memory (servidor local na VM)"
-MIRROR="$(python3 - "$CONF" <<'PY'
-import sys, tomllib, os
-print(os.path.expanduser(tomllib.load(open(sys.argv[1], "rb"))["memory"]["mirror_dir"]))
+DATA_DIR="$(python3 - "$CONF" "$HOME" <<'PY'
+import os, sys, tomllib
+cfg = tomllib.load(open(sys.argv[1], "rb"))
+home = sys.argv[2]
+mem = cfg["memory"]
+data = mem.get("data_dir", "~/.local/share/assistente/ai-memory")
+if data.startswith("~/"):
+    data = os.path.join(home, data[2:])
+elif data == "~":
+    data = home
+print(data)
 PY
 )"
-TOKEN_SRC="$MIRROR/auth-tokens/default"
+TOKEN_SRC="$DATA_DIR/auth-tokens/default"
 [ -f "$TOKEN_SRC" ] || {
   echo "sem token em $TOKEN_SRC — rode bin/assistente vm provisionar (ai-memory init)" >&2
   exit 1

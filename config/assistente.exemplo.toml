@@ -33,8 +33,10 @@ workdir = "~/assistente"
 "9router" = 20128
 
 [memory]
-# Wiki git **principal** do ai-memory (host, montado rw na VM). Servidor na VM (F5.0).
+# Wiki git no host (virtiofs rw na VM). Backup e fonte da verdade do Markdown (spec 06).
 mirror_dir = "~/.local/share/assistente/memoria-copia"
+# SQLite e modelos: disco local da VM — não coloque no espelho virtiofs.
+data_dir = "~/.local/share/assistente/ai-memory"
 mirror_every_minutes = 60
 port = 49374
 

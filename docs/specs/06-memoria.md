@@ -15,8 +15,10 @@ token, workspaces e embeddings locais (all-MiniLM-L6-v2, sem GPU). Porta padrão
 **Fonte da verdade no PC principal** (host + VM), não no notebook.
 
 ```
-host PC:   memory.mirror_dir  ← wiki git principal (montado rw na VM)
-VM:        ai-memory serve  127.0.0.1:49374   ← servidor principal (F5.0)
+host PC:   memory.mirror_dir/wiki  ← wiki git (virtiofs rw na VM)
+VM:        memory.data_dir  ← SQLite/modelos (disco local; virtiofs quebra WAL/shm)
+           data_dir/wiki bind → mirror_dir/wiki (systemd assistente-ai-memory-wiki.mount)
+           ai-memory serve  127.0.0.1:49374   ← servidor principal (F5.0)
            claude/opencode → 127.0.0.1:49374  (local, sem túnel)
 notebook:  réplica do wiki + ai-memory opcional só para o modo dormir (F5.4 / F6)
            9router :20128 (túnel → VM, spec 07)
@@ -96,4 +98,5 @@ hooks/MCP por perfil, `.ai-memory.toml` na raiz. Prova end-to-end com túnel ao 
 - F5.0: systemd do ai-memory na VM, wiki em `mirror_dir`, token local, retirar `:49374` do túnel.
 - F5.4: sync git do wiki PC ↔ notebook (não “fetch do notebook como principal”).
 - F5.5: painel / web UI apontando para o servidor **local**.
+- F5.6: visão operacional (paths, wiki git, erros, sync) — spec 03.
 - Spool offline: detalhes na doc upstream do ai-memory 3.x.

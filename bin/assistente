@@ -76,14 +76,19 @@ vm_criar() {
   vm_provisionar
 }
 
-# Espera o incus-agent da VM responder (logo após o start ele ainda não subiu).
+# Liga a VM se estiver parada e espera o incus-agent responder (logo após o start ele ainda
+# não subiu).
 vm_esperar_agente() {
-  local name="$1" i
+  local name="$1" i err=""
+  if [ "$(incus list "^$name\$" -c s -f csv)" = "STOPPED" ]; then
+    echo "VM $name parada; ligando..."
+    incus start "$name"
+  fi
   for i in $(seq 1 90); do
-    incus exec "$name" -- true >/dev/null 2>&1 && return 0
+    err="$(incus exec "$name" -- true 2>&1)" && return 0
     sleep 2
   done
-  die "o agente da VM $name não respondeu em 3 min"
+  die "o agente da VM $name não respondeu em 3 min${err:+: $err}"
 }
 
 # Reexecutável: compila o hubd e roda vm/provisionar.sh na VM já criada.

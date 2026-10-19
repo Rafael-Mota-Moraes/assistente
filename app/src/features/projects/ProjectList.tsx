@@ -4,7 +4,7 @@ import { openInCursor } from "../../bridge/host";
 import { useAppStore } from "../../store";
 
 export function ProjectList() {
-  const { hub, activeProfile, projects, activeProject, health } = useAppStore();
+  const { hub, activeProfile, projects, activeProject, health, sessions } = useAppStore();
 
   useEffect(() => {
     if (!hub || !activeProfile || !health) return;
@@ -41,6 +41,12 @@ export function ProjectList() {
             >
               <FolderGit2 className="size-4 shrink-0 text-slate-500" />
               <span className="truncate">{project.name}</span>
+              <SessionCount
+                count={
+                  sessions.filter((s) => s.profile === activeProfile && s.project === project.name)
+                    .length
+                }
+              />
               {project.has_project_config && (
                 <Moon
                   className="ml-auto size-3.5 text-violet-400"
@@ -60,5 +66,17 @@ export function ProjectList() {
         );
       })}
     </ul>
+  );
+}
+
+function SessionCount({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <span
+      className="rounded-full bg-emerald-500/20 px-1.5 text-[10px] font-semibold text-emerald-300"
+      title={`${count} sessão(ões) aberta(s)`}
+    >
+      {count}
+    </span>
   );
 }

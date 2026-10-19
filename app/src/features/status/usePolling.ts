@@ -20,13 +20,18 @@ export function usePolling() {
           set({ hub });
         }
         const [health, vm] = await Promise.all([hub.health(), vmStatus()]);
-        const [notebook, profiles] = await Promise.all([hub.notebook(), hub.profiles()]);
+        const [notebook, profiles, sessions] = await Promise.all([
+          hub.notebook(),
+          hub.profiles(),
+          hub.sessions(),
+        ]);
         const { activeProfile } = useAppStore.getState();
         set({
           health,
           vm,
           notebook,
           profiles,
+          sessions,
           hubError: null,
           activeProfile: activeProfile ?? profiles[0]?.id ?? null,
         });

@@ -28,4 +28,27 @@ describe("HubClient", () => {
     await new HubClient({ url: "", token: null }, fetchFn).projects("a b");
     expect(fetchFn.mock.calls[0]?.[0]).toBe("/api/projects?profile=a%20b");
   });
+
+  it("cria sessão com POST JSON e encerra com DELETE (204 sem corpo)", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (_url, init) =>
+      init?.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : new Response(JSON.stringify({ id: "pessoal--x--claude-1" }), { status: 201 }),
+    );
+    const hub = new HubClient({ url: "http://vm:7878", token: "t" }, fetchFn);
+    const created = await hub.createSession({ profile: "pessoal", project: "x", agent: "claude" });
+    expect(created.id).toBe("pessoal--x--claude-1");
+    expect(fetchFn.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ profile: "pessoal", project: "x", agent: "claude" }),
+    });
+    await expect(hub.deleteSession("pessoal--x--claude-1")).resolves.toBeUndefined();
+  });
+
+  it("monta a URL do terminal em ws:// com o token na query", () => {
+    const hub = new HubClient({ url: "http://10.77.0.10:7878", token: "a b" });
+    expect(hub.terminalUrl("pessoal--x--claude-1")).toBe(
+      "ws://10.77.0.10:7878/api/sessions/pessoal--x--claude-1/terminal?token=a%20b",
+    );
+  });
 });

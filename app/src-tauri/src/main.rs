@@ -136,6 +136,8 @@ fn main() {
         // HTTP pelo lado Rust: o WebKit bloqueia fetch de tauri://localhost para http://<ip da VM>
         // (mixed content). Escopo liberado em capabilities/default.json.
         .plugin(tauri_plugin_http::init())
+        // Mesmo motivo para o WebSocket dos terminais (ws:// a partir de tauri://localhost).
+        .plugin(tauri_plugin_websocket::init())
         .invoke_handler(tauri::generate_handler![
             hub_connection,
             vm_status,

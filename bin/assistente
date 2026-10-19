@@ -7,6 +7,7 @@
 #   assistente restaurar <arquivo.tar.gz>
 #   assistente notebook instalar                copia notebook/ e roda o instalar.sh por SSH
 #   assistente agentes configurar               9router no opencode + ai-memory nos agentes da VM
+#   assistente atualizar                        hubd novo na VM + app recompilado e reinstalado
 # PARCIALMENTE TESTADO: só `token` e a leitura da config. VM = F1, notebook = F4, backup = F7.
 # Spec: docs/specs/01-vm-e-instalacao.md
 set -euo pipefail
@@ -201,7 +202,19 @@ cmd_agentes() {
   incus exec "$name" -- sudo -u "$(id -un)" -i bash /tmp/assistente/configurar-agentes.sh
 }
 
+# Depois de mudar o código: hubd na VM (as sessões tmux sobrevivem) e o app desktop.
+cmd_atualizar() {
+  echo "==> hubd na VM"
+  vm_provisionar
+  echo "==> app desktop"
+  "$ROOT/dev" just build
+  # Mesma versão (0.1.0) a cada build: sem --reinstall o apt acha que já está atualizado.
+  sudo apt-get install -y --reinstall "$ROOT"/target/release/bundle/deb/assistente_*_amd64.deb
+  echo "Atualizado. Feche e abra o Assistente."
+}
+
 case "${1:-}" in
+  atualizar) cmd_atualizar ;;
   agentes) shift; cmd_agentes "$@" ;;
   vm) shift; cmd_vm "$@" ;;
   login) shift; cmd_login "$@" ;;

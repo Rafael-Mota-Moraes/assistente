@@ -27,3 +27,16 @@ export type HubConnection = { url: string; token: string | null };
 export type VmState = "running" | "stopped" | "missing" | "no-incus" | "unknown";
 
 export type VmStatus = { state: VmState; detail: string | null };
+
+export type AgentKind = "claude" | "opencode";
+
+export type SessionInfo = {
+  id: string;
+  profile: string;
+  project: string;
+  agent: AgentKind;
+  created_at: number;
+  attached: number;
+};
+
+export type SessionSpec = { profile: string; project: string; agent: AgentKind };

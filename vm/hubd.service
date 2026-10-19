@@ -11,6 +11,9 @@ Environment=HOME=/home/@USER@
 Environment=PATH=/home/@USER@/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/bin/hubd --config /home/@USER@/.config/assistente/assistente.toml
 Restart=on-failure
+# O servidor tmux (com as sessões dos agentes) nasce como filho do hubd: só o hubd reinicia,
+# as sessões continuam (F1.4).
+KillMode=process
 RestartSec=3
 
 [Install]

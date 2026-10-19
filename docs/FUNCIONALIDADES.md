@@ -23,7 +23,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `incus exec assistente -- touch <raiz>/x` cria arquivo com seu dono no host. Como testar: o próprio comando.
 - [ ] **F1.3 Provisionamento.** `vm/provisionar.sh` com versões fixas e checksums (sem `latest`).
   Pronto quando: rodar duas vezes seguidas não falha nem reinstala nada. Como testar: `incus exec … bash provisionar.sh` duas vezes.
-- [ ] **F1.4 hubd como serviço.** systemd, logs no journal, reinício em falha.
+- [x] **F1.4 hubd como serviço.** systemd, logs no journal, reinício em falha. Validado: `KillMode=process`, sessão sobrevive a `systemctl restart hubd`.
   Pronto quando: `systemctl restart hubd` não derruba as sessões tmux. Como testar: abrir sessão, reiniciar, reconectar.
 - [ ] **F1.5 Estado da VM no app.** Botões ligar/desligar na barra de status (comando de host).
   Pronto quando: com a VM parada, o app mostra "VM parada" e liga com um clique. Como testar: `incus stop` e usar o app.
@@ -32,13 +32,13 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 - [ ] **F2.1 Perfis e projetos completos.** Cor e rótulo na UI, projetos por perfil, contagem de sessões por projeto.
   Pronto quando: trocar de perfil troca a lista sem misturar. Como testar: vitest do ProjectList + teste de rota.
-- [ ] **F2.2 Ciclo de vida das sessões.** `POST/GET/DELETE /api/sessions` com tmux; lista sobrevive a restart do hubd (lê `tmux ls`).
+- [x] **F2.2 Ciclo de vida das sessões.** `POST/GET/DELETE /api/sessions` com tmux; lista sobrevive a restart do hubd (lê `tmux ls`). Feito em `crates/hubd/src/sessions.rs` (metadados em opções `@assistente_*` do tmux).
   Pronto quando: os testes de integração com tmux real (no devenv) passam. Como testar: `./dev cargo test -p hubd`.
-- [ ] **F2.3 Terminal por WebSocket.** `/api/sessions/{id}/terminal`: `tmux attach` em PTY (`portable-pty`), resize, vários espectadores. No app, o WS passa pelo `tauri-plugin-websocket` (mixed content, ver spec 03).
+- [x] **F2.3 Terminal por WebSocket.** `/api/sessions/{id}/terminal`: `tmux attach` em PTY (`portable-pty`), resize, vários espectadores. No app, o WS passa pelo `tauri-plugin-websocket` (mixed content, ver spec 03). Feito em `crates/hubd/src/terminal.rs`; teste de ponta a ponta digita e lê de volta.
   Pronto quando: `vim` funciona com redimensionamento pela UI. Como testar: abrir sessão `bash` e redimensionar a janela.
-- [ ] **F2.4 Abas de terminal na UI.** xterm.js com addons fit e web-links, tema igual ao app, atalhos (Ctrl+Shift+T/W, Ctrl+Tab).
+- [ ] **F2.4 Abas de terminal na UI.** xterm.js com addons fit e web-links, tema igual ao app, atalhos (Ctrl+Shift+T/W, Ctrl+Tab). Feito: abas por projeto, xterm.js + fit, tema, encerrar pela aba. Falta: atalhos e web-links.
   Pronto quando: abrir, alternar e fechar abas sem perder a sessão. Como testar: vitest + uso manual.
-- [ ] **F2.5 Botões Claude / OpenCode.** Habilitar na área de sessões; nome da aba = agente + número.
+- [x] **F2.5 Botões Claude / OpenCode.** Habilitar na área de sessões; nome da aba = agente + número. Validado na VM real: opencode no ai-jail com 9router e MCP do ai-memory.
   Pronto quando: um clique abre o agente no projeto, no perfil certo. Como testar: conferir `echo $CLAUDE_CONFIG_DIR` na sessão.
 - [ ] **F2.6 Abrir no Cursor.** Já existe o comando de host; falta feedback de erro (toast).
   Pronto quando: o erro aparece na UI quando o Cursor não está instalado. Como testar: renomear o binário e clicar.

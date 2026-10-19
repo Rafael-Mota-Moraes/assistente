@@ -2,6 +2,8 @@
 //! Spec: docs/specs/02-hubd-e-sessoes.md
 
 mod api;
+mod sessions;
+mod terminal;
 mod tunnel;
 
 use anyhow::{Context, bail};
@@ -49,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let token = read_token(&config.hub.token_file, addr)?;
 
     let tunnel = (!args.no_tunnel).then(|| tunnel::spawn(config.notebook.clone()));
-    let state = api::AppState::new(config, home, token, tunnel);
+    let state = api::AppState::new(config, home, token, tunnel, sessions::Tmux::default());
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("não consegui escutar em {addr}"))?;

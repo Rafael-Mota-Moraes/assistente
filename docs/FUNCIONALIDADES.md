@@ -65,7 +65,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 - [x] **F5.1 Servidor no notebook** *(humano)*. ai-memory 3.1.1 no notebook (spec 06). ai-memory como serviço em 127.0.0.1:49374 com token; descobrir caminho do wiki e do token.
   Pronto quando: `curl` pelo túnel responde, e a spec 06 tem os caminhos reais. Como testar: `curl 127.0.0.1:49374` na VM.
-- [x] **F5.2 Clientes na VM.** `bin/assistente agentes configurar` (`vm/configurar-agentes.sh`); opencode validado de ponta a ponta no jail (Claude: falta login). `install-mcp`/`install-hooks` para claude-code e opencode em cada perfil, apontando para o túnel.
+- [x] **F5.2 Clientes na VM.** `bin/assistente agentes configurar` (`vm/configurar-agentes.sh`); opencode e Claude (assinatura, perfil pessoal) validados de ponta a ponta no jail, com o MCP do ai-memory disponível e a captura no workspace certo. `install-mcp`/`install-hooks` para claude-code e opencode em cada perfil, apontando para o túnel.
   Pronto quando: uma sessão nova recebe briefing do projeto. Como testar: abrir duas sessões seguidas e ver o contexto.
 - [x] **F5.3 Workspaces por perfil.** `.ai-memory.toml` na raiz de cada perfil (`workspace = "<memory_workspace>"`), criado por `vm/configurar-agentes.sh` e montado no jail. Validado: sessão do perfil pessoal cai no workspace `pessoal`.
   Pronto quando: notas do trabalho não aparecem no briefing pessoal. Como testar: web UI do ai-memory.

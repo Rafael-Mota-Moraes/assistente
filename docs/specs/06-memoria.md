@@ -81,7 +81,9 @@ para o modo dormir continuar do contexto do dia.
 4. **opencode global:** plugin `~/.config/opencode/plugins/ai-memory.ts` e MCP remoto.
 
 Prova: `opencode run` dentro do jail (flags do `LaunchPlan`) respondeu pelo 9router, e o
-servidor passou a listar `pessoal / rafael-mota-moraes-assistente`. Um teste antes do
+servidor passou a listar `pessoal / rafael-mota-moraes-assistente`. Depois do `assistente login
+claude pessoal`, `claude -p` no jail respondeu, viu o MCP `ai-memory` e a sessão entrou no
+mesmo projeto. O login roda na home (fora dos perfis) e cria um `default / <usuario>` vazio. Um teste antes do
 marcador montado criou `default / rafael-mota-moraes-assistente` (pode ser apagado com
 `ai-memory purge-project`).
 

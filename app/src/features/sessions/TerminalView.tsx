@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { connectTerminal } from "../../bridge/terminal";
 import { useAppStore } from "../../store";
 import {
+  clearStaleTextarea,
   clipboardShortcut,
   copyText,
   dedupeComposedInput,
@@ -45,6 +46,7 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     term.loadAddon(fit);
     term.open(host.current);
     fit.fit();
+    const releaseTextarea = term.textarea ? clearStaleTextarea(host.current, term.textarea) : null;
 
     let disposed = false;
     let connection: Awaited<ReturnType<typeof connectTerminal>> | null = null;
@@ -97,6 +99,7 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     return () => {
       disposed = true;
       observer.disconnect();
+      releaseTextarea?.();
       osc52.dispose();
       input.dispose();
       resize.dispose();

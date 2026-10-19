@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clipboardShortcut, dedupeComposedInput, osc52Text } from "./clipboard";
+import { clearStaleTextarea, clipboardShortcut, dedupeComposedInput, osc52Text } from "./clipboard";
 
 const key = (key: string, mods: KeyboardEventInit = {}) =>
   new KeyboardEvent("keydown", { key, ...mods });
@@ -51,5 +51,37 @@ describe("dedupeComposedInput", () => {
     expect(accept("a")).toBe(true);
     expect(accept("é")).toBe(true);
     expect(accept("ã")).toBe(true);
+  });
+});
+
+describe("clearStaleTextarea", () => {
+  const setup = () => {
+    const host = document.createElement("div");
+    const textarea = document.createElement("textarea");
+    host.append(textarea);
+    clearStaleTextarea(host, textarea);
+    const press = (init: KeyboardEventInit = {}) =>
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init }));
+    return { textarea, press };
+  };
+
+  it("esvazia a textarea a cada tecla fora de composição", () => {
+    const { textarea, press } = setup();
+    textarea.value = "a á ã";
+    press({ key: "b" });
+    expect(textarea.value).toBe("");
+  });
+
+  it("preserva o acento até o xterm.js ler depois do compositionend", async () => {
+    const { textarea, press } = setup();
+    textarea.dispatchEvent(new CompositionEvent("compositionstart"));
+    textarea.value = "á";
+    press({ key: "a", isComposing: true });
+    textarea.dispatchEvent(new CompositionEvent("compositionend"));
+    press({ key: " " });
+    expect(textarea.value).toBe("á");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    press({ key: " " });
+    expect(textarea.value).toBe("");
   });
 });

@@ -39,6 +39,36 @@ export function osc52Text(data: string): string | null {
 }
 
 /**
+ * O xterm.js só esvazia a textarea escondida no Enter e no Ctrl+C. No WebKitGTK as teclas se
+ * acumulam nela, e no fim de cada acento o xterm.js manda a textarea a partir de uma posição velha:
+ * `a á ã` chegava como `a á  á ã`. Esvazia a textarea a cada tecla fora de composição, antes do
+ * xterm.js ler (captura no `host`), e espera ele ler o acento composto (o `setTimeout` do
+ * `compositionend`). Chamar depois do `term.open`, para os ouvintes do xterm.js virem antes.
+ */
+export function clearStaleTextarea(host: HTMLElement, textarea: HTMLTextAreaElement) {
+  let composing = false;
+  const onStart = () => {
+    composing = true;
+  };
+  const onEnd = () => {
+    setTimeout(() => {
+      composing = false;
+    }, 0);
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!composing && !event.isComposing && event.target === textarea) textarea.value = "";
+  };
+  textarea.addEventListener("compositionstart", onStart);
+  textarea.addEventListener("compositionend", onEnd);
+  host.addEventListener("keydown", onKeyDown, true);
+  return () => {
+    textarea.removeEventListener("compositionstart", onStart);
+    textarea.removeEventListener("compositionend", onEnd);
+    host.removeEventListener("keydown", onKeyDown, true);
+  };
+}
+
+/**
  * Filtro da entrada do xterm.js: no WebKitGTK um acento morto (~ + a) chega duas vezes, pela
  * composição e pelo evento `input`. Descarta o mesmo texto não-ASCII repetido em poucos ms,
  * rápido demais para ter sido digitado de novo.

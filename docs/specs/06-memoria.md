@@ -67,6 +67,24 @@ para o modo dormir continuar do contexto do dia.
   que os clientes da VM vão usar (F5.2).
 - Da VM, pelo túnel: `curl 127.0.0.1:49374/healthz` → `{"status":"ok"}`.
 
+## Clientes na VM (F5.2, validado em 2026-10-19)
+
+`bin/assistente agentes configurar` roda `vm/configurar-agentes.sh` na VM:
+
+1. **opencode/9router:** gera `~/.config/opencode/opencode.json` do zero com o provider
+   `9router` (`127.0.0.1:20128/v1`, chave = `ROUTER_API_KEY` do `server.env` do notebook) e
+   todos os modelos que o `/v1/models` lista; padrão `9router/free`.
+2. **token do ai-memory:** lido do notebook para `~/.assistente/ai-memory.token` (0600).
+3. **por perfil:** hooks em `<perfil>/claude/settings.json` e MCP em
+   `<perfil>/claude/.claude.json` (`--config-file`, token embutido, 0600); `opencode.json` do
+   perfil só com o modelo; marcador `.ai-memory.toml` na raiz.
+4. **opencode global:** plugin `~/.config/opencode/plugins/ai-memory.ts` e MCP remoto.
+
+Prova: `opencode run` dentro do jail (flags do `LaunchPlan`) respondeu pelo 9router, e o
+servidor passou a listar `pessoal / rafael-mota-moraes-assistente`. Um teste antes do
+marcador montado criou `default / rafael-mota-moraes-assistente` (pode ser apagado com
+`ai-memory purge-project`).
+
 ## Pontos a validar (F5.1)
 
 - Caminho exato do wiki git e do token no diretório de dados (a doc lida na pesquisa estava

@@ -45,7 +45,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 ## F3 — Sandbox
 
-- [ ] **F3.1 Sessões dentro do ai-jail.** Já montado no `LaunchPlan`; validar na VM com `--dry-run --verbose`, incluindo o docker.sock para `./dev`.
+- [ ] **F3.1 Sessões dentro do ai-jail.** `LaunchPlan` validado com o opencode (spec 05). Falta: Docker por projeto (`--docker` via `.assistente.toml`) para o `./dev`.
   Pronto quando: `./dev just check` de um projeto roda de dentro da sessão. Como testar: sessão real no projeto game.
 - [ ] **F3.2 Dados por perfil.** `~/.assistente/perfis/<perfil>/{claude,opencode,ssh}`; só o perfil ativo entra via `--rw-map`.
   Pronto quando: de uma sessão pessoal, `ls ~/.assistente/perfis/trabalho` falha. Como testar: o próprio comando.
@@ -63,11 +63,11 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 ## F5 — Memória
 
-- [ ] **F5.1 Servidor no notebook** *(humano)*. ai-memory como serviço em 127.0.0.1:49374 com token; descobrir caminho do wiki e do token.
+- [x] **F5.1 Servidor no notebook** *(humano)*. ai-memory 3.1.1 no notebook (spec 06). ai-memory como serviço em 127.0.0.1:49374 com token; descobrir caminho do wiki e do token.
   Pronto quando: `curl` pelo túnel responde, e a spec 06 tem os caminhos reais. Como testar: `curl 127.0.0.1:49374` na VM.
-- [ ] **F5.2 Clientes na VM.** `install-mcp`/`install-hooks` para claude-code e opencode em cada perfil, apontando para o túnel.
+- [x] **F5.2 Clientes na VM.** `bin/assistente agentes configurar` (`vm/configurar-agentes.sh`); opencode validado de ponta a ponta no jail (Claude: falta login). `install-mcp`/`install-hooks` para claude-code e opencode em cada perfil, apontando para o túnel.
   Pronto quando: uma sessão nova recebe briefing do projeto. Como testar: abrir duas sessões seguidas e ver o contexto.
-- [ ] **F5.3 Workspaces por perfil.** `.ai-memory.toml` na raiz de cada perfil (`workspace = "<memory_workspace>"`), criado pelo hubd.
+- [x] **F5.3 Workspaces por perfil.** `.ai-memory.toml` na raiz de cada perfil (`workspace = "<memory_workspace>"`), criado por `vm/configurar-agentes.sh` e montado no jail. Validado: sessão do perfil pessoal cai no workspace `pessoal`.
   Pronto quando: notas do trabalho não aparecem no briefing pessoal. Como testar: web UI do ai-memory.
 - [ ] **F5.4 Espelho no PC.** Job no hubd: `git fetch` do wiki para `memory.mirror_dir` a cada N minutos; estado em `/api/memory`.
   Pronto quando: o espelho tem os commits do servidor e entra no backup. Como testar: `git -C <espelho> log`.

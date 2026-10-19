@@ -19,7 +19,7 @@ Blocos: `[hub]`, `[vm]`, `[notebook]` + `[notebook.tunnel]`, `[memory]`, `[profi
 | `git_name`, `git_email` | | `GIT_AUTHOR_*`/`GIT_COMMITTER_*` nas sessões |
 | `ssh_key` (opcional) | `~/.assistente/perfis/trabalho/ssh/id_ed25519` | `GIT_SSH_COMMAND` |
 | `memory_workspace` | `"trabalho"` | `.ai-memory.toml` na raiz (spec 06) |
-| `opencode_model` (opcional) | `"9router/dev-maneirao"` | modelo padrão do opencode no perfil |
+| `opencode_model` (opcional) | `"9router/free"` | modelo padrão do opencode no perfil |
 | `claude_via_9router` | `false` | `true` = `ANTHROPIC_BASE_URL` aponta para o 9router |
 
 Regras validadas: pelo menos um perfil; id só com `[a-z0-9-]` (vira nome do tmux e pasta);

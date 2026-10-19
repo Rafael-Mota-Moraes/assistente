@@ -11,7 +11,7 @@ Cobre R2. Funcionalidades F4.x.
 | sshd | `:22` (LAN ou Tailscale) | túnel, git e controle do modo dormir |
 | opencode + ai-jail + `dorme` | — | modo dormir (spec 08) |
 
-O 9router é um gateway OpenAI-compatível com combos (ex.: `dev-maneirao`, `testes`) e
+O 9router é um gateway OpenAI-compatível com combos (em 2026-10-19: `free`, mais 13 modelos da NVIDIA) e
 fallback entre provedores. O `opencode.json` de hoje usa
 `baseURL: http://127.0.0.1:20128/v1`. Com o túnel, **a mesma config funciona dentro da VM**.
 

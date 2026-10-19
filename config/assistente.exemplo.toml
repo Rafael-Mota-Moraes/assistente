@@ -48,7 +48,7 @@ git_name = "Seu Nome"
 git_email = "voce@exemplo.com"
 # ssh_key = "~/.assistente/perfis/pessoal/ssh/id_ed25519"
 memory_workspace = "pessoal"
-opencode_model = "9router/dev-maneirao"
+opencode_model = "9router/free"
 # false = Claude Code usa a assinatura direto na Anthropic; true = passa pelo 9router.
 claude_via_9router = false
 
@@ -60,5 +60,5 @@ git_name = "Seu Nome"
 git_email = "voce@empresa.com"
 # ssh_key = "~/.assistente/perfis/trabalho/ssh/id_ed25519"
 memory_workspace = "trabalho"
-opencode_model = "9router/dev-maneirao"
+opencode_model = "9router/free"
 claude_via_9router = false

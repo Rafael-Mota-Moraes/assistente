@@ -6,6 +6,7 @@
 #   assistente backup [arquivo.tar.gz]          config + espelho da memória + logins da VM
 #   assistente restaurar <arquivo.tar.gz>
 #   assistente notebook instalar                copia notebook/ e roda o instalar.sh por SSH
+#   assistente agentes configurar               9router no opencode + ai-memory nos agentes da VM
 # PARCIALMENTE TESTADO: só `token` e a leitura da config. VM = F1, notebook = F4, backup = F7.
 # Spec: docs/specs/01-vm-e-instalacao.md
 set -euo pipefail
@@ -191,7 +192,17 @@ cmd_notebook() {
   "${in_vm[@]}" ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$alias" 'echo "VM -> notebook ok ($(hostname))"'
 }
 
+cmd_agentes() {
+  [ "${1:-}" = "configurar" ] || die "uso: assistente agentes configurar"
+  local name
+  name="$(cfg vm.name)"
+  incus exec "$name" -- mkdir -p /tmp/assistente
+  incus file push -q "$ROOT/vm/configurar-agentes.sh" "$name/tmp/assistente/configurar-agentes.sh"
+  incus exec "$name" -- sudo -u "$(id -un)" -i bash /tmp/assistente/configurar-agentes.sh
+}
+
 case "${1:-}" in
+  agentes) shift; cmd_agentes "$@" ;;
   vm) shift; cmd_vm "$@" ;;
   login) shift; cmd_login "$@" ;;
   token) cmd_token ;;

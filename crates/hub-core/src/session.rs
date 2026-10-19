@@ -80,18 +80,12 @@ impl LaunchPlan {
             return Err(LaunchError::InvalidProjectName(spec.project.clone()));
         }
         let data_dir = profile_data_dir(home, &spec.profile);
-        let argv = vec![
-            "ai-jail".to_owned(),
-            "--rw-map".to_owned(),
-            data_dir.display().to_string(),
-            "--".to_owned(),
-            spec.agent.command().to_owned(),
-        ];
+        let env = profile_env(config, profile, &data_dir);
         Ok(Self {
             tmux_session: tmux_session_name(&spec.profile, &spec.project, spec.agent, seq),
             cwd: profile.root.join(&spec.project),
-            env: profile_env(config, profile, &data_dir),
-            argv,
+            argv: jail_argv(config, home, &profile.root, &data_dir, &env, spec.agent),
+            env,
         })
     }
 
@@ -114,6 +108,51 @@ impl LaunchPlan {
         argv.extend(self.argv.iter().cloned());
         argv
     }
+}
+
+/// `ai-jail` (2.x) com o mínimo que a sessão precisa. Validado na VM em 2026-10-19:
+/// - home privada: só o projeto e os dados do próprio agente são montados;
+/// - rede filtrada: o túnel do notebook só aparece com `--forward-port`;
+/// - ambiente limpo: cada variável do perfil precisa de `--env NOME` (o valor vem do tmux,
+///   então não aparece na linha de comando).
+fn jail_argv(
+    config: &Config,
+    home: &Path,
+    profile_root: &Path,
+    data_dir: &Path,
+    env: &[(String, String)],
+    agent: AgentKind,
+) -> Vec<String> {
+    let mut argv = vec![
+        "ai-jail".to_owned(),
+        "--rw-map".to_owned(),
+        data_dir.display().to_string(),
+    ];
+    if agent == AgentKind::Claude {
+        argv.push("--claude-dir".to_owned());
+        argv.push(data_dir.join("claude").display().to_string());
+    }
+    for port in config.notebook.tunnel.values() {
+        argv.push("--forward-port".to_owned());
+        argv.push(port.to_string());
+    }
+    // Hooks do ai-memory: binário (só leitura) e spool local (gravável, para quando o
+    // notebook estiver fora).
+    argv.push("--map".to_owned());
+    argv.push(home.join(".local/lib/ai-memory").display().to_string());
+    argv.push("--rw-map".to_owned());
+    argv.push(home.join(".local/share/ai-memory").display().to_string());
+    // O marcador do workspace mora na raiz do perfil, fora do projeto: sem ele a memória
+    // cai no workspace "default" (criado por vm/configurar-agentes.sh).
+    argv.push("--map".to_owned());
+    argv.push(profile_root.join(".ai-memory.toml").display().to_string());
+    for (key, _) in env {
+        argv.push("--env".to_owned());
+        argv.push(key.clone());
+    }
+    argv.push("--".to_owned());
+    argv.push(agent.command().to_owned());
+    argv
 }
 
 fn profile_env(config: &Config, profile: &Profile, data_dir: &Path) -> Vec<(String, String)> {
@@ -215,16 +254,25 @@ mod tests {
             plan.cwd,
             PathBuf::from("/home/rafa/Documentos/pessoal/projetos/game")
         );
-        assert_eq!(
-            plan.argv,
-            [
-                "ai-jail",
-                "--rw-map",
-                "/home/rafa/.assistente/perfis/pessoal",
-                "--",
-                "claude"
-            ]
-        );
+        let argv = plan.argv.join(" ");
+        assert!(argv.starts_with("ai-jail --rw-map /home/rafa/.assistente/perfis/pessoal "));
+        assert!(argv.contains("--claude-dir /home/rafa/.assistente/perfis/pessoal/claude"));
+        assert!(argv.contains("--forward-port 20128 --forward-port 49374"));
+        assert!(argv.contains("--map /home/rafa/.local/lib/ai-memory"));
+        assert!(argv.contains("--rw-map /home/rafa/.local/share/ai-memory"));
+        assert!(argv.contains("--map /home/rafa/Documentos/pessoal/projetos/.ai-memory.toml"));
+        assert!(argv.ends_with(" -- claude"));
+        // Toda variável do perfil entra por nome, nunca com o valor na linha de comando.
+        for (key, value) in &plan.env {
+            assert!(
+                argv.contains(&format!("--env {key} ")),
+                "{key} não passa pro jail"
+            );
+            assert!(
+                !argv.contains(value.as_str()) || value.starts_with('/'),
+                "{key} vazou"
+            );
+        }
         assert_eq!(
             env(&plan, "CLAUDE_CONFIG_DIR"),
             Some("/home/rafa/.assistente/perfis/pessoal/claude")
@@ -256,6 +304,8 @@ mod tests {
         )
         .unwrap();
         assert_ne!(a.argv[2], b.argv[2]);
+        // opencode não ganha --claude-dir.
+        assert!(!a.argv.contains(&"--claude-dir".to_owned()));
         assert_ne!(env(&a, "OPENCODE_CONFIG"), env(&b, "OPENCODE_CONFIG"));
         assert_eq!(env(&b, "GIT_AUTHOR_EMAIL"), Some("voce@empresa.com"));
     }

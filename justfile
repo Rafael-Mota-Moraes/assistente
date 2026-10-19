@@ -33,7 +33,7 @@ test: deps
 
 # Lint dos scripts bash
 shellcheck:
-    shellcheck dev instalar.sh bin/assistente vm/provisionar.sh notebook/instalar.sh notebook/dorme
+    shellcheck dev instalar.sh bin/assistente vm/provisionar.sh vm/configurar-agentes.sh notebook/instalar.sh notebook/dorme
 
 # Roda o hubd com a config de exemplo em http://127.0.0.1:7878, sem túnel (fora da VM)
 hubd *args:

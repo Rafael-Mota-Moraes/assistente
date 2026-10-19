@@ -45,11 +45,14 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
         })
         .map_err(|e| format!("openpty: {e}"))?;
     let mut command = CommandBuilder::new("tmux");
+    // `-u`: o hubd roda sem locale, e sem UTF-8 o cliente desenha acentos como `_`.
+    command.arg("-u");
     for arg in tmux.std_args() {
         command.arg(arg);
     }
     command.args(["attach-session", "-t", &format!("={id}")]);
     command.env("TERM", "xterm-256color");
+    command.env("LANG", "C.UTF-8");
     let mut child = pair
         .slave
         .spawn_command(command)

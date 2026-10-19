@@ -110,6 +110,10 @@ impl Tmux {
                 .await
                 .map_err(|e| format!("a sessão terminou logo ao iniciar ({e})"))?;
         }
+        // Opção do servidor. TUIs que prendem o mouse (opencode) copiam por OSC 52; no padrão
+        // (`external`) o tmux engole a sequência e ela não chega ao app.
+        self.run(&args(&["set-option", "-s", "set-clipboard", "on"]))
+            .await?;
         self.find(&plan.tmux_session)
             .await?
             .ok_or_else(|| "a sessão terminou logo ao iniciar".to_owned())

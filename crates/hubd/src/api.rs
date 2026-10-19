@@ -487,6 +487,50 @@ mod tests {
         .await
         .unwrap_or(false);
         assert!(found, "saída do terminal sem marca-42:\n{seen}");
+
+        // Acentos chegam inteiros no agente e voltam inteiros (locale UTF-8 no attach e no painel).
+        ws.send(WsMessage::Text(
+            r#"{"type":"input","data":"echo joão-$((40+2))\r"}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let found = tokio::time::timeout(Duration::from_secs(10), async {
+            while let Some(Ok(message)) = ws.next().await {
+                if let WsMessage::Binary(bytes) = message {
+                    seen.push_str(&String::from_utf8_lossy(&bytes));
+                    if seen.contains("joão-42") {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert!(found, "saída do terminal sem joão-42:\n{seen}");
+
+        // Um TUI que copia por OSC 52 (o opencode prende o mouse e copia sozinho) chega ao app.
+        // O base64 é gerado no shell para não aparecer no eco do que digitamos.
+        ws.send(WsMessage::Text(
+            r#"{"type":"input","data":"printf '\\033]52;c;%s\\007' $(printf copia-%s 42 | base64)\r"}"#.into(),
+        ))
+        .await
+        .unwrap();
+        let copied = "Y29waWEtNDI="; // base64("copia-42")
+        let found = tokio::time::timeout(Duration::from_secs(10), async {
+            while let Some(Ok(message)) = ws.next().await {
+                if let WsMessage::Binary(bytes) = message {
+                    seen.push_str(&String::from_utf8_lossy(&bytes));
+                    if seen.contains(copied) {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert!(found, "OSC 52 do painel não chegou ao terminal:\n{seen:?}");
         drop(ws);
 
         // Fechar o terminal não mata a sessão.

@@ -4,6 +4,13 @@ import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { connectTerminal } from "../../bridge/terminal";
 import { useAppStore } from "../../store";
+import {
+  clipboardShortcut,
+  copyText,
+  dedupeComposedInput,
+  osc52Text,
+  pasteText,
+} from "./clipboard";
 
 const theme = {
   background: "#0b0e1a",
@@ -56,7 +63,33 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
       })
       .catch((e: Error) => setEnded(e.message));
 
-    const input = term.onData((data) => connection?.write(data));
+    // Arrastar com o mouse seleciona no tmux (mouse on), que ao soltar manda o texto por OSC 52.
+    // Shift+arrastar seleciona no xterm.js, e Ctrl+Shift+C copia essa seleção.
+    const clipboardFailed = (e: unknown) => console.error("área de transferência:", e);
+    const osc52 = term.parser.registerOscHandler(52, (data) => {
+      const text = osc52Text(data);
+      if (text) copyText(text).catch(clipboardFailed);
+      return true;
+    });
+    term.attachCustomKeyEventHandler((event) => {
+      const action = clipboardShortcut(event);
+      if (!action) return true;
+      if (event.type === "keydown") {
+        event.preventDefault();
+        if (action === "copy" && term.hasSelection())
+          copyText(term.getSelection()).catch(clipboardFailed);
+        if (action === "paste")
+          pasteText()
+            .then((text) => term.paste(text))
+            .catch(clipboardFailed);
+      }
+      return false;
+    });
+
+    const acceptInput = dedupeComposedInput();
+    const input = term.onData((data) => {
+      if (acceptInput(data)) connection?.write(data);
+    });
     const resize = term.onResize(({ cols, rows }) => connection?.resize(cols, rows));
     const observer = new ResizeObserver(() => fit.fit());
     observer.observe(host.current);
@@ -64,6 +97,7 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     return () => {
       disposed = true;
       observer.disconnect();
+      osc52.dispose();
       input.dispose();
       resize.dispose();
       connection?.close();

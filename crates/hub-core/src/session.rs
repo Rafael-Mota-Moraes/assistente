@@ -157,6 +157,9 @@ fn jail_argv(
 
 fn profile_env(config: &Config, profile: &Profile, data_dir: &Path) -> Vec<(String, String)> {
     let mut env = vec![
+        // O hubd roda sem locale (systemd) e o ai-jail limpa o ambiente: sem isto o readline e
+        // os TUIs leem um acento como atalhos Meta.
+        ("LANG".to_owned(), "C.UTF-8".to_owned()),
         ("ASSISTENTE_PROFILE".to_owned(), profile.label.clone()),
         ("GIT_AUTHOR_NAME".to_owned(), profile.git_name.clone()),
         ("GIT_AUTHOR_EMAIL".to_owned(), profile.git_email.clone()),
@@ -278,6 +281,7 @@ mod tests {
             Some("/home/rafa/.assistente/perfis/pessoal/claude")
         );
         assert_eq!(env(&plan, "GIT_AUTHOR_EMAIL"), Some("voce@exemplo.com"));
+        assert_eq!(env(&plan, "LANG"), Some("C.UTF-8"));
         assert_eq!(
             env(&plan, "AI_MEMORY_SERVER_URL"),
             Some("http://127.0.0.1:49374")

@@ -13,5 +13,6 @@ hub-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
+tauri-plugin-clipboard-manager.workspace = true
 tauri-plugin-http.workspace = true
 tauri-plugin-websocket.workspace = true

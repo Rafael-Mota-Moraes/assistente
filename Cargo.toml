@@ -23,6 +23,7 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 tauri = "=2.12.1"
 tauri-build = "=2.7.1"
+tauri-plugin-clipboard-manager = "=2.4.1"
 tauri-plugin-http = "=2.8.0"
 tauri-plugin-websocket = "=2.5.0"
 # Só nos testes do hubd (cliente WebSocket); mesma versão que o axum usa.

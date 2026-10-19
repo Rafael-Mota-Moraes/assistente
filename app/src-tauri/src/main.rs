@@ -138,6 +138,8 @@ fn main() {
         .plugin(tauri_plugin_http::init())
         // Mesmo motivo para o WebSocket dos terminais (ws:// a partir de tauri://localhost).
         .plugin(tauri_plugin_websocket::init())
+        // Copiar/colar do terminal: o navigator.clipboard do WebKitGTK falha em silêncio.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             hub_connection,
             vm_status,

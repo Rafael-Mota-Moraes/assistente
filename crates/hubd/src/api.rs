@@ -215,6 +215,10 @@ struct ServiceStatus {
     name: String,
     port: u16,
     up: bool,
+    /// Por que o serviço está caído (porta muda, HTTP inesperado…); `null` quando de pé.
+    last_error: Option<String>,
+    /// Segundos Unix da última verificação (tooltip da UI).
+    checked_at: u64,
 }
 
 #[derive(Serialize)]
@@ -226,22 +230,72 @@ struct NotebookStatus {
     services: Vec<ServiceStatus>,
 }
 
-/// Um serviço do notebook está "de pé" se a porta encaminhada responde em 127.0.0.1.
-/// TODO(F4.3): checar por HTTP; outro processo na mesma porta dá falso positivo.
+/// GET mínimo por cima do tokio (sem crate extra): devolve o status HTTP ou o erro legível.
+async fn http_probe(port: u16, path: &str) -> Result<u16, String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::ConnectionRefused => format!("porta {port} não escuta"),
+            _ => format!("porta {port}: {e}"),
+        })?;
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nAccept: */*\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|e| format!("porta {port}: {e}"))?;
+    let mut head = [0u8; 96];
+    let n = stream
+        .read(&mut head)
+        .await
+        .map_err(|e| format!("porta {port}: {e}"))?;
+    if n == 0 {
+        return Err(format!(
+            "porta {port} fechou sem responder (túnel sem o serviço?)"
+        ));
+    }
+    let text = String::from_utf8_lossy(&head[..n]);
+    text.split(' ')
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| format!("porta {port} não respondeu HTTP: {}", text.trim()))
+}
+
+/// Respondeu HTTP e parece o serviço certo (auth pedida conta como de pé).
+fn probe_is_up(status: u16) -> bool {
+    (200..=399).contains(&status) || status == 401 || status == 403
+}
+
+/// Um serviço do notebook está "de pé" se responde HTTP na porta encaminhada em 127.0.0.1.
+/// Connect TCP dava falso positivo (qualquer processo na porta); os endpoints são os da
+/// spec 07: `GET /v1/models` no 9router e `GET /` no ai-memory.
 async fn notebook(State(state): State<AppState>) -> Json<NotebookStatus> {
     let notebook = &state.0.config.notebook;
     let mut services = Vec::new();
     for (name, &port) in &notebook.tunnel {
-        let up = tokio::time::timeout(
-            Duration::from_millis(500),
-            tokio::net::TcpStream::connect(("127.0.0.1", port)),
-        )
-        .await
-        .is_ok_and(|r| r.is_ok());
+        let path = match name.as_str() {
+            "9router" => "/v1/models",
+            _ => "/",
+        };
+        let (up, last_error) =
+            match tokio::time::timeout(Duration::from_secs(1), http_probe(port, path)).await {
+                Err(_) => (false, Some(format!("porta {port}: sem resposta em 1 s"))),
+                Ok(Ok(status)) if probe_is_up(status) => (true, None),
+                Ok(Ok(status)) => (false, Some(format!("HTTP {status} em {path}"))),
+                Ok(Err(e)) => (false, Some(e)),
+            };
+        let checked_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         services.push(ServiceStatus {
             name: name.clone(),
             port,
             up,
+            last_error,
+            checked_at,
         });
     }
     Json(NotebookStatus {
@@ -431,6 +485,85 @@ mod tests {
         let (status, body) = call(app(None), "/api/sleep", None).await;
         assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
         assert_eq!(body["feature"], "F6.3");
+    }
+
+    // ---- Saúde do notebook por HTTP (F4.3) ----
+
+    /// Servidor HTTP mínimo que responde um status fixo; devolve a porta.
+    async fn fake_http_server(status: &'static str, body: &'static str) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut request = [0u8; 512];
+                let _ = socket.read(&mut request).await;
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    /// Porta livre (nada escutando): bind e descarta o listener.
+    async fn closed_port() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    fn notebook_app(router_port: u16, memory_port: u16) -> Router {
+        let text = EXAMPLE
+            .replace("= 20128", &format!("= {router_port}"))
+            .replace("= 49374", &format!("= {memory_port}"));
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(&text, &home).unwrap();
+        router(AppState::new(config, home, None, None, Tmux::default()))
+    }
+
+    fn service<'a>(body: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+        body["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == name)
+            .unwrap_or_else(|| panic!("serviço {name} ausente: {body}"))
+    }
+
+    #[tokio::test]
+    async fn notebook_http_probe_marks_real_services_up() {
+        let router = fake_http_server("200 OK", "{\"data\":[]}").await;
+        let memory = fake_http_server("401 Unauthorized", "").await; // auth pedida = serviço de pé
+        let (status, body) = call(notebook_app(router, memory), "/api/notebook", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["tunnel_managed"], false);
+        let nine = service(&body, "9router");
+        assert_eq!(nine["up"], true);
+        assert_eq!(nine["last_error"], serde_json::Value::Null);
+        assert!(nine["checked_at"].as_u64().unwrap() > 0);
+        assert_eq!(service(&body, "ai_memory")["up"], true);
+    }
+
+    #[tokio::test]
+    async fn notebook_http_probe_rejects_false_positives() {
+        // Outro processo HTTP na porta do 9router (404 em /v1/models) não é o 9router.
+        let impostor = fake_http_server("404 Not Found", "").await;
+        let memory = closed_port().await;
+        let (_, body) = call(notebook_app(impostor, memory), "/api/notebook", None).await;
+        let nine = service(&body, "9router");
+        assert_eq!(nine["up"], false);
+        assert_eq!(nine["last_error"], "HTTP 404 em /v1/models");
+        let ai = service(&body, "ai_memory");
+        assert_eq!(ai["up"], false);
+        assert_eq!(
+            ai["last_error"],
+            format!("porta {memory} não escuta").as_str()
+        );
     }
 
     // ---- Sessões e terminal com tmux real (socket isolado) ----

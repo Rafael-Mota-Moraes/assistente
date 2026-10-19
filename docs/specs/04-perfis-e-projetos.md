@@ -20,10 +20,21 @@ Blocos: `[hub]`, `[vm]`, `[notebook]` + `[notebook.tunnel]`, `[memory]`, `[profi
 | `ssh_key` (opcional) | `~/.assistente/perfis/trabalho/ssh/id_ed25519` | `GIT_SSH_COMMAND` |
 | `memory_workspace` | `"trabalho"` | `.ai-memory.toml` na raiz (spec 06) |
 | `opencode_model` (opcional) | `"9router/free"` | modelo padrão do opencode no perfil |
+| `opencode_small_model` (opcional) | `"meu-provedor/modelo-pequeno"` | `small_model` do opencode (títulos, resumos) |
+| `opencode_allow_hosts` (opcional) | `["api.meu-provedor.com"]` | `--allow-host` do ai-jail, só nas sessões do opencode |
 | `claude_via_9router` | `false` | `true` = `ANTHROPIC_BASE_URL` aponta para o 9router |
 
 Regras validadas: pelo menos um perfil; id só com `[a-z0-9-]` (vira nome do tmux e pasta);
-raízes de perfis **não podem se sobrepor** (senão um projeto seria dos dois).
+raízes de perfis **não podem se sobrepor** (senão um projeto seria dos dois); hosts liberados
+são só nomes (sem `https://`, porta ou caminho).
+
+### Provedores do opencode do PC
+
+`assistente agentes configurar` copia os `provider` do `~/.config/opencode/opencode.json` do
+host (com as chaves, pelo stdin) para o `~/.config/opencode/opencode.json` da VM, ao lado do
+9router. Para um perfil usar um deles: `opencode_model = "<provedor>/<modelo>"` e o host da
+API em `opencode_allow_hosts` (o proxy do jail bloqueia o resto). Trocou a chave ou o plano no
+PC? Rode `assistente agentes configurar` de novo.
 
 ## O que é separado por perfil
 

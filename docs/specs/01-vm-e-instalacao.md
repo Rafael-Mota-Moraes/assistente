@@ -82,7 +82,11 @@ Pegadinhas encontradas (já tratadas nos scripts):
 - Dentro de `sg incus-admin`, `id -g` devolve o GID do incus-admin: usar `id -g "$(id -un)"`.
 - O Incus cria `/home/<usuario>` como root (por causa dos pontos de montagem): o
   `provisionar.sh` corrige o dono e copia o `/etc/skel`.
-- O opencode instala em `~/.opencode/bin` e só mexe no `.bashrc`: link em `~/.local/bin` e
-  `PATH` explícito no `hubd.service`.
-- Versões instaladas: Claude Code 2.1.303, opencode 1.19.3, ai-jail 2.10.0 (Landlock
+- O opencode fica em `~/.opencode/bin`, com link em `~/.local/bin` e `PATH` explícito no
+  `hubd.service`. O instalador do opencode.ai só instala o 1.x; o 2.x sai no npm como
+  `@opencode/cli`, e o `provisionar.sh` baixa o binário do pacote `@opencode/cli-linux-x64`
+  (versão fixa, sha512 conferido), sem precisar de Node na VM. Trocou a versão? Rode
+  `assistente agentes configurar`: o `ai-memory install-hooks` gera o plugin de hooks para a
+  API da versão instalada (o do 1.x não carrega no 2.x: "1 plugin failed").
+- Versões instaladas: Claude Code 2.1.303, opencode 2.0.23, ai-jail 2.10.0 (Landlock
   "fully enforced" na VM), ai-memory **3.1.1** (as specs foram escritas olhando a 2.0).

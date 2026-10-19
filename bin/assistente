@@ -212,11 +212,21 @@ cmd_notebook() {
 
 cmd_agentes() {
   [ "${1:-}" = "configurar" ] || die "uso: assistente agentes configurar"
-  local name
+  local name providers
   name="$(cfg vm.name)"
+  # Provedores do opencode deste PC (um plano pago, por exemplo). Vão com as chaves pelo stdin,
+  # para nada ficar gravado no /tmp da VM.
+  providers="$(python3 - "$HOME/.config/opencode/opencode.json" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+providers = json.load(open(path)).get("provider", {}) if os.path.exists(path) else {}
+print(json.dumps(providers))
+print("Provedores do opencode do PC: %s" % (", ".join(providers) or "nenhum"), file=sys.stderr)
+PY
+)"
   incus exec "$name" -- mkdir -p /tmp/assistente
   incus file push -q "$ROOT/vm/configurar-agentes.sh" "$name/tmp/assistente/configurar-agentes.sh"
-  incus exec "$name" -- sudo -u "$(id -un)" -i bash /tmp/assistente/configurar-agentes.sh
+  incus exec "$name" -- sudo -u "$(id -un)" -i bash /tmp/assistente/configurar-agentes.sh <<< "$providers"
 }
 
 # Depois de mudar o código: hubd na VM (as sessões tmux sobrevivem) e o app desktop.

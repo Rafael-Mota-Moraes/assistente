@@ -84,7 +84,7 @@ impl LaunchPlan {
         Ok(Self {
             tmux_session: tmux_session_name(&spec.profile, &spec.project, spec.agent, seq),
             cwd: profile.root.join(&spec.project),
-            argv: jail_argv(config, home, &profile.root, &data_dir, &env, spec.agent),
+            argv: jail_argv(config, home, profile, &data_dir, &env, spec.agent),
             env,
         })
     }
@@ -118,7 +118,7 @@ impl LaunchPlan {
 fn jail_argv(
     config: &Config,
     home: &Path,
-    profile_root: &Path,
+    profile: &Profile,
     data_dir: &Path,
     env: &[(String, String)],
     agent: AgentKind,
@@ -136,6 +136,14 @@ fn jail_argv(
         argv.push("--forward-port".to_owned());
         argv.push(port.to_string());
     }
+    // Provedores do opencode fora do 9router (copiados do PC): o proxy do jail só libera os
+    // hosts do preset. Soma à lista do preset; o Claude não ganha rede extra.
+    if agent == AgentKind::Opencode {
+        for host in &profile.opencode_allow_hosts {
+            argv.push("--allow-host".to_owned());
+            argv.push(host.clone());
+        }
+    }
     // Hooks do ai-memory: binário (só leitura) e spool local (gravável, para quando o
     // notebook estiver fora).
     argv.push("--map".to_owned());
@@ -145,7 +153,7 @@ fn jail_argv(
     // O marcador do workspace mora na raiz do perfil, fora do projeto: sem ele a memória
     // cai no workspace "default" (criado por vm/configurar-agentes.sh).
     argv.push("--map".to_owned());
-    argv.push(profile_root.join(".ai-memory.toml").display().to_string());
+    argv.push(profile.root.join(".ai-memory.toml").display().to_string());
     // Sem isto o proxy de terminal do ai-jail descarta o OSC 52, e copiar com o mouse no
     // claude/opencode (que prendem o mouse e copiam sozinhos) não chega ao app. Do outro lado
     // está o tmux, que só repassa ao app o OSC 52 de escrita (set-clipboard on).
@@ -156,6 +164,11 @@ fn jail_argv(
     }
     argv.push("--".to_owned());
     argv.push(agent.command().to_owned());
+    // O opencode 2 roda como cliente de um servidor em segundo plano compartilhado, que não
+    // sobrevive ao jail: com `--standalone` cada sessão sobe o seu.
+    if agent == AgentKind::Opencode {
+        argv.push("--standalone".to_owned());
+    }
     argv
 }
 
@@ -317,6 +330,29 @@ mod tests {
         assert!(!a.argv.contains(&"--claude-dir".to_owned()));
         assert_ne!(env(&a, "OPENCODE_CONFIG"), env(&b, "OPENCODE_CONFIG"));
         assert_eq!(env(&b, "GIT_AUTHOR_EMAIL"), Some("voce@empresa.com"));
+    }
+
+    #[test]
+    fn only_opencode_gets_the_profile_allowed_hosts() {
+        let home = PathBuf::from("/home/rafa");
+        let text = EXAMPLE.replacen(
+            "# opencode_allow_hosts = [\"api.meu-provedor.com\"]",
+            "opencode_allow_hosts = [\"api.exemplo.com\", \"outro.exemplo.com\"]",
+            1,
+        );
+        let config = Config::parse(&text, &home).unwrap();
+        let build = |agent| LaunchPlan::build(&config, &home, &spec("pessoal", "x", agent), 1);
+        let opencode = build(AgentKind::Opencode).unwrap().argv.join(" ");
+        assert!(
+            opencode.contains("--allow-host api.exemplo.com --allow-host outro.exemplo.com"),
+            "{opencode}"
+        );
+        assert!(
+            opencode.ends_with(" -- opencode --standalone"),
+            "{opencode}"
+        );
+        let claude = build(AgentKind::Claude).unwrap().argv;
+        assert!(!claude.contains(&"--allow-host".to_owned()));
     }
 
     #[test]

@@ -67,6 +67,11 @@ pub struct Profile {
     #[serde(default)]
     pub opencode_model: Option<String>,
     #[serde(default)]
+    pub opencode_small_model: Option<String>,
+    /// Hosts que o proxy do ai-jail libera para o opencode (provedores fora do 9router).
+    #[serde(default)]
+    pub opencode_allow_hosts: Vec<String>,
+    #[serde(default)]
     pub claude_via_9router: bool,
 }
 
@@ -128,11 +133,19 @@ impl Config {
                 "defina ao menos um [profiles.<id>]".into(),
             ));
         }
-        for id in self.profiles.keys() {
+        for (id, profile) in &self.profiles {
             if !is_valid_id(id) {
                 return Err(ConfigError::Invalid(format!(
                     "id de perfil \"{id}\": use só letras minúsculas, números e '-'"
                 )));
+            }
+            for host in &profile.opencode_allow_hosts {
+                if !is_valid_host(host) {
+                    return Err(ConfigError::Invalid(format!(
+                        "perfil {id}: opencode_allow_hosts \"{host}\" não é um nome de host \
+                         (sem https://, porta ou caminho)"
+                    )));
+                }
             }
         }
         // Raízes aninhadas misturariam projetos (e credenciais) de perfis diferentes.
@@ -157,6 +170,15 @@ pub(crate) fn is_valid_id(id: &str) -> bool {
         && id
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Hosts viram `--allow-host` do ai-jail, que libera o host e os subdomínios.
+fn is_valid_host(host: &str) -> bool {
+    !host.is_empty()
+        && !host.starts_with(['.', '-'])
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
 
 /// `~` e `~/x` viram caminhos dentro de `home`; o resto fica igual.
@@ -210,6 +232,30 @@ mod tests {
     fn profile_id_must_be_safe() {
         let text = EXAMPLE.replace("[profiles.trabalho]", "[profiles.\"Trab Alho\"]");
         assert!(Config::parse(&text, &home()).is_err());
+    }
+
+    #[test]
+    fn opencode_allow_hosts_must_be_bare_hosts() {
+        let with = |hosts: &str| {
+            EXAMPLE.replacen(
+                "# opencode_allow_hosts = [\"api.meu-provedor.com\"]",
+                &format!("opencode_allow_hosts = {hosts}"),
+                1,
+            )
+        };
+        let config = Config::parse(&with(r#"["api.exemplo.com"]"#), &home()).unwrap();
+        assert_eq!(
+            config.profile("pessoal").unwrap().opencode_allow_hosts,
+            ["api.exemplo.com"]
+        );
+        for bad in [
+            r#"["https://api.exemplo.com"]"#,
+            r#"["api.exemplo.com/v1"]"#,
+            r#"[""]"#,
+        ] {
+            let err = Config::parse(&with(bad), &home()).unwrap_err();
+            assert!(err.to_string().contains("opencode_allow_hosts"), "{err}");
+        }
     }
 
     #[test]

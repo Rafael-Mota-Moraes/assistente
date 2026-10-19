@@ -27,12 +27,13 @@ O `LaunchPlan` (`hub_core::session::jail_argv`) monta:
 | `--rw-map ~/.assistente/perfis/<perfil>` | dados do perfil (opencode, chave SSH); só o perfil ativo |
 | `--claude-dir …/<perfil>/claude` (só claude) | `CLAUDE_CONFIG_DIR` do perfil: login, settings, hooks e MCP próprios |
 | `--forward-port 20128 --forward-port 49374` | o túnel do notebook em 127.0.0.1; sem isso o proxy responde 405 |
+| `--allow-host <host>` (só opencode) | `opencode_allow_hosts` do perfil: API de provedores fora do 9router. Soma à lista do preset (validado: o `registry.npmjs.org` continua liberado) |
 | `--map ~/.local/lib/ai-memory` | binário que os hooks chamam |
 | `--rw-map ~/.local/share/ai-memory` | spool local dos hooks (notebook fora do ar) |
 | `--map <raiz do perfil>/.ai-memory.toml` | marcador do workspace; sem ele a memória cai em `default` |
 | `--terminal-passthrough` | o proxy de terminal do ai-jail descarta o OSC 52: sem isso copiar com o mouse no claude/opencode não chega ao app. O agente passa a escrever direto no painel do tmux, que só repassa ao app o OSC 52 de escrita |
 | `--env NOME` (uma por variável do perfil) | o valor vem do env do tmux, não aparece na linha de comando |
-| `-- claude` / `-- opencode` | o preset vale com ou sem `--` |
+| `-- claude` / `-- opencode --standalone` | o preset vale com ou sem `--`. O opencode 2 é cliente de um servidor em segundo plano compartilhado, que não sobrevive ao jail: `--standalone` sobe um por sessão |
 
 O preset do opencode monta `~/.config/opencode` e `~/.local/share/opencode`, que são
 **compartilhados entre perfis** (config global com o 9router e histórico). Isolar o histórico

@@ -6,7 +6,15 @@ export type ProfileView = { id: string; label: string; color: string; root: stri
 
 export type Project = { name: string; path: string; has_project_config: boolean };
 
-export type ServiceStatus = { name: string; port: number; up: boolean };
+export type ServiceStatus = {
+  name: string;
+  port: number;
+  up: boolean;
+  /** Por que o serviço está caído; null quando de pé. */
+  last_error: string | null;
+  /** Segundos Unix da última verificação. */
+  checked_at: number;
+};
 
 export type TunnelStatus = {
   state: "connecting" | "up" | "down";

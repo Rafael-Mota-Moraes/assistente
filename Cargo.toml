@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "app/src-tauri"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+
+[workspace.dependencies]
+# Versões exatas (=), publicadas há pelo menos 14 dias: `just idade-crates` verifica o Cargo.lock.
+hub-core = { path = "crates/hub-core" }
+anyhow = "=1.0.104"
+axum = "=0.8.9"
+clap = { version = "=4.6.7", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+tokio = { version = "=1.53.2", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+tower = { version = "=0.5.3", features = ["util"] }
+toml = "=1.1.6"
+tower-http = { version = "=0.6.11", features = ["cors"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+tauri = "=2.12.1"
+tauri-build = "=2.7.1"

@@ -1,0 +1,61 @@
+# Configuração do Assistente. Copie para ~/.config/assistente/assistente.toml
+# (o instalar.sh faz isso) e ajuste. A pasta ~/.config/assistente é montada (somente leitura)
+# dentro da VM no mesmo caminho, então hubd e app leem o MESMO arquivo.
+# Chaves em inglês (são lidas pelo código); comentários em pt-BR. Spec: docs/specs/04-perfis-e-projetos.md
+
+[hub]
+# Onde o hubd escuta DENTRO da VM. A VM só é alcançável pelo host (rede NAT do Incus).
+listen = "0.0.0.0:7878"
+# Token exigido em toda rota exceto /api/health. Gerado por `bin/assistente token`.
+token_file = "~/.config/assistente/hub.token"
+
+[vm]
+name = "assistente"
+image = "images:ubuntu/24.04/cloud"
+cpus = 6
+memory = "12GiB"
+disk = "60GiB"
+# Rede própria do Incus (assistente0, 10.77.0.1/24) com IP fixo para a VM: o app sabe onde
+# achar o hubd sem descobrir nada. Spec: docs/specs/01-vm-e-instalacao.md
+ip = "10.77.0.10"
+
+[notebook]
+# Alias do ~/.ssh/config da VM. Pode apontar para o IP da LAN ou para o nome no Tailscale.
+ssh_host = "notebook"
+# Pasta de trabalho no notebook: clones dos projetos, logs do modo dormir, briefings.
+workdir = "~/assistente"
+
+[notebook.tunnel]
+# Portas do notebook encaminhadas para 127.0.0.1 da VM pelo túnel SSH do hubd.
+# Os agentes na VM usam exatamente estes endereços (iguais aos de hoje no PC).
+"9router" = 20128
+ai_memory = 49374
+
+[memory]
+# Espelho do wiki do ai-memory (servidor principal no notebook). Fica no host, montado na VM.
+mirror_dir = "~/.local/share/assistente/memoria-copia"
+mirror_every_minutes = 60
+
+# Um bloco por perfil. A chave (pessoal, trabalho) é o id usado na API e nos caminhos.
+[profiles.pessoal]
+label = "Pessoal"
+color = "#8b5cf6"
+root = "~/Documentos/pessoal/projetos"
+git_name = "Seu Nome"
+git_email = "voce@exemplo.com"
+# ssh_key = "~/.assistente/perfis/pessoal/ssh/id_ed25519"
+memory_workspace = "pessoal"
+opencode_model = "9router/dev-maneirao"
+# false = Claude Code usa a assinatura direto na Anthropic; true = passa pelo 9router.
+claude_via_9router = false
+
+[profiles.trabalho]
+label = "Trabalho"
+color = "#0ea5e9"
+root = "~/Documentos/trabalho"
+git_name = "Seu Nome"
+git_email = "voce@empresa.com"
+# ssh_key = "~/.assistente/perfis/trabalho/ssh/id_ed25519"
+memory_workspace = "trabalho"
+opencode_model = "9router/dev-maneirao"
+claude_via_9router = false

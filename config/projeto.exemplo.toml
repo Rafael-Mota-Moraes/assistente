@@ -1,0 +1,20 @@
+# Configuração opcional por projeto. Salve como .assistente.toml na raiz do repositório.
+# Hoje só o modo dormir usa este arquivo. Spec: docs/specs/08-modo-dormir.md
+
+[sleep]
+# Lista de tarefas no formato de docs/FUNCIONALIDADES.md: itens "- [ ]" com ID, "Pronto quando"
+# e "Como testar". O agente pega o primeiro item [ ] da seção (ou do arquivo, se vazio).
+backlog = "docs/FUNCIONALIDADES.md"
+section = ""
+# Comando que precisa passar antes de marcar um item como [x].
+check = "./dev just check"
+# Itens que só um humano pode fechar (o agente nunca escolhe). Basta um trecho do título.
+human_only = ["playtest", "validação humana"]
+# Limites de cada iteração do loop no notebook.
+max_minutes = 240
+attempts = 3
+# Modelo do opencode no notebook (vazio = o padrão do opencode.json de lá).
+model = ""
+# Regras extras do projeto que entram no prompt (além de ler CLAUDE.md/AGENTS.md).
+extra_instructions = """
+"""

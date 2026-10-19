@@ -1,0 +1,28 @@
+# Rust
+/target/
+
+# Node / frontend
+node_modules/
+dist/
+.pnpm-store/
+*.tsbuildinfo
+
+# Config local e segredos (o exemplo versionado fica em config/)
+/config/assistente.toml
+*.token
+*.env
+
+# Logs locais
+*.log
+
+# Editor / SO
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Modo dormir: sinal de parada para revisão humana
+/RELATORIO.md
+
+# Git worktrees locais
+.worktrees/

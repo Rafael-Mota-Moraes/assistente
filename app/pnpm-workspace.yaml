@@ -1,0 +1,3 @@
+# Cadeia de suprimentos: só instala versões publicadas há pelo menos 14 dias (em minutos),
+# a mesma regra do `just idade-crates` para o Rust.
+minimumReleaseAge: 20160

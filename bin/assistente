@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# CLI do host para o Assistente (a VM, backups e o notebook). O app Tauri cobre o dia a dia.
+#   assistente vm criar|iniciar|parar|shell|recriar|status
+#   assistente login claude|opencode <perfil>   login do agente dentro da VM, por perfil
+#   assistente token                            gera ~/.config/assistente/hub.token
+#   assistente backup [arquivo.tar.gz]          config + espelho da memória + logins da VM
+#   assistente restaurar <arquivo.tar.gz>
+#   assistente notebook instalar                copia notebook/ e roda o instalar.sh por SSH
+# PARCIALMENTE TESTADO: só `token` e a leitura da config. VM = F1, notebook = F4, backup = F7.
+# Spec: docs/specs/01-vm-e-instalacao.md
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONF_DIR="$HOME/.config/assistente"
+CONF="$CONF_DIR/assistente.toml"
+NET="assistente0"
+NET_CIDR="10.77.0.1/24"
+
+die() { echo "assistente: $*" >&2; exit 1; }
+
+# Lê uma chave da config: cfg vm.name
+cfg() {
+  [ -f "$CONF" ] || die "sem $CONF (rode ./instalar.sh)"
+  python3 - "$CONF" "$1" <<'PY'
+import sys, tomllib
+value = tomllib.load(open(sys.argv[1], "rb"))
+for part in sys.argv[2].split("."):
+    value = value[part]
+print(" ".join(value) if isinstance(value, list) else value)
+PY
+}
+
+profile_roots() {
+  python3 - "$CONF" <<'PY'
+import sys, tomllib, os
+for p in tomllib.load(open(sys.argv[1], "rb"))["profiles"].values():
+    print(os.path.expanduser(p["root"]))
+PY
+}
+
+vm_criar() {
+  local name ip
+  name="$(cfg vm.name)"
+  ip="$(cfg vm.ip)"
+  incus info "$name" >/dev/null 2>&1 && die "VM $name já existe (use: vm recriar)"
+
+  incus network show "$NET" >/dev/null 2>&1 \
+    || incus network create "$NET" ipv4.address="$NET_CIDR" ipv4.nat=true ipv6.address=none
+
+  local userdata
+  userdata="$(sed -e "s/@USER@/$(id -un)/" -e "s/@UID@/$(id -u)/" "$ROOT/vm/cloud-init.yaml")"
+  incus init "$(cfg vm.image)" "$name" --vm \
+    -c limits.cpu="$(cfg vm.cpus)" -c limits.memory="$(cfg vm.memory)" \
+    -c cloud-init.user-data="$userdata" \
+    -d root,size="$(cfg vm.disk)" \
+    -n "$NET"
+  incus config device set "$name" eth0 ipv4.address="$ip" 2>/dev/null \
+    || incus config device override "$name" eth0 ipv4.address="$ip"
+
+  # Mesmo caminho dos dois lados. Config só leitura; espelho da memória gravável.
+  local i=0 root
+  while read -r root; do
+    mkdir -p "$root"
+    incus config device add "$name" "perfil$i" disk source="$root" path="$root"
+    i=$((i + 1))
+  done < <(profile_roots)
+  incus config device add "$name" config disk source="$CONF_DIR" path="$CONF_DIR" readonly=true
+  local mirror
+  mirror="$(cfg memory.mirror_dir | sed "s|^~|$HOME|")"
+  mkdir -p "$mirror"
+  incus config device add "$name" memoria disk source="$mirror" path="$mirror"
+
+  incus start "$name"
+  echo "Esperando o cloud-init..."
+  incus exec "$name" -- cloud-init status --wait
+
+  echo "Compilando o hubd (container ./dev)..."
+  "$ROOT/dev" just build-hubd
+  incus exec "$name" -- mkdir -p /tmp/assistente
+  incus file push "$ROOT/target/release/hubd" "$name/tmp/assistente/hubd"
+  incus file push "$ROOT/vm/hubd.service" "$name/tmp/assistente/hubd.service"
+  incus file push "$ROOT/vm/provisionar.sh" "$name/tmp/assistente/provisionar.sh"
+  incus exec "$name" -- bash /tmp/assistente/provisionar.sh "$(id -un)"
+  echo "VM pronta. Próximo: assistente login claude pessoal"
+}
+
+cmd_vm() {
+  local name
+  name="$(cfg vm.name)"
+  case "${1:-status}" in
+    criar) vm_criar ;;
+    iniciar) incus start "$name" ;;
+    parar) incus stop "$name" ;;
+    shell) incus exec "$name" -- sudo -u "$(id -un)" -i ;;
+    recriar)
+      read -r -p "Apagar a VM $name e criar de novo? Logins dentro dela se perdem (faça backup). [s/N] " ok
+      [ "$ok" = "s" ] || exit 1
+      incus delete --force "$name"
+      vm_criar
+      ;;
+    status) incus list "^$name\$" ;;
+    *) die "uso: assistente vm criar|iniciar|parar|shell|recriar|status" ;;
+  esac
+}
+
+cmd_login() {
+  local agent="${1:-}" profile="${2:-}"
+  if [ -z "$agent" ] || [ -z "$profile" ]; then die "uso: assistente login claude|opencode <perfil>"; fi
+  local data
+  data="/home/$(id -un)/.assistente/perfis/$profile"
+  case "$agent" in
+    claude) incus exec "$(cfg vm.name)" -- sudo -u "$(id -un)" -i env CLAUDE_CONFIG_DIR="$data/claude" claude /login ;;
+    opencode) incus exec "$(cfg vm.name)" -- sudo -u "$(id -un)" -i env OPENCODE_CONFIG="$data/opencode/opencode.json" opencode auth login ;;
+    *) die "agente desconhecido: $agent" ;;
+  esac
+}
+
+cmd_token() {
+  mkdir -p "$CONF_DIR"
+  local file
+  file="$(cfg hub.token_file | sed "s|^~|$HOME|")"
+  [ -s "$file" ] && { echo "token já existe em $file"; return; }
+  (umask 077; head -c 32 /dev/urandom | base64 | tr -d '/+=' > "$file")
+  echo "token gerado em $file"
+}
+
+cmd_backup() {
+  # TODO(F7.1): incluir ~/.assistente/perfis da VM (logins) via `incus file pull -r`.
+  local out="${1:-$HOME/assistente-backup-$(date +%F).tar.gz}"
+  local mirror
+  mirror="$(cfg memory.mirror_dir | sed "s|^~|$HOME|")"
+  tar -czf "$out" -C "$HOME" ".config/assistente" "${mirror#"$HOME"/}"
+  echo "backup em $out"
+}
+
+cmd_restaurar() {
+  local file="${1:?uso: assistente restaurar <arquivo.tar.gz>}"
+  tar -xzf "$file" -C "$HOME"
+  echo "restaurado em $HOME (config e espelho da memória)"
+}
+
+cmd_notebook() {
+  [ "${1:-}" = "instalar" ] || die "uso: assistente notebook instalar"
+  local host
+  host="$(cfg notebook.ssh_host)"
+  scp -r "$ROOT/notebook" "$host:/tmp/assistente-notebook"
+  ssh -t "$host" bash /tmp/assistente-notebook/instalar.sh
+  echo "Chave pública da VM (autorize no notebook):"
+  incus exec "$(cfg vm.name)" -- sudo -u "$(id -un)" -i bash -c \
+    '[ -f ~/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519; cat ~/.ssh/id_ed25519.pub'
+}
+
+case "${1:-}" in
+  vm) shift; cmd_vm "$@" ;;
+  login) shift; cmd_login "$@" ;;
+  token) cmd_token ;;
+  backup) shift; cmd_backup "$@" ;;
+  restaurar) shift; cmd_restaurar "$@" ;;
+  notebook) shift; cmd_notebook "$@" ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Ambiente isolado do projeto: roda qualquer comando dentro do container de desenvolvimento.
+#   ./dev                 abre um shell no container
+#   ./dev just check      roda um comando no container
+#   ./dev imagem          imprime o nome da imagem (usado pelo CI)
+#   ./dev limpar          apaga imagem, volumes e artefatos de build do projeto
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOCKERFILE="$ROOT/devenv/Dockerfile"
+NAME="assistente-dev"
+VOLUMES=("$NAME-cargo-registry:/opt/cargo/registry" "$NAME-cargo-git:/opt/cargo/git" "$NAME-home:/home/dev")
+
+uid="$(id -u)"
+gid="$(id -g)"
+tag="$( (cat "$DOCKERFILE"; echo "$uid:$gid") | sha256sum | cut -c1-12)"
+image="$NAME:$tag"
+
+case "${1:-}" in
+  imagem)
+    echo "$image"
+    exit 0
+    ;;
+  limpar)
+    docker image ls --format '{{.Repository}}:{{.Tag}}' "$NAME" | xargs -r docker image rm -f
+    for v in "${VOLUMES[@]}"; do docker volume rm -f "${v%%:*}" >/dev/null; done
+    rm -rf "$ROOT/target" "$ROOT/app/node_modules" "$ROOT/app/dist"
+    echo "Ambiente removido."
+    exit 0
+    ;;
+esac
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  echo "Construindo o ambiente ($image)..." >&2
+  docker build -t "$image" --build-arg "USER_UID=$uid" --build-arg "USER_GID=$gid" "$ROOT/devenv" >&2
+fi
+
+[ $# -eq 0 ] && set -- bash
+
+workdir="$PWD"
+[[ "$PWD" == "$ROOT"* ]] || workdir="$ROOT"
+
+args=(--rm --init --network host --shm-size 1g --user "$uid:$gid"
+      -v "$ROOT:$ROOT" -w "$workdir"
+      -e TERM="${TERM:-xterm}")
+# Worktree do git: o diretório comum (ex.: …/assistente/.git) precisa estar montado para
+# `git`/`gh` funcionarem dentro do container.
+if [ -f "$ROOT/.git" ]; then
+  gitdir="$(sed -n 's/^gitdir: //p' "$ROOT/.git")"
+  if [ -n "$gitdir" ]; then
+    commondir_file="$(dirname "$gitdir")/commondir"
+    if [ -f "$commondir_file" ]; then
+      common="$(cd "$(dirname "$gitdir")" && cd "$(cat "$commondir_file")" && pwd)"
+      args+=(-v "$common:$common")
+    else
+      parent="$(cd "$(dirname "$gitdir")/../.." && pwd)"
+      args+=(-v "$parent:$parent")
+    fi
+  fi
+fi
+for v in "${VOLUMES[@]}"; do args+=(-v "$v"); done
+[ -t 0 ] && [ -t 1 ] && args+=(-it)
+# No CI, as ferramentas precisam saber que estão no CI
+[ -n "${CI:-}" ] && args+=(-e CI)
+
+# Janela do app (just app-dev): X11 do host
+if [ -n "${DISPLAY:-}" ] && [ -d /tmp/.X11-unix ]; then
+  args+=(-e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix:ro)
+  if [ -n "${XAUTHORITY:-}" ] && [ -f "$XAUTHORITY" ]; then
+    args+=(-e XAUTHORITY=/tmp/.Xauthority -v "$XAUTHORITY:/tmp/.Xauthority:ro")
+  fi
+fi
+
+# GPU: aceleração do WebKit/WebGL
+if [ -d /dev/dri ]; then
+  args+=(--device /dev/dri)
+  for g in $(stat -c %g /dev/dri/card* /dev/dri/renderD* 2>/dev/null | sort -u); do
+    args+=(--group-add "$g")
+  done
+fi
+
+exec docker run "${args[@]}" "$image" "$@"

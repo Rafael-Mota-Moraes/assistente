@@ -1,0 +1,30 @@
+#cloud-config
+# user-data da VM do Assistente. `bin/assistente vm criar` troca os @MARCADORES@ antes de usar.
+# NÃO TESTADO (F1.2). Spec: docs/specs/01-vm-e-instalacao.md
+#
+# O usuário tem o MESMO nome e UID do host: as pastas montadas por virtiofs ficam com o dono
+# certo e os caminhos são idênticos dos dois lados (o app abre no Cursor o caminho do hubd).
+users:
+  - name: "@USER@"
+    uid: "@UID@"
+    shell: /bin/bash
+    groups: [docker]
+    lock_passwd: true
+    ssh_authorized_keys: []
+
+package_update: true
+packages:
+  - git
+  - tmux
+  - bubblewrap
+  - curl
+  - ca-certificates
+  - openssh-client
+  - autossh
+  - docker.io
+  - python3
+
+runcmd:
+  - [systemctl, enable, --now, docker]
+  # O resto (claude, opencode, ai-jail, ai-memory, hubd) vem do vm/provisionar.sh,
+  # que é reexecutável; cloud-init só roda na primeira inicialização.

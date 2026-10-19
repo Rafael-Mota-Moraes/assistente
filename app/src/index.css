@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Cantarell", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  --color-surface: rgb(15 18 32 / 0.72);
+  --color-surface-strong: rgb(22 26 44 / 0.9);
+  --color-line: rgb(148 163 184 / 0.14);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  color: #e2e8f0;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgb(139 92 246 / 0.18), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, rgb(14 165 233 / 0.16), transparent 60%), #070912;
+}

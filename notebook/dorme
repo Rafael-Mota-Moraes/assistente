@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# dorme — modo "hora de dormir" no notebook: agente autônomo que roda tarefas do backlog
+# em loop, sem humano, até você intervir. Generalizado a partir do game/dorme.sh.
+# NÃO TESTADO NESTA VERSÃO (F6.1). Spec: docs/specs/08-modo-dormir.md
+#
+# Quem chama é o hubd (via SSH, dentro de um tmux no notebook), já na raiz do clone do projeto
+# e na branch base `dorme/<data>`. O prompt vem pronto do hubd (hub-core/src/sleep_prompt.md).
+#   - Cada iteração = uma tarefa (`opencode run` com contexto limpo, dentro do ai-jail).
+#   - Progresso = merge na branch base; branches agente/* nunca são apagadas.
+#
+# Parar (a qualquer momento, até pelo app):  touch "$AGENTE_STOP"
+# O loop também para sozinho se o agente escrever RELATORIO.md, deixar a árvore suja,
+# terminar fora da base ou não produzir progresso depois de N tentativas.
+#
+# Variáveis (o hubd preenche a partir do .assistente.toml do projeto):
+#   AGENTE_PROMPT_FILE obrigatório: prompt da iteração
+#   AGENTE_STOP        arquivo de parada          (padrão ~/assistente/STOP)
+#   AGENTE_LOG         log                        (padrão ~/assistente/logs/<projeto>.log)
+#   AGENTE_MAX_MIN     minutos máx. por tarefa    (padrão 240)
+#   AGENTE_MODEL       modelo do opencode         (padrão: o do opencode.json)
+#   AGENTE_TENTATIVAS  tentativas sem progresso   (padrão 3)
+#   AGENTE_JAIL        sandbox                    (padrão ai-jail; "" desliga — não recomendado)
+set -u
+
+PROMPT_FILE="${AGENTE_PROMPT_FILE:?defina AGENTE_PROMPT_FILE (o hubd faz isso)}"
+PROJETO="$(basename "$PWD")"
+STOP="${AGENTE_STOP:-$HOME/assistente/STOP}"
+LOG="${AGENTE_LOG:-$HOME/assistente/logs/$PROJETO.log}"
+MAX_MIN="${AGENTE_MAX_MIN:-240}"
+TENTATIVAS="${AGENTE_TENTATIVAS:-3}"
+JAIL="${AGENTE_JAIL-ai-jail}"
+OPENCODE="${AGENTE_OPENCODE:-opencode}"
+MODEL_ARG=()
+if [[ -n "${AGENTE_MODEL:-}" ]]; then MODEL_ARG=(-m "$AGENTE_MODEL"); fi
+RELATORIO="RELATORIO.md"
+BASE="$(git branch --show-current)"
+PROMPT="$(cat "$PROMPT_FILE")"
+
+RUN=("$OPENCODE" run --auto "${MODEL_ARG[@]}" "$PROMPT")
+if [[ -n "$JAIL" ]]; then RUN=("$JAIL" -- "${RUN[@]}"); fi
+
+mkdir -p "$(dirname "$LOG")"
+log(){ echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+
+rm -f "$STOP"
+log "modo-dormir iniciado. projeto=$PROJETO base=$BASE"
+log "parar com: touch $STOP"
+
+TENTA=0
+while [[ ! -f "$STOP" ]]; do
+  if [[ -f "$RELATORIO" ]]; then log "RELATORIO.md presente — parando p/ revisão humana."; break; fi
+  if [[ -n "$(git status --porcelain)" ]]; then log "árvore suja — parando p/ revisão humana."; break; fi
+  if [[ "$(git branch --show-current)" != "$BASE" ]]; then log "branch atual != $BASE — parando."; break; fi
+
+  antes=$(git rev-parse HEAD)
+  log "tarefa: tentativa $((TENTA+1))/$TENTATIVAS (timeout ${MAX_MIN}m)"
+  timeout "${MAX_MIN}m" "${RUN[@]}" >>"$LOG" 2>&1
+  rc=$?
+  log "opencode terminou com rc=$rc (124 = timeout)"
+
+  if [[ -f "$RELATORIO" ]]; then log "agente sinalizou parada via RELATORIO.md."; break; fi
+  if [[ -n "$(git status --porcelain)" ]]; then log "árvore suja após tarefa — parando."; break; fi
+  if [[ "$(git branch --show-current)" != "$BASE" ]]; then log "agente terminou fora de $BASE — parando."; break; fi
+  if [[ "$(git rev-parse HEAD)" != "$antes" ]]; then TENTA=0; log "progresso registrado, próxima tarefa."; continue; fi
+
+  # limpo e sem progresso: provável sorteio ruim do combo (erro do modelo/ferramenta).
+  TENTA=$((TENTA+1))
+  if [[ "$TENTA" -ge "$TENTATIVAS" ]]; then
+    log "$TENTATIVAS tentativas sem progresso — desistindo p/ revisão."
+    cat > "$RELATORIO" <<RELE
+modo-dormir: $TENTATIVAS tentativas da mesma tarefa terminaram sem progresso.
+Causa provável: modelo instável (combo grátis) ou erro de ferramenta — veja $LOG.
+WIP salvo nas branches agente/*. Recomendo rodar de novo ou fixar AGENTE_MODEL.
+RELE
+    break
+  fi
+  log "sem progresso (HEAD igual, rc=$rc) — novo sorteio do combo em 60s."
+  sleep 60
+done
+log "modo-dormir encerrado. Revise no app (Recolher) ou: git log --first-parent $BASE"

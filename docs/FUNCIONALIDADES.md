@@ -98,6 +98,25 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 - [ ] **F7.3 `vm recriar` sem perder nada.** Recriar a VM restaura os logins do backup automaticamente.
   Pronto quando: depois de `vm recriar`, as sessões abrem logadas. Como testar: o próprio comando.
 
+## F8 — Auto-atualização
+
+Spec 09. Ordem sugerida: F8.1 e F8.2 valem sozinhas; F8.4 começa por uma prova mínima (é o maior risco).
+
+- [ ] **F8.1 Terminais reconectam sozinhos.** WS caiu sem `exit` → nova tentativa com backoff (até 30 s entre tentativas) e faixa "reconectando" no terminal.
+  Pronto quando: `systemctl restart hubd` com abas abertas faz os terminais voltarem sozinhos. Como testar: vitest do backoff + manual.
+- [ ] **F8.2 Estado da UI sobrevive a recarregar.** Perfil, projeto e aba ativa no `sessionStorage`.
+  Pronto quando: recarregar a página volta para o mesmo lugar. Como testar: vitest do store.
+- [ ] **F8.3 hubd serve a UI.** `just build-ui`; `GET /ui/*` de `~/.assistente/versoes/atual/ui`; `commit` (UI e hubd) em `/api/health`.
+  Pronto quando: o teste de integração baixa `/ui/` e o `index.html` aponta para os assets servidos. Como testar: `./dev cargo test -p hubd`.
+- [ ] **F8.4 Casca carrega a UI do hubd** *(humano)*. Capability `remote.urls`, comando `host_api_version`, UI embutida como reserva (hubd fora, UI ausente ou sem "pronta" em 10 s).
+  Pronto quando: o app abre com a UI do hubd; com o hubd parado, abre a reserva com o erro. Como testar: app real com a VM.
+- [ ] **F8.5 Atualizador na VM.** `vm/atualizar.sh` (worktree do commit, `just check`, build, `versoes/atual`, restart com volta automática); `GET /api/update`, `POST /api/update/apply`, `POST /api/update/rollback`; `hubd.service` com `ExecStart=%h/.assistente/versoes/atual/hubd` e `Restart=always`.
+  Pronto quando: aplicar um commit que quebra o `/api/health` volta sozinho para a versão anterior. Como testar: script com repo de teste no devenv + manual na VM.
+- [ ] **F8.6 Aba e painel Assistente.** `[self_update]` na config; botão fixo; painel com commit em uso, pendentes, camadas tocadas, Aplicar, log e Voltar.
+  Pronto quando: dá para aplicar e voltar sem sair do app. Como testar: vitest com dados fake + manual.
+- [ ] **F8.7 Recarregar ao aplicar.** O app nota o commit novo da UI no `/api/health` e recarrega; commit que toca `app/src-tauri` mostra "reinstale o app".
+  Pronto quando: aplicar uma mudança de texto na UI aparece sem fechar o app e com os terminais vivos. Como testar: manual na VM.
+
 ## Depois
 
 - Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.

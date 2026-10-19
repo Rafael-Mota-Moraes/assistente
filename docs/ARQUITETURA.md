@@ -56,6 +56,12 @@ espelho no host.
 inicia `dorme` num tmux do notebook. De manhã, "Recolher" faz `git fetch` de `dorme/<data>` e
 `agente/*` para `refs/remotes/notebook/*` e mostra commits, RELATORIO.md e o merge.
 
+**Auto-atualização (F8).** A aba Assistente é uma sessão de agente no próprio repo. Com
+"Aplicar", o hubd lança `vm/atualizar.sh` fora do jail: ele faz um worktree limpo do commit,
+roda `just check`, compila a UI e o hubd em `~/.assistente/versoes/<commit>` e troca o link
+`atual`. O hubd reinicia sem matar o tmux, e o app recarrega a UI servida pelo hubd. A casca
+Tauri ainda precisa de `assistente atualizar` (spec 09).
+
 ## Decisões
 
 1. **VM Incus em vez de Docker.** O ai-jail (bubblewrap + Landlock) não foi feito para rodar

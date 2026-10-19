@@ -38,14 +38,16 @@ Host notebook
 - Processo filho: `ssh -N -o ExitOnForwardFailure=yes -L 20128:127.0.0.1:20128 -L
   49374:127.0.0.1:49374 notebook` (portas vindas de `[notebook.tunnel]`).
 - Reinício com backoff exponencial (1 s → 30 s); estado `connecting|up|down` + último erro.
-- `/api/notebook` passa a ter `tunnel_managed: true` e o estado do SSH; os serviços continuam
-  sendo testados com connect TCP em 127.0.0.1 (já implementado).
+- `/api/notebook` passa a ter `tunnel_managed: true` e o estado do SSH; os serviços são
+  testados por HTTP em 127.0.0.1 (F4.3, implementado).
 - **Porta ocupada**: no PC de hoje o próprio `opencode` escuta em `127.0.0.1:49374` (a porta
   padrão do ai-memory), visto em 2026-10-19 com `ss -ltnp`. Se isso acontecer na VM, o `-L` falha
   (`ExitOnForwardFailure`) e o hubd precisa dizer "porta 49374 ocupada por <processo>", não
   só "caído". Se for frequente, troque a porta local em `[notebook.tunnel]` (a remota continua igual).
-- **Saúde de verdade (F4.3)**: o connect TCP de hoje dá falso positivo quando outro processo
-  ocupa a porta. Trocar por HTTP: `GET /v1/models` no 9router e `GET /` no ai-memory.
+- **Saúde de verdade (F4.3, feito)**: o connect TCP dava falso positivo quando outro processo
+  ocupa a porta. Hoje a checagem é HTTP: `GET /v1/models` no 9router e `GET /` no ai-memory
+  (resposta 401/403 conta como serviço de pé). `/api/notebook` devolve `last_error` e
+  `checked_at` por serviço, que a UI mostra no tooltip do ponto.
 - Alternativa avaliada: `autossh` (instalado na VM) como unidade systemd separada. Mais simples,
   mas o hubd perde o estado fino; fica como plano B.
 

@@ -58,7 +58,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `ssh notebook true` funciona de dentro da VM sem senha. Como testar: o próprio comando.
 - [x] **F4.2 Túnel gerenciado pelo hubd.** Feito em `crates/hubd/src/tunnel.rs`; reconexão testada matando o `ssh` (volta em ~1 s). Falta o teste automático com sshd no devenv. Processo `ssh -N -L …` com backoff, `ServerAliveInterval` e estado exposto em `/api/notebook` (`tunnel_managed: true`).
   Pronto quando: desligar o Wi-Fi do notebook e religar restabelece o túnel em até 30 s. Como testar: teste com sshd local no devenv + manual.
-- [ ] **F4.3 Saúde do notebook na UI.** Pontos para SSH, 9router e ai-memory, com última verificação e erro no tooltip. Trocar o connect TCP por checagem HTTP (outro processo na porta dá falso positivo; ver spec 07).
+- [x] **F4.3 Saúde do notebook na UI.** Pontos para SSH (túnel, F4.2), 9router e ai-memory, com última verificação e erro no tooltip. Checagem HTTP em `/api/notebook` (`GET /v1/models` no 9router, `GET /` no ai-memory; 401/403 = de pé), `last_error` + `checked_at` por serviço. Testes: rota com servidor HTTP falso + `StatusBar.test.tsx`.
   Pronto quando: cada serviço caído aparece vermelho. Como testar: parar o 9router no notebook.
 
 ## F5 — Memória

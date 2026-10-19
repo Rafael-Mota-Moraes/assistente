@@ -146,6 +146,10 @@ fn jail_argv(
     // cai no workspace "default" (criado por vm/configurar-agentes.sh).
     argv.push("--map".to_owned());
     argv.push(profile_root.join(".ai-memory.toml").display().to_string());
+    // Sem isto o proxy de terminal do ai-jail descarta o OSC 52, e copiar com o mouse no
+    // claude/opencode (que prendem o mouse e copiam sozinhos) não chega ao app. Do outro lado
+    // está o tmux, que só repassa ao app o OSC 52 de escrita (set-clipboard on).
+    argv.push("--terminal-passthrough".to_owned());
     for (key, _) in env {
         argv.push("--env".to_owned());
         argv.push(key.clone());
@@ -264,6 +268,7 @@ mod tests {
         assert!(argv.contains("--map /home/rafa/.local/lib/ai-memory"));
         assert!(argv.contains("--rw-map /home/rafa/.local/share/ai-memory"));
         assert!(argv.contains("--map /home/rafa/Documentos/pessoal/projetos/.ai-memory.toml"));
+        assert!(argv.contains(" --terminal-passthrough "));
         assert!(argv.ends_with(" -- claude"));
         // Toda variável do perfil entra por nome, nunca com o valor na linha de comando.
         for (key, value) in &plan.env {

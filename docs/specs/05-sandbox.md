@@ -30,6 +30,7 @@ O `LaunchPlan` (`hub_core::session::jail_argv`) monta:
 | `--map ~/.local/lib/ai-memory` | binário que os hooks chamam |
 | `--rw-map ~/.local/share/ai-memory` | spool local dos hooks (notebook fora do ar) |
 | `--map <raiz do perfil>/.ai-memory.toml` | marcador do workspace; sem ele a memória cai em `default` |
+| `--terminal-passthrough` | o proxy de terminal do ai-jail descarta o OSC 52: sem isso copiar com o mouse no claude/opencode não chega ao app. O agente passa a escrever direto no painel do tmux, que só repassa ao app o OSC 52 de escrita |
 | `--env NOME` (uma por variável do perfil) | o valor vem do env do tmux, não aparece na linha de comando |
 | `-- claude` / `-- opencode` | o preset vale com ou sem `--` |
 

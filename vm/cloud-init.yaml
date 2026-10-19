@@ -4,13 +4,19 @@
 #
 # O usuário tem o MESMO nome e UID do host: as pastas montadas por virtiofs ficam com o dono
 # certo e os caminhos são idênticos dos dois lados (o app abre no Cursor o caminho do hubd).
+# O grupo primário também precisa do GID do host; senão o grupo `docker` (criado depois)
+# pode pegar o GID 1000 e os arquivos montados aparecem como "<usuario>:docker".
+bootcmd:
+  - [sh, -c, "getent group @GID@ >/dev/null || groupadd -g @GID@ @USER@"]
+
 users:
   - name: "@USER@"
-    uid: "@UID@"
+    uid: @UID@
+    primary_group: "@USER@"
+    no_user_group: true
     shell: /bin/bash
     groups: [docker]
     lock_passwd: true
-    ssh_authorized_keys: []
 
 package_update: true
 packages:

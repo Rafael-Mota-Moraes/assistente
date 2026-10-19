@@ -1,7 +1,5 @@
 # ai-jail sandbox configuration
+# https://github.com/akitaonrails/ai-jail
 # Edit freely. Regenerate with: ai-jail --clean --init
-# Dentro da VM este repo roda como qualquer outro projeto: só a pasta do projeto é gravável.
 
 command = ["claude"]
-rw_maps = []
-ro_maps = []

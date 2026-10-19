@@ -14,6 +14,12 @@ o que exige o host (`src/bridge/host.ts` ↔ `app/src-tauri/src/main.rs`):
 | `vm_status` | `incus list` → `running|stopped|missing|no-incus|unknown` |
 | `open_in_cursor` | abre `cursor <caminho>` se o caminho estiver dentro de uma raiz de perfil |
 
+**Mixed content (validado em 2026-10-19):** no Linux a página do app vem de `tauri://localhost`,
+que o WebKit trata como origem segura, e `fetch` para `http://10.77.0.10` é bloqueado em
+silêncio. Por isso o HTTP passa pelo `tauri-plugin-http` (`hubFetch` em `bridge/host.ts`),
+com escopo em `app/src-tauri/capabilities/default.json` (mudou IP/porta da VM? atualize lá).
+O WebSocket dos terminais (F2.3) vai ter o mesmo problema: usar `tauri-plugin-websocket`.
+
 Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o hub é
 `http://127.0.0.1:7878`, o que basta para desenvolver a UI.
 

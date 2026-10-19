@@ -19,7 +19,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 - [ ] **F1.1 instalar.sh no PC zerado** *(humano)*. Instala Incus/QEMU, cria a config, token, VM e o app.
   Pronto quando: num Pop!_OS limpo, `./instalar.sh` termina e o app abre conectado. Como testar: VM de teste com Pop!_OS.
-- [ ] **F1.2 Criação da VM** *(humano)*. `bin/assistente vm criar`: rede `assistente0`, IP fixo, cloud-init, montagens virtiofs.
+- [x] **F1.2 Criação da VM** *(humano)*. Validado em 2026-10-19 no Pop!_OS 24.04 (Incus 6.0.0). `bin/assistente vm criar`: rede `assistente0`, IP fixo, cloud-init, montagens virtiofs.
   Pronto quando: `incus exec assistente -- touch <raiz>/x` cria arquivo com seu dono no host. Como testar: o próprio comando.
 - [ ] **F1.3 Provisionamento.** `vm/provisionar.sh` com versões fixas e checksums (sem `latest`).
   Pronto quando: rodar duas vezes seguidas não falha nem reinstala nada. Como testar: `incus exec … bash provisionar.sh` duas vezes.
@@ -34,7 +34,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: trocar de perfil troca a lista sem misturar. Como testar: vitest do ProjectList + teste de rota.
 - [ ] **F2.2 Ciclo de vida das sessões.** `POST/GET/DELETE /api/sessions` com tmux; lista sobrevive a restart do hubd (lê `tmux ls`).
   Pronto quando: os testes de integração com tmux real (no devenv) passam. Como testar: `./dev cargo test -p hubd`.
-- [ ] **F2.3 Terminal por WebSocket.** `/api/sessions/{id}/terminal`: `tmux attach` em PTY (`portable-pty`), resize, vários espectadores.
+- [ ] **F2.3 Terminal por WebSocket.** `/api/sessions/{id}/terminal`: `tmux attach` em PTY (`portable-pty`), resize, vários espectadores. No app, o WS passa pelo `tauri-plugin-websocket` (mixed content, ver spec 03).
   Pronto quando: `vim` funciona com redimensionamento pela UI. Como testar: abrir sessão `bash` e redimensionar a janela.
 - [ ] **F2.4 Abas de terminal na UI.** xterm.js com addons fit e web-links, tema igual ao app, atalhos (Ctrl+Shift+T/W, Ctrl+Tab).
   Pronto quando: abrir, alternar e fechar abas sem perder a sessão. Como testar: vitest + uso manual.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # CLI do host para o Assistente (a VM, backups e o notebook). O app Tauri cobre o dia a dia.
-#   assistente vm criar|iniciar|parar|shell|recriar|status
+#   assistente vm criar|provisionar|iniciar|parar|shell|recriar|status
 #   assistente login claude|opencode <perfil>   login do agente dentro da VM, por perfil
 #   assistente token                            gera ~/.config/assistente/hub.token
 #   assistente backup [arquivo.tar.gz]          config + espelho da memória + logins da VM
@@ -48,7 +48,7 @@ vm_criar() {
     || incus network create "$NET" ipv4.address="$NET_CIDR" ipv4.nat=true ipv6.address=none
 
   local userdata
-  userdata="$(sed -e "s/@USER@/$(id -un)/" -e "s/@UID@/$(id -u)/" "$ROOT/vm/cloud-init.yaml")"
+  userdata="$(sed -e "s/@USER@/$(id -un)/g" -e "s/@UID@/$(id -u)/g" -e "s/@GID@/$(id -g "$(id -un)")/g" "$ROOT/vm/cloud-init.yaml")"
   incus init "$(cfg vm.image)" "$name" --vm \
     -c limits.cpu="$(cfg vm.cpus)" -c limits.memory="$(cfg vm.memory)" \
     -c cloud-init.user-data="$userdata" \
@@ -71,15 +71,39 @@ vm_criar() {
   incus config device add "$name" memoria disk source="$mirror" path="$mirror"
 
   incus start "$name"
-  echo "Esperando o cloud-init..."
-  incus exec "$name" -- cloud-init status --wait
+  vm_provisionar
+}
+
+# Espera o incus-agent da VM responder (logo após o start ele ainda não subiu).
+vm_esperar_agente() {
+  local name="$1" i
+  for i in $(seq 1 90); do
+    incus exec "$name" -- true >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  die "o agente da VM $name não respondeu em 3 min"
+}
+
+# Reexecutável: compila o hubd e roda vm/provisionar.sh na VM já criada.
+vm_provisionar() {
+  local name
+  name="$(cfg vm.name)"
+  echo "Esperando a VM e o cloud-init..."
+  vm_esperar_agente "$name"
+  # 0 = ok, 2 = concluído com avisos recuperáveis; o resto é falha.
+  local rc=0
+  incus exec "$name" -- cloud-init status --wait >/dev/null || rc=$?
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+    die "cloud-init falhou (rc=$rc): incus exec $name -- cloud-init status --long"
+  fi
+  [ "$rc" -eq 2 ] && echo "cloud-init com avisos: incus exec $name -- cloud-init schema --system"
 
   echo "Compilando o hubd (container ./dev)..."
   "$ROOT/dev" just build-hubd
   incus exec "$name" -- mkdir -p /tmp/assistente
-  incus file push "$ROOT/target/release/hubd" "$name/tmp/assistente/hubd"
-  incus file push "$ROOT/vm/hubd.service" "$name/tmp/assistente/hubd.service"
-  incus file push "$ROOT/vm/provisionar.sh" "$name/tmp/assistente/provisionar.sh"
+  incus file push -q "$ROOT/target/release/hubd" "$name/tmp/assistente/hubd"
+  incus file push -q "$ROOT/vm/hubd.service" "$name/tmp/assistente/hubd.service"
+  incus file push -q "$ROOT/vm/provisionar.sh" "$name/tmp/assistente/provisionar.sh"
   incus exec "$name" -- bash /tmp/assistente/provisionar.sh "$(id -un)"
   echo "VM pronta. Próximo: assistente login claude pessoal"
 }
@@ -89,6 +113,7 @@ cmd_vm() {
   name="$(cfg vm.name)"
   case "${1:-status}" in
     criar) vm_criar ;;
+    provisionar) vm_provisionar ;;
     iniciar) incus start "$name" ;;
     parar) incus stop "$name" ;;
     shell) incus exec "$name" -- sudo -u "$(id -un)" -i ;;
@@ -99,7 +124,7 @@ cmd_vm() {
       vm_criar
       ;;
     status) incus list "^$name\$" ;;
-    *) die "uso: assistente vm criar|iniciar|parar|shell|recriar|status" ;;
+    *) die "uso: assistente vm criar|provisionar|iniciar|parar|shell|recriar|status" ;;
   esac
 }
 

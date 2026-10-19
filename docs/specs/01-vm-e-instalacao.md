@@ -65,9 +65,24 @@ Roteiro:
 4. `bin/assistente login claude pessoal` (e os outros perfis/agentes).
 5. Abra o app.
 
-## Pontos a validar
+## Validado em 2026-10-19 (Pop!_OS 24.04, Incus 6.0.0)
 
-- Pacotes do Incus para VM no Pop!_OS 24.04 (`incus`, `qemu-system-x86`, `ovmf`) e se o
-  `incus admin init --minimal` conflita com a rede própria.
-- virtiofs com UID igual sem `shift=true`.
-- `incus config device override eth0 ipv4.address=…` com a NIC vinda da rede `assistente0`.
+- `qemu-system-x86` e `ovmf` já vinham instalados; só faltou o pacote `incus`.
+- virtiofs com UID/GID iguais funciona **sem** `shift`: arquivo criado na VM aparece `1000:1000` no host.
+- A rede `assistente0` + `ipv4.address` fixo funciona ao lado do `incusbr0` do `init --minimal`.
+- O Docker do host não bloqueou o encaminhamento: a VM tem internet pelo NAT.
+- Sem logout: `sg incus-admin -c "bin/assistente …"` serve até o próximo login.
+
+Pegadinhas encontradas (já tratadas nos scripts):
+
+- `incus exec` logo após `start` falha ("VM agent isn't currently running"): `vm_esperar_agente`.
+- `cloud-init status --wait` sai com 2 para avisos de schema; tratado como sucesso com aviso.
+- `ssh_authorized_keys: []` é inválido no schema do cloud-init.
+- Sem `bootcmd` com o GID do host, o grupo `docker` pega o GID 1000.
+- Dentro de `sg incus-admin`, `id -g` devolve o GID do incus-admin: usar `id -g "$(id -un)"`.
+- O Incus cria `/home/<usuario>` como root (por causa dos pontos de montagem): o
+  `provisionar.sh` corrige o dono e copia o `/etc/skel`.
+- O opencode instala em `~/.opencode/bin` e só mexe no `.bashrc`: link em `~/.local/bin` e
+  `PATH` explícito no `hubd.service`.
+- Versões instaladas: Claude Code 2.1.303, opencode 1.19.3, ai-jail 2.10.0 (Landlock
+  "fully enforced" na VM), ai-memory **3.1.1** (as specs foram escritas olhando a 2.0).

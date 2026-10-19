@@ -133,6 +133,9 @@ fn open_in_cursor(path: String) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
+        // HTTP pelo lado Rust: o WebKit bloqueia fetch de tauri://localhost para http://<ip da VM>
+        // (mixed content). Escopo liberado em capabilities/default.json.
+        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             hub_connection,
             vm_status,

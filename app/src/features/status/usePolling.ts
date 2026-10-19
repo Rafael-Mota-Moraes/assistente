@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { hubConnection, vmStatus } from "../../bridge/host";
+import { hubConnection, hubFetch, vmStatus } from "../../bridge/host";
 import { HubClient } from "../../bridge/hub";
 import { useAppStore } from "../../store";
 
@@ -16,7 +16,7 @@ export function usePolling() {
       let { hub } = useAppStore.getState();
       try {
         if (!hub) {
-          hub = new HubClient(await hubConnection());
+          hub = new HubClient(await hubConnection(), hubFetch);
           set({ hub });
         }
         const [health, vm] = await Promise.all([hub.health(), vmStatus()]);

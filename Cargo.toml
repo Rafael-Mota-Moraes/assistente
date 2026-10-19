@@ -22,3 +22,4 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 tauri = "=2.12.1"
 tauri-build = "=2.7.1"
+tauri-plugin-http = "=2.8.0"

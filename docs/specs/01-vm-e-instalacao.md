@@ -88,5 +88,8 @@ Pegadinhas encontradas (já tratadas nos scripts):
   (versão fixa, sha512 conferido), sem precisar de Node na VM. Trocou a versão? Rode
   `assistente agentes configurar`: o `ai-memory install-hooks` gera o plugin de hooks para a
   API da versão instalada (o do 1.x não carrega no 2.x: "1 plugin failed").
-- Versões instaladas: Claude Code 2.1.303, opencode 2.0.23, ai-jail 2.10.0 (Landlock
-  "fully enforced" na VM), ai-memory **3.1.1** (as specs foram escritas olhando a 2.0).
+- Versões instaladas (constantes no topo de `vm/provisionar.sh`, F1.3): Claude Code 2.1.303,
+  opencode 2.0.23, ai-jail 2.10.0 (Landlock "fully enforced" na VM), ai-memory **3.1.1**
+  (as specs foram escritas olhando a 2.0). O script é reexecutável: se a versão já está no PATH,
+  pula o download; senão instala (ai-jail com sha256 do release, opencode com sha512 do npm,
+  ai-memory via `install.sh` da release, Claude via `install.sh` com número de versão).

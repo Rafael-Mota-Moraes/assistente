@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
 # Provisiona a VM do Assistente. Roda como root DENTRO da VM; reexecutável.
 #   bin/assistente vm criar   (copia este script, o hubd e a unidade e chama aqui)
-# NÃO TESTADO (F1.3). Spec: docs/specs/01-vm-e-instalacao.md
+# Spec: docs/specs/01-vm-e-instalacao.md (F1.3)
 set -euo pipefail
 
 USER_NAME="${1:?uso: provisionar.sh <usuario>}"
 HOME_DIR="/home/$USER_NAME"
 as_user() { sudo -u "$USER_NAME" -H bash -lc "$1"; }
 
-AI_JAIL_URL="https://github.com/akitaonrails/ai-jail/releases/latest/download/ai-jail-linux-x86_64.tar.gz"
-AI_MEMORY_INSTALL="https://github.com/akitaonrails/ai-memory/releases/latest/download/install.sh"
-# TODO(F1.3): fixar versões e verificar checksums em vez de "latest".
+AI_JAIL_VERSION="2.10.0"
+AI_JAIL_URL="https://github.com/akitaonrails/ai-jail/releases/download/v${AI_JAIL_VERSION}/ai-jail-linux-x86_64.tar.gz"
+AI_JAIL_SHA256="cd4b4b5dad69d6fb11a0cd9a17e6c2e1848cac4ba3d8da0a507a6eb535dc0714"
+
+CLAUDE_VERSION="2.1.303"
+CLAUDE_INSTALL="https://claude.ai/install.sh"
+
+AI_MEMORY_VERSION="3.1.1"
+AI_MEMORY_INSTALL="https://github.com/akitaonrails/ai-memory/releases/download/v${AI_MEMORY_VERSION}/install.sh"
+
 # O opencode 2 sai no npm como @opencode/cli (o instalador do opencode.ai só instala o 1.x). O
 # binário vem do pacote da plataforma, numa versão fixa publicada há 14+ dias e conferida pelo
 # sha512 (o `dist.integrity` do registry).
 OPENCODE_VERSION="2.0.23"
 OPENCODE_URL="https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-$OPENCODE_VERSION.tgz"
 OPENCODE_SHA512="5CQisdKXLDXVjUZYF1ROqIH/HS5YUwo4SjEBJ3DndATJL2vFgbvN0pqZQkKQqBjUrZ19jNXDHvp+LP/uGIECAQ=="
+
+sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 
 echo "==> home do usuário"
 # O Incus cria /home/<usuario> (e as pastas até os pontos de montagem) como root antes do
@@ -27,15 +36,28 @@ cp -rn /etc/skel/. "$HOME_DIR/"
 chown "$USER_NAME:" "$HOME_DIR"/.bashrc "$HOME_DIR"/.profile "$HOME_DIR"/.bash_logout 2>/dev/null || true
 
 echo "==> ai-jail"
-if ! command -v ai-jail >/dev/null; then
+if command -v ai-jail >/dev/null && ai-jail --version 2>/dev/null | grep -q "$AI_JAIL_VERSION"; then
+  :
+else
+  echo "    ai-jail $AI_JAIL_VERSION"
   tmp="$(mktemp -d)"
-  curl -fsSL "$AI_JAIL_URL" | tar -xz -C "$tmp"
+  curl -fsSL "$AI_JAIL_URL" -o "$tmp/ai-jail.tar.gz"
+  [ "$(sha256_file "$tmp/ai-jail.tar.gz")" = "$AI_JAIL_SHA256" ] || {
+    echo "sha256 do ai-jail não confere" >&2
+    exit 1
+  }
+  tar -xzf "$tmp/ai-jail.tar.gz" -C "$tmp"
   install -m755 "$tmp/ai-jail" /usr/local/bin/ai-jail
   rm -rf "$tmp"
 fi
 
 echo "==> agentes (instalados no usuário)"
-as_user 'command -v claude >/dev/null || curl -fsSL https://claude.ai/install.sh | bash'
+if as_user "command -v claude >/dev/null && claude --version 2>/dev/null | grep -q \"$CLAUDE_VERSION\""; then
+  :
+else
+  echo "    claude $CLAUDE_VERSION"
+  as_user "curl -fsSL '$CLAUDE_INSTALL' | bash -s -- $CLAUDE_VERSION"
+fi
 if ! as_user "$HOME_DIR/.opencode/bin/opencode --version 2>/dev/null" | grep -q "$OPENCODE_VERSION\$"; then
   echo "    opencode $OPENCODE_VERSION"
   tmp="$(mktemp -d)"
@@ -51,7 +73,12 @@ fi
 as_user 'mkdir -p ~/.local/bin && ln -sf ~/.opencode/bin/opencode ~/.local/bin/opencode'
 
 echo "==> ai-memory (cliente; o servidor fica no notebook, via túnel em 127.0.0.1:49374)"
-as_user "command -v ai-memory >/dev/null || curl -fsSL $AI_MEMORY_INSTALL | sh"
+if as_user "command -v ai-memory >/dev/null && ai-memory --version 2>/dev/null | grep -q \"$AI_MEMORY_VERSION\""; then
+  :
+else
+  echo "    ai-memory $AI_MEMORY_VERSION"
+  as_user "curl -fsSL '$AI_MEMORY_INSTALL' | AI_MEMORY_VERSION='$AI_MEMORY_VERSION' sh"
+fi
 # TODO(F5.2): install-mcp/install-hooks por perfil (CLAUDE_CONFIG_DIR / OPENCODE_CONFIG)
 # com --server-url http://127.0.0.1:49374 e o token do servidor.
 

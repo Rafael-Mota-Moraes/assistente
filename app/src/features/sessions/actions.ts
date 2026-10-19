@@ -18,6 +18,7 @@ export async function openSession(agent: AgentKind) {
     useAppStore.setState({
       sessions: [...sessions.filter((s) => s.id !== session.id), session],
       activeSession: session.id,
+      lastAgent: agent,
       actionError: null,
     });
   } catch (error) {
@@ -34,6 +35,9 @@ export async function endSession(id: string) {
     useAppStore.setState((s) => ({
       sessions: s.sessions.filter((x) => x.id !== id),
       activeSession: s.activeSession === id ? null : s.activeSession,
+      // Se a aba estava fechada, o id sai da lista: uma sessão nova com o mesmo id
+      // (pessoal--game--claude-1 recriada) não pode nascer escondida.
+      closedTabs: s.closedTabs.filter((x) => x !== id),
       actionError: null,
     }));
   } catch (error) {

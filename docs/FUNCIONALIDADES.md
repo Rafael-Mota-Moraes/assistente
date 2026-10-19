@@ -30,17 +30,17 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 ## F2 — Sessões
 
-- [ ] **F2.1 Perfis e projetos completos.** Cor e rótulo na UI, projetos por perfil, contagem de sessões por projeto.
+- [x] **F2.1 Perfis e projetos completos.** Cor e rótulo na UI, projetos por perfil, contagem de sessões por projeto. Testes: `ProjectList.test.tsx` (vitest) e `projects_do_not_mix_between_profiles` (rota).
   Pronto quando: trocar de perfil troca a lista sem misturar. Como testar: vitest do ProjectList + teste de rota.
 - [x] **F2.2 Ciclo de vida das sessões.** `POST/GET/DELETE /api/sessions` com tmux; lista sobrevive a restart do hubd (lê `tmux ls`). Feito em `crates/hubd/src/sessions.rs` (metadados em opções `@assistente_*` do tmux).
   Pronto quando: os testes de integração com tmux real (no devenv) passam. Como testar: `./dev cargo test -p hubd`.
 - [x] **F2.3 Terminal por WebSocket.** `/api/sessions/{id}/terminal`: `tmux attach` em PTY (`portable-pty`), resize, vários espectadores. No app, o WS passa pelo `tauri-plugin-websocket` (mixed content, ver spec 03). Feito em `crates/hubd/src/terminal.rs`; teste de ponta a ponta digita e lê de volta.
   Pronto quando: `vim` funciona com redimensionamento pela UI. Como testar: abrir sessão `bash` e redimensionar a janela.
-- [ ] **F2.4 Abas de terminal na UI.** xterm.js com addons fit e web-links, tema igual ao app, atalhos (Ctrl+Shift+T/W, Ctrl+Tab). Feito: abas por projeto, xterm.js + fit, tema, encerrar pela aba. Falta: atalhos e web-links.
+- [x] **F2.4 Abas de terminal na UI.** xterm.js com addons fit e web-links, tema igual ao app, atalhos (Ctrl+Shift+T/W/P, Ctrl+Tab, Ctrl+1..9) em `features/sessions/shortcuts.ts`; fechar aba esconde sem matar a sessão (seta na barra reabre); web-links abre pelo comando de host `open_url` (xdg-open, só http/https). Testes: `shortcuts.test.ts` + `SessionArea.test.tsx`.
   Pronto quando: abrir, alternar e fechar abas sem perder a sessão. Como testar: vitest + uso manual.
 - [x] **F2.5 Botões Claude / OpenCode.** Habilitar na área de sessões; nome da aba = agente + número. Validado na VM real: opencode no ai-jail com 9router e MCP do ai-memory.
   Pronto quando: um clique abre o agente no projeto, no perfil certo. Como testar: conferir `echo $CLAUDE_CONFIG_DIR` na sessão.
-- [ ] **F2.6 Abrir no Cursor.** Já existe o comando de host; falta feedback de erro (toast).
+- [x] **F2.6 Abrir no Cursor.** Erro do comando de host vira toast no rodapé (`ui/Toast.tsx`, some em 6 s). Testes: `Toast.test.tsx` + caso no `ProjectList.test.tsx`.
   Pronto quando: o erro aparece na UI quando o Cursor não está instalado. Como testar: renomear o binário e clicar.
 
 ## F3 — Sandbox

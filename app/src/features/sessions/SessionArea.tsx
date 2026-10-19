@@ -1,8 +1,9 @@
-import { Bot, TerminalSquare, X } from "lucide-react";
+import { Bot, RotateCcw, TerminalSquare, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { AgentKind, SessionInfo } from "../../bridge/types";
-import { useAppStore } from "../../store";
+import { useAppStore, visibleProjectSessions } from "../../store";
 import { endSession, openSession } from "./actions";
+import { reopenTab } from "./shortcuts";
 import { TerminalView } from "./TerminalView";
 
 const agents: { id: AgentKind; label: string; icon: typeof Bot }[] = [
@@ -19,8 +20,16 @@ export function tabLabel(session: SessionInfo): string {
 }
 
 export function SessionArea() {
-  const { activeProject, activeProfile, hubError, sessions, activeSession, actionError, profiles } =
-    useAppStore();
+  const {
+    hubError,
+    sessions,
+    activeSession,
+    actionError,
+    profiles,
+    activeProfile,
+    activeProject,
+    closedTabs,
+  } = useAppStore();
   const color = profiles.find((p) => p.id === activeProfile)?.color ?? "#a78bfa";
 
   if (hubError) {
@@ -38,8 +47,15 @@ export function SessionArea() {
   const projectSessions = sessions.filter(
     (s) => s.profile === activeProfile && s.project === activeProject,
   );
-  const current =
-    projectSessions.find((s) => s.id === activeSession) ?? projectSessions.at(-1) ?? null;
+  const visible = visibleProjectSessions({
+    activeProfile,
+    activeProject,
+    sessions,
+    closedTabs,
+  });
+  const hidden = projectSessions.filter((s) => closedTabs.includes(s.id));
+  const lastHidden = hidden.at(-1) ?? null;
+  const current = visible.find((s) => s.id === activeSession) ?? visible.at(-1) ?? null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -71,8 +87,8 @@ export function SessionArea() {
         </Empty>
       ) : (
         <>
-          <div className="flex gap-1 border-b border-line px-3 pt-2" role="tablist">
-            {projectSessions.map((session) => {
+          <div className="flex items-center gap-1 border-b border-line px-3 pt-2" role="tablist">
+            {visible.map((session) => {
               const active = session.id === current?.id;
               return (
                 <div
@@ -109,8 +125,25 @@ export function SessionArea() {
                 </div>
               );
             })}
+            {lastHidden && (
+              <button
+                type="button"
+                title={`Reabrir ${tabLabel(lastHidden)} (a sessão continuou viva)`}
+                onClick={() => reopenTab(lastHidden.id)}
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-500 hover:text-slate-200"
+              >
+                <RotateCcw className="size-3.5" /> {hidden.length}
+              </button>
+            )}
           </div>
-          {current && <TerminalView key={current.id} sessionId={current.id} />}
+          {current ? (
+            <TerminalView key={current.id} sessionId={current.id} />
+          ) : (
+            <Empty title="Todas as abas fechadas">
+              As sessões continuam vivas na VM. Reabra pela seta acima ou por Ctrl+Shift+T para uma
+              nova.
+            </Empty>
+          )}
         </>
       )}
     </div>

@@ -131,6 +131,23 @@ fn open_in_cursor(path: String) -> Result<(), String> {
         .map_err(|e| format!("não consegui abrir o Cursor: {e}"))
 }
 
+/// Abre uma URL no navegador padrão do host (links clicáveis do terminal, F2.4).
+/// Só http/https: o terminal não pode pedir file://, javascript: etc.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let allowed = ["http://", "https://"]
+        .iter()
+        .any(|scheme| url.to_ascii_lowercase().starts_with(scheme));
+    if !allowed || url.chars().any(|c| c.is_control()) {
+        return Err(format!("URL não permitida: {url}"));
+    }
+    Command::new("xdg-open")
+        .arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("não consegui abrir o navegador: {e}"))
+}
+
 fn main() {
     tauri::Builder::default()
         // HTTP pelo lado Rust: o WebKit bloqueia fetch de tauri://localhost para http://<ip da VM>
@@ -143,7 +160,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             hub_connection,
             vm_status,
-            open_in_cursor
+            open_in_cursor,
+            open_url
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Assistente");

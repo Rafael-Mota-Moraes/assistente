@@ -57,7 +57,13 @@ export function ProjectList() {
             <button
               type="button"
               title="Abrir no Cursor"
-              onClick={() => openInCursor(project.path).catch(() => {})}
+              onClick={() =>
+                openInCursor(project.path).catch((error: unknown) =>
+                  useAppStore.setState({
+                    toast: error instanceof Error ? error.message : String(error),
+                  }),
+                )
+              }
               className="invisible rounded-md p-1.5 text-slate-500 hover:text-white group-hover:visible"
             >
               <SquareArrowOutUpRight className="size-3.5" />

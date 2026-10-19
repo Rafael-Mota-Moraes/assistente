@@ -1,12 +1,15 @@
 import { ProfileSwitcher } from "./features/profiles/ProfileSwitcher";
 import { ProjectList } from "./features/projects/ProjectList";
 import { SessionArea } from "./features/sessions/SessionArea";
+import { useShortcuts } from "./features/sessions/shortcuts";
 import { SleepButton } from "./features/sleep/SleepButton";
 import { StatusBar } from "./features/status/StatusBar";
 import { usePolling } from "./features/status/usePolling";
+import { Toast } from "./ui/Toast";
 
 export function App() {
   usePolling();
+  useShortcuts();
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
@@ -26,6 +29,7 @@ export function App() {
         </main>
       </div>
       <StatusBar />
+      <Toast />
     </div>
   );
 }

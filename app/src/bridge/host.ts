@@ -25,3 +25,12 @@ export function openInCursor(path: string): Promise<void> {
   if (!isTauri()) return Promise.reject(new Error("só funciona no app desktop"));
   return invoke("open_in_cursor", { path });
 }
+
+/** Abre uma URL no navegador padrão (links clicáveis do terminal). */
+export function openUrl(url: string): Promise<void> {
+  if (!isTauri()) {
+    window.open(url, "_blank", "noopener");
+    return Promise.resolve();
+  }
+  return invoke("open_url", { url });
+}

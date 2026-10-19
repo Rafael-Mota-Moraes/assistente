@@ -1,7 +1,9 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
+import { openUrl } from "../../bridge/host";
 import { connectTerminal } from "../../bridge/terminal";
 import { useAppStore } from "../../store";
 import {
@@ -12,6 +14,7 @@ import {
   osc52Text,
   pasteText,
 } from "./clipboard";
+import { shortcutAction } from "./shortcuts";
 
 const theme = {
   background: "#0b0e1a",
@@ -44,6 +47,12 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // Ctrl+clique abre o link no navegador padrão do host (F2.4).
+    term.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        openUrl(uri).catch((e: Error) => console.error("abrindo o link:", e.message));
+      }),
+    );
     term.open(host.current);
     fit.fit();
     const releaseTextarea = term.textarea ? clearStaleTextarea(host.current, term.textarea) : null;
@@ -75,7 +84,15 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     });
     term.attachCustomKeyEventHandler((event) => {
       const action = clipboardShortcut(event);
-      if (!action) return true;
+      if (!action) {
+        // Atalhos de abas/perfil: engole aqui (não vão ao agente); quem executa é o
+        // listener do window em useShortcuts, quando o evento chega lá.
+        if (shortcutAction(event)) {
+          event.preventDefault();
+          return false;
+        }
+        return true;
+      }
       if (event.type === "keydown") {
         event.preventDefault();
         if (action === "copy" && term.hasSelection())

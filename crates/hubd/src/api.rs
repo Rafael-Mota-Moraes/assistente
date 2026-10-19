@@ -394,6 +394,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn projects_do_not_mix_between_profiles() {
+        let dir = std::env::temp_dir().join(format!("hubd-perfis-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let pessoal = dir.join("pessoal");
+        let trabalho = dir.join("trabalho");
+        std::fs::create_dir_all(pessoal.join("game/.git")).unwrap();
+        std::fs::create_dir_all(trabalho.join("erp/.git")).unwrap();
+        let text = EXAMPLE
+            .replace(
+                "~/Documentos/pessoal/projetos",
+                &pessoal.display().to_string(),
+            )
+            .replace("~/Documentos/trabalho", &trabalho.display().to_string());
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(&text, &home).unwrap();
+        let app = router(AppState::new(config, home, None, None, Tmux::default()));
+
+        async fn names(app: Router, profile: &str) -> Vec<String> {
+            let (status, body) = call(app, &format!("/api/projects?profile={profile}"), None).await;
+            assert_eq!(status, StatusCode::OK);
+            body.as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["name"].as_str().unwrap().to_owned())
+                .collect()
+        }
+
+        assert_eq!(names(app.clone(), "pessoal").await, ["game"]);
+        assert_eq!(names(app, "trabalho").await, ["erp"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn pending_routes_say_which_feature() {
         let (status, body) = call(app(None), "/api/sleep", None).await;
         assert_eq!(status, StatusCode::NOT_IMPLEMENTED);

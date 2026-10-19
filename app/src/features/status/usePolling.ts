@@ -25,7 +25,7 @@ export function usePolling() {
           hub.profiles(),
           hub.sessions(),
         ]);
-        const { activeProfile } = useAppStore.getState();
+        const { activeProfile, closedTabs } = useAppStore.getState();
         set({
           health,
           vm,
@@ -34,6 +34,8 @@ export function usePolling() {
           sessions,
           hubError: null,
           activeProfile: activeProfile ?? profiles[0]?.id ?? null,
+          // Aba fechada de sessão que morreu (no hubd ou por outro app) sai da lista.
+          closedTabs: closedTabs.filter((id) => sessions.some((s) => s.id === id)),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

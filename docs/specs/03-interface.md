@@ -13,6 +13,7 @@ o que exige o host (`src/bridge/host.ts` ↔ `app/src-tauri/src/main.rs`):
 | `hub_connection` | URL do hubd (`http://<vm.ip>:<porta>` ou `ASSISTENTE_HUB_URL`) + token lido do host |
 | `vm_status` | `incus list` → `running|stopped|missing|no-incus|unknown` |
 | `open_in_cursor` | abre `cursor <caminho>` se o caminho estiver dentro de uma raiz de perfil |
+| `open_url` | abre `xdg-open <url>` no navegador padrão; só `http://`/`https://` (links do terminal, F2.4) |
 
 **Mixed content (validado em 2026-10-19):** no Linux a página do app vem de `tauri://localhost`,
 que o WebKit trata como origem segura, e `fetch` para `http://10.77.0.10` é bloqueado em

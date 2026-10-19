@@ -17,7 +17,7 @@ PC (hubd)                                         notebook
 2. git push nb:~/assistente/projetos/<perfil>/<proj> \
        HEAD:refs/remotes/pc/<base>  ─────────────► clone (criado na 1ª vez)
 3. ssh: git switch -C dorme/<data> pc/<base>  ───► branch de trabalho
-4. exporta briefing do ai-memory → prompt
+4. exporta briefing do ai-memory (servidor PC/VM; réplica no notebook após sync F5.4) → prompt
    (hub_core::sleep::render_prompt)
 5. scp prompt → ~/assistente/briefings/<proj>.md
 6. ssh: tmux new -d -s dorme-<proj> \

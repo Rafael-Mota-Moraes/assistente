@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { vmStart, vmStatus, vmStop } from "../../bridge/host";
 import type { ServiceStatus, TunnelStatus, VmState } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { StatusDot, type Tone } from "../../ui/StatusDot";
@@ -35,15 +37,56 @@ export function serviceTitle(sshHost: string, service: ServiceStatus): string {
   return parts.join(" — ");
 }
 
+const vmActionClass =
+  "rounded border border-line px-1.5 py-0.5 text-[11px] text-slate-300 hover:bg-white/5 disabled:opacity-40";
+
 export function StatusBar() {
   const { vm, health, hubError, notebook } = useAppStore();
+  const [vmBusy, setVmBusy] = useState(false);
+
+  async function toggleVm(action: "start" | "stop") {
+    setVmBusy(true);
+    try {
+      if (action === "start") await vmStart();
+      else await vmStop();
+      useAppStore.setState({ vm: await vmStatus() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      useAppStore.setState({ toast: message });
+    } finally {
+      setVmBusy(false);
+    }
+  }
+
   return (
     <footer className="flex h-8 items-center gap-5 border-t border-line bg-surface-strong px-4 text-xs text-slate-400">
-      <StatusDot
-        tone={vm ? vmTone[vm.state] : "idle"}
-        label={vm ? vmLabel[vm.state] : "VM …"}
-        title={vm?.detail ?? undefined}
-      />
+      <span className="flex items-center gap-1.5">
+        <StatusDot
+          tone={vm ? vmTone[vm.state] : "idle"}
+          label={vm ? vmLabel[vm.state] : "VM …"}
+          title={vm?.detail ?? undefined}
+        />
+        {vm?.state === "stopped" && (
+          <button
+            type="button"
+            className={vmActionClass}
+            disabled={vmBusy}
+            onClick={() => toggleVm("start")}
+          >
+            {vmBusy ? "…" : "Ligar"}
+          </button>
+        )}
+        {vm?.state === "running" && (
+          <button
+            type="button"
+            className={vmActionClass}
+            disabled={vmBusy}
+            onClick={() => toggleVm("stop")}
+          >
+            {vmBusy ? "…" : "Desligar"}
+          </button>
+        )}
+      </span>
       <StatusDot
         tone={health ? "ok" : "off"}
         label={health ? `hubd ${health.version}` : "hubd offline"}

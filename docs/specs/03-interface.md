@@ -12,6 +12,7 @@ o que exige o host (`src/bridge/host.ts` ↔ `app/src-tauri/src/main.rs`):
 |---|---|
 | `hub_connection` | URL do hubd (`http://<vm.ip>:<porta>` ou `ASSISTENTE_HUB_URL`) + token lido do host |
 | `vm_status` | `incus list` → `running|stopped|missing|no-incus|unknown` |
+| `vm_start` / `vm_stop` | `incus start|stop <vm.name>` (F1.5; botões na barra de status) |
 | `open_in_cursor` | abre `cursor <caminho>` se o caminho estiver dentro de uma raiz de perfil |
 | `open_url` | abre `xdg-open <url>` no navegador padrão; só `http://`/`https://` (links do terminal, F2.4) |
 
@@ -55,7 +56,7 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
 | Sem config no host | Tela "rode ./instalar.sh" com o erro do `hub_connection` |
 | VM parada / não criada | Ponto amarelo/vermelho + botão ligar (F1.5) |
 | hubd fora do ar | Área central "Sem conexão com o hubd" com o erro e como resolver |
-| Notebook/túnel caído | Pontos vermelhos de 9router/ai-memory; sessões continuam (Claude direto funciona) |
+| Notebook/túnel caído | 9router vermelho; memória local verde após F5.0 (hoje ai-memory pode vermelho se ainda via túnel) |
 | Modo dormir ativo | Botão vira "Dormindo… (tarefa N, log)" com parar; de manhã, modal "Bom dia" (F6.6) |
 
 ## Atalhos (F2.4)

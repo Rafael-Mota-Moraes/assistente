@@ -30,12 +30,12 @@ workdir = "~/assistente"
 
 [notebook.tunnel]
 # Portas do notebook encaminhadas para 127.0.0.1 da VM pelo túnel SSH do hubd.
-# Os agentes na VM usam exatamente estes endereços (iguais aos de hoje no PC).
 "9router" = 20128
+# Legado até F5.0 (memória principal passa a ser local na VM; spec 06):
 ai_memory = 49374
 
 [memory]
-# Espelho do wiki do ai-memory (servidor principal no notebook). Fica no host, montado na VM.
+# Wiki git **principal** do ai-memory (host, montado rw na VM). Servidor na VM (F5.0).
 mirror_dir = "~/.local/share/assistente/memoria-copia"
 mirror_every_minutes = 60
 

@@ -73,21 +73,26 @@ struct VmStatus {
     detail: Option<String>,
 }
 
-/// Estado da VM pelo `incus list` (a VM é criada por `bin/assistente vm criar`).
-#[tauri::command]
-fn vm_status() -> VmStatus {
-    let name = load_config()
+fn vm_name() -> String {
+    load_config()
         .map(|c| c.vm.name)
-        .unwrap_or_else(|_| "assistente".to_owned());
-    let output = match Command::new("incus")
-        .args(["list", &format!("^{name}$"), "--format", "json"])
+        .unwrap_or_else(|_| "assistente".to_owned())
+}
+
+fn run_incus(args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new("incus")
+        .args(args)
         .output()
-    {
+        .map_err(|_| "incus não instalado".to_owned())
+}
+
+fn query_vm_status(name: &str) -> VmStatus {
+    let output = match run_incus(&["list", &format!("^{name}$"), "--format", "json"]) {
         Ok(output) => output,
-        Err(_) => {
+        Err(detail) => {
             return VmStatus {
                 state: VmState::NoIncus,
-                detail: Some("incus não instalado".into()),
+                detail: Some(detail),
             };
         }
     };
@@ -107,6 +112,51 @@ fn vm_status() -> VmStatus {
     VmStatus {
         state,
         detail: None,
+    }
+}
+
+/// Estado da VM pelo `incus list` (a VM é criada por `bin/assistente vm criar`).
+#[tauri::command]
+fn vm_status() -> VmStatus {
+    query_vm_status(&vm_name())
+}
+
+/// Liga a VM (`incus start`), idempotente se já estiver de pé.
+#[tauri::command]
+fn vm_start() -> Result<(), String> {
+    let name = vm_name();
+    match query_vm_status(&name).state {
+        VmState::Running => return Ok(()),
+        VmState::Missing => {
+            return Err("VM não criada — rode bin/assistente vm criar".into());
+        }
+        VmState::NoIncus => {
+            return Err("incus não instalado".into());
+        }
+        VmState::Stopped | VmState::Unknown => {}
+    }
+    let output = run_incus(&["start", &name])?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    }
+}
+
+/// Desliga a VM (`incus stop`), idempotente se já estiver parada ou ausente.
+#[tauri::command]
+fn vm_stop() -> Result<(), String> {
+    let name = vm_name();
+    match query_vm_status(&name).state {
+        VmState::Stopped | VmState::Missing => return Ok(()),
+        VmState::NoIncus => return Err("incus não instalado".into()),
+        VmState::Running | VmState::Unknown => {}
+    }
+    let output = run_incus(&["stop", &name])?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
     }
 }
 
@@ -160,6 +210,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             hub_connection,
             vm_status,
+            vm_start,
+            vm_stop,
             open_in_cursor,
             open_url
         ])

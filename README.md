@@ -2,7 +2,7 @@
 
 Hub pessoal para trabalhar com agentes de IA (Claude Code e OpenCode): um app desktop que abre
 sessões em projetos **pessoais** e de **trabalho**, cada uma isolada numa **VM Incus** e no
-**ai-jail**, com **memória compartilhada** (ai-memory) e o **9router** do notebook, e que à noite
+**ai-jail**, com **memória** (ai-memory no PC/VM) e **9router** do notebook, e que à noite
 entrega o trabalho ao notebook no **modo hora de dormir**.
 
 > Estado: **esqueleto**. Funciona: config, hubd com saúde/perfis/projetos, UI com status.

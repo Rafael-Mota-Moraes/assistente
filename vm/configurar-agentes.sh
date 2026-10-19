@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Configura os agentes da VM: provider 9router do opencode (pelo túnel), os providers do
-# opencode do PC e ai-memory do notebook para Claude Code e opencode, por perfil. Roda como o
+# Configura os agentes da VM: 9router (túnel), providers do PC, ai-memory (hoje via túnel;
+# F5.0: servidor local). Claude Code e opencode por perfil. Roda como o
 # SEU usuário dentro da VM; reexecutável. Chamado por `bin/assistente agentes configurar`, que
 # manda os providers do PC (JSON, com as chaves) pelo stdin.
 # Specs: docs/specs/04-perfis-e-projetos.md, docs/specs/06-memoria.md (F5.2, F5.3)

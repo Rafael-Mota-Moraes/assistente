@@ -3,7 +3,7 @@
 #   bash instalar.sh            (o `bin/assistente notebook instalar` copia e roda por SSH)
 # NÃO TESTADO (F4.1). Spec: docs/specs/07-notebook-e-9router.md
 #
-# O que faz: sshd, bubblewrap, tmux, git; ai-jail; servidor ai-memory (systemd do usuário);
+# O que faz: sshd, bubblewrap, tmux, git; ai-jail; ai-memory (réplica/dormir; principal no PC, spec 06);
 # pastas ~/assistente/{projetos,logs,briefings}; instala `dorme` em ~/.local/bin.
 # O que NÃO faz: instalar/configurar o 9router e o opencode (já existem aí) nem abrir portas
 # na LAN — o PC acessa tudo pelo túnel SSH.

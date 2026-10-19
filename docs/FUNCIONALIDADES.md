@@ -25,7 +25,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: rodar duas vezes seguidas não falha nem reinstala nada. Como testar: `incus exec … bash provisionar.sh` duas vezes.
 - [x] **F1.4 hubd como serviço.** systemd, logs no journal, reinício em falha. Validado: `KillMode=process`, sessão sobrevive a `systemctl restart hubd`.
   Pronto quando: `systemctl restart hubd` não derruba as sessões tmux. Como testar: abrir sessão, reiniciar, reconectar.
-- [ ] **F1.5 Estado da VM no app.** Botões ligar/desligar na barra de status (comando de host).
+- [x] **F1.5 Estado da VM no app.** Botões Ligar/Desligar na barra de status (`vm_start` / `vm_stop` no Tauri). Teste: `StatusBar.test.tsx`.
   Pronto quando: com a VM parada, o app mostra "VM parada" e liga com um clique. Como testar: `incus stop` e usar o app.
 
 ## F2 — Sessões
@@ -58,21 +58,23 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `ssh notebook true` funciona de dentro da VM sem senha. Como testar: o próprio comando.
 - [x] **F4.2 Túnel gerenciado pelo hubd.** Feito em `crates/hubd/src/tunnel.rs`; reconexão testada matando o `ssh` (volta em ~1 s). Falta o teste automático com sshd no devenv. Processo `ssh -N -L …` com backoff, `ServerAliveInterval` e estado exposto em `/api/notebook` (`tunnel_managed: true`).
   Pronto quando: desligar o Wi-Fi do notebook e religar restabelece o túnel em até 30 s. Como testar: teste com sshd local no devenv + manual.
-- [x] **F4.3 Saúde do notebook na UI.** Pontos para SSH (túnel, F4.2), 9router e ai-memory, com última verificação e erro no tooltip. Checagem HTTP em `/api/notebook` (`GET /v1/models` no 9router, `GET /` no ai-memory; 401/403 = de pé), `last_error` + `checked_at` por serviço. Testes: rota com servidor HTTP falso + `StatusBar.test.tsx`.
+- [x] **F4.3 Saúde do notebook na UI.** Pontos para túnel, 9router e (enquanto legado) ai-memory via túnel. Checagem HTTP em `/api/notebook`. **F5.0:** ai-memory sai daqui; probe local em `/api/memory`.
   Pronto quando: cada serviço caído aparece vermelho. Como testar: parar o 9router no notebook.
 
 ## F5 — Memória
 
-- [x] **F5.1 Servidor no notebook** *(humano)*. ai-memory 3.1.1 no notebook (spec 06). ai-memory como serviço em 127.0.0.1:49374 com token; descobrir caminho do wiki e do token.
-  Pronto quando: `curl` pelo túnel responde, e a spec 06 tem os caminhos reais. Como testar: `curl 127.0.0.1:49374` na VM.
-- [x] **F5.2 Clientes na VM.** `bin/assistente agentes configurar` (`vm/configurar-agentes.sh`); opencode e Claude (assinatura, perfil pessoal) validados de ponta a ponta no jail, com o MCP do ai-memory disponível e a captura no workspace certo. `install-mcp`/`install-hooks` para claude-code e opencode em cada perfil, apontando para o túnel.
-  Pronto quando: uma sessão nova recebe briefing do projeto. Como testar: abrir duas sessões seguidas e ver o contexto.
-- [x] **F5.3 Workspaces por perfil.** `.ai-memory.toml` na raiz de cada perfil (`workspace = "<memory_workspace>"`), criado por `vm/configurar-agentes.sh` e montado no jail. Validado: sessão do perfil pessoal cai no workspace `pessoal`.
-  Pronto quando: notas do trabalho não aparecem no briefing pessoal. Como testar: web UI do ai-memory.
-- [ ] **F5.4 Espelho no PC.** Job no hubd: `git fetch` do wiki para `memory.mirror_dir` a cada N minutos; estado em `/api/memory`.
-  Pronto quando: o espelho tem os commits do servidor e entra no backup. Como testar: `git -C <espelho> log`.
-- [ ] **F5.5 Painel de memória.** No começo, a web UI do ai-memory embutida (pelo túnel); depois, uma busca nativa.
-  Pronto quando: dá para ver as páginas do projeto atual sem sair do app. Como testar: manual.
+- [ ] **F5.0 Servidor principal na VM (PC).** `ai-memory serve` em `127.0.0.1:49374` na VM, wiki git em `memory.mirror_dir` (host, montado rw); systemd do usuário; token local; `provisionar.sh` + `configurar-agentes.sh` apontam para URL local; hubd **não** encaminha `:49374` no túnel; `/api/memory` com saúde; UI com ponto de memória local (notebook off = memória OK se VM de pé).
+  Pronto quando: `curl 127.0.0.1:49374/healthz` na VM sem túnel; sessão nova recebe briefing com notebook desligado. Como testar: `incus exec …`, parar notebook, abrir Claude.
+- [x] **F5.1 Servidor no notebook** *(humano, legado)*. Validado 2026-10-19 antes da topologia PC-first. Mantido como réplica/dormir até F5.4.
+  Pronto quando: (legado) `curl` pelo túnel responde. Como testar: spec 06 “Validação histórica”.
+- [x] **F5.2 Clientes na VM.** `vm/configurar-agentes.sh`; hooks/MCP por perfil. Validado com túnel (legado). **F5.0** passa token/URL do servidor local.
+  Pronto quando: briefing em sessão nova. Como testar: duas sessões seguidas.
+- [x] **F5.3 Workspaces por perfil.** `.ai-memory.toml` na raiz de cada perfil. Validado.
+  Pronto quando: workspaces não se misturam. Como testar: web UI do ai-memory.
+- [ ] **F5.4 Sync wiki PC ↔ notebook.** Job no hubd: espelho em `memory.mirror_dir` é a **fonte**; push/fetch com o notebook antes/depois do dormir (F6); estado em `/api/memory`.
+  Pronto quando: dormir usa réplica atualizada; backup inclui wiki completo. Como testar: `git -C <espelho> log` + ensaio dormir.
+- [ ] **F5.5 Painel de memória.** Web UI do ai-memory embutida apontando para o servidor **local** (VM); depois busca nativa.
+  Pronto quando: ver páginas do projeto sem sair do app. Como testar: manual.
 
 ## F6 — Modo hora de dormir
 
@@ -122,5 +124,5 @@ Spec 09. Ordem sugerida: F8.1 e F8.2 valem sozinhas; F8.4 começa por uma prova 
 - Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.
 - Acompanhar o modo dormir pelo celular (UI web servida pelo hubd através do Tailscale).
 - Mais agentes (codex, crush) — o `AgentKind` e o ai-jail já são genéricos.
-- Modo offline completo da memória (servidor local a partir do espelho quando o notebook cai).
+- Memória no notebook só como réplica de longa duração se o PC ficar meses off (fora do fluxo normal F5.4).
 - Duas VMs (pessoal/trabalho) se o trabalho exigir isolamento total.

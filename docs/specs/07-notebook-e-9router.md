@@ -7,7 +7,7 @@ Cobre R2. Funcionalidades F4.x.
 | Serviço | Endereço no notebook | Como o PC usa |
 |---|---|---|
 | 9router | `127.0.0.1:20128` (já existe, dashboard em `/dashboard`) | túnel → `127.0.0.1:20128` na VM |
-| ai-memory | `127.0.0.1:49374` | túnel → `127.0.0.1:49374` na VM |
+| ai-memory (réplica) | `127.0.0.1:49374` (opcional) | **Legado:** túnel → VM até F5.0. **Alvo:** memória principal na VM (spec 06); notebook só réplica para dormir |
 | sshd | `:22` (LAN ou Tailscale) | túnel, git e controle do modo dormir |
 | opencode + ai-jail + `dorme` | — | modo dormir (spec 08) |
 
@@ -18,9 +18,9 @@ fallback entre provedores. O `opencode.json` de hoje usa
 ## Setup (F4.1)
 
 `bin/assistente notebook instalar` copia `notebook/` e roda `notebook/instalar.sh` por SSH:
-pacotes (openssh-server, bubblewrap, tmux, git), ai-jail, ai-memory (servidor + opencode),
+pacotes (openssh-server, bubblewrap, tmux, git), ai-jail, ai-memory (cliente/réplica para dormir),
 pastas `~/assistente/{projetos,logs,briefings}`, `dorme` em `~/.local/bin`; no fim confere o
-9router e o ai-memory e mostra a chave pública da VM para autorizar.
+9router (e ai-memory se instalado) e mostra a chave pública da VM para autorizar.
 
 Pré-requisito: um alias no `~/.ssh/config` **da VM** (o hubd roda lá):
 
@@ -35,19 +35,17 @@ Host notebook
 
 ## Túnel gerenciado pelo hubd (F4.2)
 
-- Processo filho: `ssh -N -o ExitOnForwardFailure=yes -L 20128:127.0.0.1:20128 -L
-  49374:127.0.0.1:49374 notebook` (portas vindas de `[notebook.tunnel]`).
+- Processo filho: `ssh -N -o ExitOnForwardFailure=yes -L 20128:127.0.0.1:20128 … notebook`
+  (portas em `[notebook.tunnel]`). **Hoje** inclui `49374` (legado). **F5.0** remove o forward
+  de memória; só o 9router fica no túnel.
 - Reinício com backoff exponencial (1 s → 30 s); estado `connecting|up|down` + último erro.
 - `/api/notebook` passa a ter `tunnel_managed: true` e o estado do SSH; os serviços são
   testados por HTTP em 127.0.0.1 (F4.3, implementado).
-- **Porta ocupada**: no PC de hoje o próprio `opencode` escuta em `127.0.0.1:49374` (a porta
-  padrão do ai-memory), visto em 2026-10-19 com `ss -ltnp`. Se isso acontecer na VM, o `-L` falha
-  (`ExitOnForwardFailure`) e o hubd precisa dizer "porta 49374 ocupada por <processo>", não
-  só "caído". Se for frequente, troque a porta local em `[notebook.tunnel]` (a remota continua igual).
-- **Saúde de verdade (F4.3, feito)**: o connect TCP dava falso positivo quando outro processo
-  ocupa a porta. Hoje a checagem é HTTP: `GET /v1/models` no 9router e `GET /` no ai-memory
-  (resposta 401/403 conta como serviço de pé). `/api/notebook` devolve `last_error` e
-  `checked_at` por serviço, que a UI mostra no tooltip do ponto.
+- **Porta 49374 na VM (transição):** conflito entre túnel legado e servidor local (F5.0). Com
+  memória na VM, o túnel **não** deve encaminhar 49374; o hubd local usa a porta.
+- **Saúde (F4.3, feito):** HTTP em `127.0.0.1` — `GET /v1/models` no 9router; ai-memory no
+  `/api/notebook` enquanto o legado existir. **Depois de F5.0:** ai-memory sai do notebook na UI;
+  probe em `/api/memory` (servidor local).
 - Alternativa avaliada: `autossh` (instalado na VM) como unidade systemd separada. Mais simples,
   mas o hubd perde o estado fino; fica como plano B.
 

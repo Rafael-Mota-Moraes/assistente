@@ -25,7 +25,7 @@ Cobre R3 (VM) e R9 (reinstalar fácil). Funcionalidades F1.x e F7.x.
   |---|---|---|
   | raiz de cada perfil | rw | projetos |
   | `~/.config/assistente` | ro | config + token, lidos pelo hubd |
-  | `memory.mirror_dir` | rw | espelho do wiki do ai-memory |
+  | `memory.mirror_dir` | rw | wiki git principal do ai-memory (spec 06) |
 
 - **Não montado**: o resto do home do host (chaves SSH, navegador, etc.). Dentro da VM, as
   credenciais ficam em `~/.assistente/perfis/<perfil>/` (ver spec 05).
@@ -52,7 +52,7 @@ O que sobrevive à formatação e onde fica:
 |---|---|---|
 | Código do Assistente | GitHub | `git clone` |
 | Config + token | `~/.config/assistente` | `backup.tar.gz` → `instalar.sh backup.tar.gz` |
-| Memória | notebook (principal) + espelho | já está no notebook; o espelho vem no backup |
+| Memória | wiki em `memory.mirror_dir` (host) + servidor na VM (F5.0) | backup inclui espelho; réplica no notebook (F5.4) |
 | Logins dos agentes na VM | `~/.assistente/perfis` (VM) | backup (F7.1) ou `assistente login` de novo |
 | Projetos | suas pastas / GitHub | seu backup normal |
 

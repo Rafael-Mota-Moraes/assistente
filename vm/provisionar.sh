@@ -72,7 +72,7 @@ fi
 # hubd e tmux não leem o .bashrc: o opencode precisa estar no PATH.
 as_user 'mkdir -p ~/.local/bin && ln -sf ~/.opencode/bin/opencode ~/.local/bin/opencode'
 
-echo "==> ai-memory (cliente; o servidor fica no notebook, via túnel em 127.0.0.1:49374)"
+echo "==> ai-memory (cliente hoje; F5.0: servidor local em 127.0.0.1:49374, wiki em memory.mirror_dir)"
 if as_user "command -v ai-memory >/dev/null && ai-memory --version 2>/dev/null | grep -q \"$AI_MEMORY_VERSION\""; then
   :
 else

@@ -21,6 +21,16 @@ export function vmStatus(): Promise<VmStatus> {
   return invoke<VmStatus>("vm_status");
 }
 
+export function vmStart(): Promise<void> {
+  if (!isTauri()) return Promise.reject(new Error("só funciona no app desktop"));
+  return invoke("vm_start");
+}
+
+export function vmStop(): Promise<void> {
+  if (!isTauri()) return Promise.reject(new Error("só funciona no app desktop"));
+  return invoke("vm_stop");
+}
+
 export function openInCursor(path: string): Promise<void> {
   if (!isTauri()) return Promise.reject(new Error("só funciona no app desktop"));
   return invoke("open_in_cursor", { path });

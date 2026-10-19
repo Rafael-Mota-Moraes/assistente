@@ -10,39 +10,44 @@ consolida em um wiki Markdown **versionado em git** (fonte da verdade; o SQLite 
 derivado) e entrega um briefing do projeto a cada sessão nova (MCP). Tem web UI, auth por
 token, workspaces e embeddings locais (all-MiniLM-L6-v2, sem GPU). Porta padrão 49374.
 
-## Topologia escolhida
+## Topologia (decisão 2026-10-19)
+
+**Fonte da verdade no PC principal** (host + VM), não no notebook.
 
 ```
-notebook:  ai-memory serve  127.0.0.1:49374   ← principal (sempre ligado)
-           opencode (modo dormir) → local
-VM do PC:  claude/opencode → 127.0.0.1:49374 ──túnel SSH──► notebook
-host PC:   memory.mirror_dir  ← git fetch periódico do wiki (cópia + backup)
+host PC:   memory.mirror_dir  ← wiki git principal (montado rw na VM)
+VM:        ai-memory serve  127.0.0.1:49374   ← servidor principal (F5.0)
+           claude/opencode → 127.0.0.1:49374  (local, sem túnel)
+notebook:  réplica do wiki + ai-memory opcional só para o modo dormir (F5.4 / F6)
+           9router :20128 (túnel → VM, spec 07)
 ```
 
-- **Servidor no notebook** porque o notebook fica sempre ligado e o PC pode desligar à noite.
-- **Escuta só em loopback** no notebook; o PC chega pelo túnel do hubd (spec 07). Não precisa de
-  TLS nem `AI_MEMORY_ALLOWED_HOSTS` para a LAN. Token mesmo assim (`ai-memory init`).
-- **Cópia no PC**: o hubd faz `git fetch` do repositório do wiki (por SSH) para
-  `memory.mirror_dir` a cada `mirror_every_minutes` (F5.4). Esse diretório fica no host,
-  montado na VM, e entra no `bin/assistente backup`.
-- **Notebook offline**: o cliente do ai-memory guarda as capturas localmente (spool) e envia
-  depois (não usar `--require-server`). Briefing indisponível até voltar. Servir um servidor
-  local a partir do espelho fica para "Depois".
+- **Servidor na VM** porque as sessões de agente rodam lá; o wiki mora em `memory.mirror_dir`
+  no host (virtiofs, mesmo caminho), entra no backup e sobrevive a recriar a VM.
+- **Notebook desligado** não derruba memória no dia a dia: briefing, MCP e capturas falam com
+  o servidor local enquanto PC/VM estiverem ligados.
+- **Notebook** continua com 9router e o loop `dorme` (spec 08). Antes/depois do dormir, o wiki
+  **sincroniza** entre PC e notebook (F5.4); à noite o agente pode usar cópia local no notebook
+  enquanto o PC estiver off.
+- **Estado do código (transição):** até **F5.0**, o hubd ainda encaminha `:49374` pelo túnel SSH
+  para o ai-memory do notebook (setup antigo). A UI trata ai-memory como serviço do notebook
+  (F4.3). Depois de F5.0, saúde e túnel ficam só com o 9router; memória passa para `/api/memory`.
 
 ## Ligando os agentes
 
-Na VM, por perfil (F5.2), com o env do perfil:
+Na VM, por perfil (F5.2), com o env do perfil — **alvo:** URL local, não túnel:
 
 ```bash
 export AI_MEMORY_SERVER_URL=http://127.0.0.1:49374
-export AI_MEMORY_AUTH_TOKEN=<token do servidor>
+export AI_MEMORY_AUTH_TOKEN=<token do servidor na VM>
 CLAUDE_CONFIG_DIR=~/.assistente/perfis/<p>/claude ai-memory install-mcp   --client claude-code --apply
 CLAUDE_CONFIG_DIR=~/.assistente/perfis/<p>/claude ai-memory install-hooks --agent  claude-code --apply
 OPENCODE_CONFIG=…/opencode.json ai-memory install-mcp   --client opencode --apply
 OPENCODE_CONFIG=…/opencode.json ai-memory install-hooks --agent  opencode --apply
 ```
 
-No notebook: `ai-memory setup --yes --agent opencode` (feito pelo `notebook/instalar.sh`).
+`bin/assistente agentes configurar` hoje ainda copia token do notebook (legado); F5.0 passa a
+gerar/usar token do servidor local.
 
 ## Workspaces (pessoal × trabalho)
 
@@ -58,39 +63,37 @@ checkout, não o caminho absoluto, então o mesmo repo no PC (`~/Documentos/…/
 notebook (`~/assistente/projetos/pessoal/game`) cai no **mesmo projeto**. Isso é essencial
 para o modo dormir continuar do contexto do dia.
 
-## Estado real (2026-10-19, ai-memory 3.1.1)
+## Notebook offline (PC ligado)
 
-- Notebook: `ai-memory setup --yes --agent open-code` (na v3 o agente é `open-code`, não
-  `opencode`) criou o serviço `--user`, plugin + MCP do opencode, e roda com `--enable-web`.
-- Escuta em `127.0.0.1:49374`; saúde em `/healthz`; web UI em `/web`.
-- Token: `~/.local/share/ai-memory/auth-tokens/default` no notebook (dono-só-leitura). É ele
-  que os clientes da VM vão usar (F5.2).
-- Da VM, pelo túnel: `curl 127.0.0.1:49374/healthz` → `{"status":"ok"}`.
+Com F5.0: **sem impacto** nas sessões da VM — servidor local responde.
 
-## Clientes na VM (F5.2, validado em 2026-10-19)
+## PC / VM offline (notebook ligado)
 
-`bin/assistente agentes configurar` roda `vm/configurar-agentes.sh` na VM:
+Briefing e capturas no PC param. O modo dormir (F6) usa a **réplica** no notebook após sync;
+commits/notas feitos à noite voltam no **Recolher** (F6.5) junto com o código.
 
-1. **opencode/9router:** gera `~/.config/opencode/opencode.json` do zero com o provider
-   `9router` (`127.0.0.1:20128/v1`, chave = `ROUTER_API_KEY` do `server.env` do notebook) e
-   todos os modelos que o `/v1/models` lista; padrão `9router/free`.
-2. **token do ai-memory:** lido do notebook para `~/.assistente/ai-memory.token` (0600).
-3. **por perfil:** hooks em `<perfil>/claude/settings.json` e MCP em
-   `<perfil>/claude/.claude.json` (`--config-file`, token embutido, 0600); `opencode.json` do
-   perfil só com o modelo; marcador `.ai-memory.toml` na raiz.
-4. **opencode global:** plugin `~/.config/opencode/plugins/ai-memory.ts` e MCP remoto.
+## Spool
 
-Prova: `opencode run` dentro do jail (flags do `LaunchPlan`) respondeu pelo 9router, e o
-servidor passou a listar `pessoal / rafael-mota-moraes-assistente`. Depois do `assistente login
-claude pessoal`, `claude -p` no jail respondeu, viu o MCP `ai-memory` e a sessão entrou no
-mesmo projeto. O login roda na home (fora dos perfis) e cria um `default / <usuario>` vazio. Um teste antes do
-marcador montado criou `default / rafael-mota-moraes-assistente` (pode ser apagado com
-`ai-memory purge-project`).
+Hooks montam `~/.local/share/ai-memory` no jail (spec 05) para fila local se o servidor cair
+brevemente; com servidor local estável na VM, o caso principal é sync notebook ↔ espelho.
 
-## Pontos a validar (F5.1)
+## Validação histórica (2026-10-19, ai-memory 3.1.1 no notebook)
 
-- Caminho exato do wiki git e do token no diretório de dados (a doc lida na pesquisa estava
-  truncada).
-- Flags `--server-url`/`--auth-token` em `install-*` para opencode.
-- Se `install-hooks` respeita `CLAUDE_CONFIG_DIR` ou se é preciso `--scope project`.
-- Spool offline: onde fica e como é reenviado.
+Antes da mudança de topologia, validou-se servidor no notebook + túnel + clientes na VM
+(F5.1–F5.3). Caminhos úteis no notebook (réplica / legado):
+
+- Token: `~/.local/share/ai-memory/auth-tokens/default`
+- Saúde: `/healthz`; web UI: `/web`
+- `ai-memory setup --yes --agent open-code` no notebook (v3)
+
+## Clientes na VM (F5.2, validado em 2026-10-19, URL legada via túnel)
+
+`bin/assistente agentes configurar` → `vm/configurar-agentes.sh`: opencode/9router, token,
+hooks/MCP por perfil, `.ai-memory.toml` na raiz. Prova end-to-end com túnel ao notebook.
+
+## Pontos em aberto
+
+- F5.0: systemd do ai-memory na VM, wiki em `mirror_dir`, token local, retirar `:49374` do túnel.
+- F5.4: sync git do wiki PC ↔ notebook (não “fetch do notebook como principal”).
+- F5.5: painel / web UI apontando para o servidor **local**.
+- Spool offline: detalhes na doc upstream do ai-memory 3.x.

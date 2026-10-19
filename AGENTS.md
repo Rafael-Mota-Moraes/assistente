@@ -32,7 +32,7 @@ entra em `devenv/Dockerfile`. Nunca rode `bin/assistente vm …`, `instalar.sh` 
 - `crates/hubd`: `main.rs` (CLI, token, servidor), `api.rs` (rotas; pendentes respondem 501
   com o ID da funcionalidade).
 - `app/src-tauri`: casca fina com os comandos de host (`hub_connection`, `vm_status`,
-  `open_in_cursor`).
+  `vm_start`, `vm_stop`, `open_in_cursor`).
 - `app/src`: React. `bridge/hub.ts` (cliente do hubd), `bridge/host.ts` (comandos Tauri),
   `bridge/types.ts` (espelho dos tipos da API), `store.ts` (zustand), `features/<área>/`.
 - `bin/assistente`, `instalar.sh`, `vm/`: host e VM. `notebook/`: setup e loop `dorme`.

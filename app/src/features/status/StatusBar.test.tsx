@@ -1,7 +1,18 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { vmStart, vmStop } from "../../bridge/host";
 import { useAppStore } from "../../store";
 import { StatusBar, serviceTitle } from "./StatusBar";
+
+vi.mock("../../bridge/host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../bridge/host")>();
+  return {
+    ...actual,
+    vmStart: vi.fn(() => Promise.resolve()),
+    vmStop: vi.fn(() => Promise.resolve()),
+    vmStatus: vi.fn(() => Promise.resolve({ state: "running", detail: null })),
+  };
+});
 
 describe("StatusBar", () => {
   it("mostra hubd offline quando não há saúde", () => {
@@ -35,6 +46,27 @@ describe("StatusBar", () => {
     expect(screen.getByText("túnel").parentElement).toHaveAttribute("data-tone", "ok");
     expect(screen.getByText("9router").parentElement).toHaveAttribute("data-tone", "ok");
     expect(screen.getByText("ai-memory").parentElement).toHaveAttribute("data-tone", "off");
+  });
+
+  it("VM parada mostra botão Ligar", () => {
+    useAppStore.setState({ vm: { state: "stopped", detail: null } });
+    render(<StatusBar />);
+    expect(screen.getByRole("button", { name: "Ligar" })).toBeInTheDocument();
+  });
+
+  it("VM ligada mostra botão Desligar", () => {
+    useAppStore.setState({ vm: { state: "running", detail: null } });
+    render(<StatusBar />);
+    expect(screen.getByRole("button", { name: "Desligar" })).toBeInTheDocument();
+  });
+
+  it("Ligar chama vm_start e atualiza o estado", async () => {
+    useAppStore.setState({ vm: { state: "stopped", detail: null } });
+    render(<StatusBar />);
+    fireEvent.click(screen.getByRole("button", { name: "Ligar" }));
+    await waitFor(() => expect(vmStart).toHaveBeenCalled());
+    await waitFor(() => expect(useAppStore.getState().vm?.state).toBe("running"));
+    expect(vmStop).not.toHaveBeenCalled();
   });
 });
 

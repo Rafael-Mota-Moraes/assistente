@@ -7,7 +7,7 @@
 #   assistente restaurar <arquivo.tar.gz>
 #   assistente notebook instalar                copia notebook/ e roda o instalar.sh por SSH
 #   assistente agentes configurar               9router no opencode + ai-memory nos agentes da VM
-#   assistente atualizar                        hubd novo na VM + app recompilado e reinstalado
+#   assistente atualizar                        hubd novo na VM + app recompilado e reinstalado  (ou ./atualizar.sh)
 # PARCIALMENTE TESTADO: só `token` e a leitura da config. VM = F1, notebook = F4, backup = F7.
 # Spec: docs/specs/01-vm-e-instalacao.md
 set -euo pipefail

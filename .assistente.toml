@@ -1,0 +1,9 @@
+# Config do hub Assistente (este repo). Ver config/projeto.exemplo.toml.
+
+[jail]
+docker = true
+
+[sleep]
+backlog = "docs/FUNCIONALIDADES.md"
+check = "./dev just check"
+human_only = ["*(humano)*"]

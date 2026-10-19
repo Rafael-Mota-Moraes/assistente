@@ -3,6 +3,7 @@
 //! Spec: docs/specs/08-modo-dormir.md
 
 use serde::Deserialize;
+use std::path::Path;
 
 const PROMPT_TEMPLATE: &str = include_str!("sleep_prompt.md");
 
@@ -11,6 +12,15 @@ const PROMPT_TEMPLATE: &str = include_str!("sleep_prompt.md");
 pub struct ProjectConfig {
     #[serde(default)]
     pub sleep: SleepConfig,
+    #[serde(default)]
+    pub jail: JailConfig,
+}
+
+/// Opções do ai-jail por projeto (spec 05). Hoje só Docker para `./dev`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct JailConfig {
+    pub docker: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,6 +55,17 @@ impl ProjectConfig {
     pub fn parse(text: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(text)
     }
+}
+
+/// Lê `.assistente.toml` na raiz do repo; ausente ou inválido → padrões (Docker desligado).
+pub fn jail_config_at(project_root: &Path) -> JailConfig {
+    let path = project_root.join(".assistente.toml");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return JailConfig::default();
+    };
+    ProjectConfig::parse(&text)
+        .map(|c| c.jail)
+        .unwrap_or_default()
 }
 
 /// Prompt de uma iteração. `base` é a branch em que o notebook trabalha (`dorme/<data>`);
@@ -96,6 +117,15 @@ mod tests {
     fn empty_file_uses_defaults() {
         let config = ProjectConfig::parse("").unwrap();
         assert_eq!(config.sleep.max_minutes, 240);
+        assert!(!config.jail.docker);
+    }
+
+    #[test]
+    fn jail_docker_parses_from_example() {
+        let text = include_str!("../../../config/projeto.exemplo.toml")
+            .replace("docker = false", "docker = true");
+        let config = ProjectConfig::parse(&text).unwrap();
+        assert!(config.jail.docker);
     }
 
     #[test]

@@ -1,5 +1,9 @@
 # Configuração opcional por projeto. Salve como .assistente.toml na raiz do repositório.
-# Hoje só o modo dormir usa este arquivo. Spec: docs/specs/08-modo-dormir.md
+# Specs: docs/specs/05-sandbox.md ([jail]), docs/specs/08-modo-dormir.md ([sleep]).
+
+[jail]
+# Projetos com `./dev` (Docker no host) precisam disto para o agente rodar `just check` na sessão.
+docker = false
 
 [sleep]
 # Lista de tarefas no formato de docs/FUNCIONALIDADES.md: itens "- [ ]" com ID, "Pronto quando"

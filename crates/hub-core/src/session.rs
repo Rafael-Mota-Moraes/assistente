@@ -2,6 +2,7 @@
 //! Spec: docs/specs/02-hubd-e-sessoes.md e docs/specs/05-sandbox.md
 
 use crate::config::{Config, Profile, is_valid_id};
+use crate::sleep::jail_config_at;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -81,10 +82,20 @@ impl LaunchPlan {
         }
         let data_dir = profile_data_dir(home, &spec.profile);
         let env = profile_env(config, profile, &data_dir);
+        let cwd = profile.root.join(&spec.project);
+        let jail = jail_config_at(&cwd);
         Ok(Self {
             tmux_session: tmux_session_name(&spec.profile, &spec.project, spec.agent, seq),
-            cwd: profile.root.join(&spec.project),
-            argv: jail_argv(config, home, profile, &data_dir, &env, spec.agent),
+            cwd,
+            argv: jail_argv(
+                config,
+                home,
+                profile,
+                &data_dir,
+                &env,
+                spec.agent,
+                jail.docker,
+            ),
             env,
         })
     }
@@ -122,6 +133,7 @@ fn jail_argv(
     data_dir: &Path,
     env: &[(String, String)],
     agent: AgentKind,
+    docker: bool,
 ) -> Vec<String> {
     let mut argv = vec![
         "ai-jail".to_owned(),
@@ -161,6 +173,9 @@ fn jail_argv(
     // claude/opencode (que prendem o mouse e copiam sozinhos) não chega ao app. Do outro lado
     // está o tmux, que só repassa ao app o OSC 52 de escrita (set-clipboard on).
     argv.push("--terminal-passthrough".to_owned());
+    if docker {
+        argv.push("--docker".to_owned());
+    }
     for (key, _) in env {
         argv.push("--env".to_owned());
         argv.push(key.clone());
@@ -237,6 +252,7 @@ fn tmux_session_name(profile: &str, project: &str, agent: AgentKind, seq: u32) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     const EXAMPLE: &str = include_str!("../../../config/assistente.exemplo.toml");
 
@@ -386,6 +402,37 @@ mod tests {
                 "{bad:?} deveria ser recusado"
             );
         }
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hub-core-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn docker_flag_when_project_config_enables_it() {
+        let projects = scratch("jail-docker");
+        let home = PathBuf::from("/home/rafa");
+        let text = EXAMPLE.replacen(
+            "root = \"~/Documentos/pessoal/projetos\"",
+            &format!(r#"root = "{}""#, projects.display()),
+            1,
+        );
+        let config = Config::parse(&text, &home).unwrap();
+        let game = projects.join("game");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(game.join(".assistente.toml"), "[jail]\ndocker = true\n").unwrap();
+        let plan = LaunchPlan::build(
+            &config,
+            &home,
+            &spec("pessoal", "game", AgentKind::Opencode),
+            1,
+        )
+        .unwrap();
+        assert!(plan.argv.contains(&"--docker".to_owned()));
+        fs::remove_dir_all(projects).unwrap();
     }
 
     #[test]

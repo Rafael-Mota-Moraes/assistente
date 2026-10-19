@@ -42,8 +42,8 @@ por perfil (`XDG_DATA_HOME`) fica para depois.
 ## Docker dentro da sessão
 
 No 2.x o Docker vem **desligado** (`--docker` liga; equivale a root na VM). Projetos com
-`./dev` (como o game) precisam dele para o agente rodar `just check`: a ideia é ligar por
-projeto (opção no `.assistente.toml`, F3.1), não globalmente.
+`./dev` (como o game) precisam dele para o agente rodar `just check`: ligue por projeto com
+`[jail] docker = true` no `.assistente.toml` (F3.1), não globalmente.
 
 ## Permissões dos agentes (F3.3)
 

@@ -60,5 +60,11 @@ subpastas mais fundas ficam para depois (config `scan_depth`, se precisar).
 
 ### `.assistente.toml` (por projeto, opcional)
 
-Exemplo: `config/projeto.exemplo.toml`. Hoje só tem `[sleep]` (spec 08); o parse fica em
-`hub_core::sleep::ProjectConfig`. Vai versionado no repo do projeto.
+Exemplo: `config/projeto.exemplo.toml`. Parse em `hub_core::sleep::ProjectConfig`:
+
+| Seção | Uso |
+|---|---|
+| `[jail]` | `docker = true` liga `--docker` do ai-jail na sessão (spec 05, F3.1) |
+| `[sleep]` | Modo dormir (spec 08) |
+
+Vai versionado no repo do projeto.

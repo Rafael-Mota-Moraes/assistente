@@ -45,7 +45,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 ## F3 — Sandbox
 
-- [ ] **F3.1 Sessões dentro do ai-jail.** `LaunchPlan` validado com o opencode (spec 05). Falta: Docker por projeto (`--docker` via `.assistente.toml`) para o `./dev`.
+- [x] **F3.1 Sessões dentro do ai-jail.** `LaunchPlan` validado com o opencode (spec 05). Docker por projeto: `[jail] docker = true` no `.assistente.toml` → `--docker` no ai-jail.
   Pronto quando: `./dev just check` de um projeto roda de dentro da sessão. Como testar: sessão real no projeto game.
 - [ ] **F3.2 Dados por perfil.** `~/.assistente/perfis/<perfil>/{claude,opencode,ssh}`; só o perfil ativo entra via `--rw-map`.
   Pronto quando: de uma sessão pessoal, `ls ~/.assistente/perfis/trabalho` falha. Como testar: o próprio comando.

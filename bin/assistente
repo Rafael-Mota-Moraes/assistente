@@ -123,6 +123,7 @@ vm_provisionar() {
   incus file push -q "$ROOT/target/release/hubd" "$name/tmp/assistente/hubd"
   incus file push -q "$ROOT/vm/hubd.service" "$name/tmp/assistente/hubd.service"
   incus file push -q "$ROOT/vm/provisionar.sh" "$name/tmp/assistente/provisionar.sh"
+  incus file push -q "$ROOT/vm/ai-memory.service" "$name/tmp/assistente/ai-memory.service"
   incus exec "$name" -- bash /tmp/assistente/provisionar.sh "$(id -un)"
   echo "VM pronta. Próximo: assistente login claude pessoal"
 }

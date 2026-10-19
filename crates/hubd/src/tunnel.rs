@@ -1,5 +1,5 @@
 //! Túnel SSH até o notebook (F4.2): `ssh -N -L …` como processo filho, com reinício e backoff.
-//! Dentro da VM, o 9router e o ai-memory do notebook aparecem em 127.0.0.1.
+//! Dentro da VM, o 9router do notebook aparece em 127.0.0.1 (memória é local, F5.0).
 //! Spec: docs/specs/07-notebook-e-9router.md
 
 use hub_core::config::NotebookConfig;
@@ -77,7 +77,10 @@ pub fn ssh_argv(notebook: &NotebookConfig) -> Vec<String> {
     ]
     .map(str::to_owned)
     .into();
-    for port in notebook.tunnel.values() {
+    for (name, &port) in &notebook.tunnel {
+        if name == "ai_memory" {
+            continue;
+        }
         argv.push("-L".to_owned());
         argv.push(format!("127.0.0.1:{port}:127.0.0.1:{port}"));
     }
@@ -178,12 +181,6 @@ mod tests {
             .filter(|w| w[0] == "-L")
             .map(|w| w[1].as_str())
             .collect();
-        assert_eq!(
-            forwards,
-            [
-                "127.0.0.1:20128:127.0.0.1:20128",
-                "127.0.0.1:49374:127.0.0.1:49374"
-            ]
-        );
+        assert_eq!(forwards, ["127.0.0.1:20128:127.0.0.1:20128"]);
     }
 }

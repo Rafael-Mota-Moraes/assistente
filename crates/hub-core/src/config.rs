@@ -51,6 +51,13 @@ pub struct NotebookConfig {
 pub struct MemoryConfig {
     pub mirror_dir: PathBuf,
     pub mirror_every_minutes: u32,
+    /// Porta HTTP do servidor local na VM (F5.0).
+    #[serde(default = "default_memory_port")]
+    pub port: u16,
+}
+
+fn default_memory_port() -> u16 {
+    49374
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,7 +214,7 @@ mod tests {
             ["pessoal", "trabalho"]
         );
         assert_eq!(config.notebook.tunnel["9router"], 20128);
-        assert_eq!(config.notebook.tunnel["ai_memory"], 49374);
+        assert_eq!(config.memory.port, 49374);
         assert_eq!(
             config.profile("pessoal").unwrap().root,
             PathBuf::from("/home/rafa/Documentos/pessoal/projetos")

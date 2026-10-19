@@ -72,15 +72,31 @@ fi
 # hubd e tmux não leem o .bashrc: o opencode precisa estar no PATH.
 as_user 'mkdir -p ~/.local/bin && ln -sf ~/.opencode/bin/opencode ~/.local/bin/opencode'
 
-echo "==> ai-memory (cliente hoje; F5.0: servidor local em 127.0.0.1:49374, wiki em memory.mirror_dir)"
 if as_user "command -v ai-memory >/dev/null && ai-memory --version 2>/dev/null | grep -q \"$AI_MEMORY_VERSION\""; then
   :
 else
   echo "    ai-memory $AI_MEMORY_VERSION"
   as_user "curl -fsSL '$AI_MEMORY_INSTALL' | AI_MEMORY_VERSION='$AI_MEMORY_VERSION' sh"
 fi
-# TODO(F5.2): install-mcp/install-hooks por perfil (CLAUDE_CONFIG_DIR / OPENCODE_CONFIG)
-# com --server-url http://127.0.0.1:49374 e o token do servidor.
+
+echo "==> ai-memory (servidor local, F5.0)"
+loginctl enable-linger "$USER_NAME" 2>/dev/null || true
+read -r MIRROR PORT <<< "$(python3 - "$HOME_DIR" <<'PY'
+import os, sys, tomllib
+home = sys.argv[1]
+cfg = tomllib.load(open(os.path.join(home, ".config/assistente/assistente.toml"), "rb"))
+mem = cfg["memory"]
+print(os.path.expanduser(mem["mirror_dir"]), mem.get("port", 49374))
+PY
+)"
+install -d -o "$USER_NAME" -g "$USER_NAME" "$MIRROR"
+as_user "test -f '$MIRROR/config.toml' || AI_MEMORY_DATA_DIR='$MIRROR' ai-memory init --data-dir '$MIRROR'"
+install -d -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR/.config/systemd/user"
+sed -e "s|@HOME@|$HOME_DIR|g" -e "s|@MIRROR@|$MIRROR|g" -e "s/@PORT@/$PORT/g" \
+  /tmp/assistente/ai-memory.service > "$HOME_DIR/.config/systemd/user/ai-memory.service"
+chown "$USER_NAME:" "$HOME_DIR/.config/systemd/user/ai-memory.service"
+as_user "systemctl --user daemon-reload && systemctl --user enable --now ai-memory.service"
+# Hooks/MCP por perfil: bin/assistente agentes configurar
 
 echo "==> pastas por perfil"
 # Lidas pelo hubd: ~/.assistente/perfis/<perfil>/{claude,opencode,ssh}

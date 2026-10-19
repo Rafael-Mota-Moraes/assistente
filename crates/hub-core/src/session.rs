@@ -132,7 +132,10 @@ fn jail_argv(
         argv.push("--claude-dir".to_owned());
         argv.push(data_dir.join("claude").display().to_string());
     }
-    for port in config.notebook.tunnel.values() {
+    for (name, port) in &config.notebook.tunnel {
+        if name == "ai_memory" {
+            continue;
+        }
         argv.push("--forward-port".to_owned());
         argv.push(port.to_string());
     }
@@ -194,12 +197,10 @@ fn profile_env(config: &Config, profile: &Profile, data_dir: &Path) -> Vec<(Stri
                 .to_string(),
         ),
     ];
-    if let Some(port) = config.notebook.tunnel.get("ai_memory") {
-        env.push((
-            "AI_MEMORY_SERVER_URL".to_owned(),
-            format!("http://127.0.0.1:{port}"),
-        ));
-    }
+    env.push((
+        "AI_MEMORY_SERVER_URL".to_owned(),
+        format!("http://127.0.0.1:{}", config.memory.port),
+    ));
     if profile.claude_via_9router
         && let Some(port) = config.notebook.tunnel.get("9router")
     {
@@ -277,7 +278,8 @@ mod tests {
         let argv = plan.argv.join(" ");
         assert!(argv.starts_with("ai-jail --rw-map /home/rafa/.assistente/perfis/pessoal "));
         assert!(argv.contains("--claude-dir /home/rafa/.assistente/perfis/pessoal/claude"));
-        assert!(argv.contains("--forward-port 20128 --forward-port 49374"));
+        assert!(argv.contains("--forward-port 20128"));
+        assert!(!argv.contains("--forward-port 49374"));
         assert!(argv.contains("--map /home/rafa/.local/lib/ai-memory"));
         assert!(argv.contains("--rw-map /home/rafa/.local/share/ai-memory"));
         assert!(argv.contains("--map /home/rafa/Documentos/pessoal/projetos/.ai-memory.toml"));

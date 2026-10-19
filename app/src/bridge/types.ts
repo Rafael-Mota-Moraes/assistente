@@ -30,6 +30,15 @@ export type NotebookStatus = {
   services: ServiceStatus[];
 };
 
+/** Servidor ai-memory local na VM (F5.0). */
+export type MemoryStatus = {
+  port: number;
+  mirror_dir: string;
+  up: boolean;
+  last_error: string | null;
+  checked_at: number;
+};
+
 export type HubConnection = { url: string; token: string | null };
 
 export type VmState = "running" | "stopped" | "missing" | "no-incus" | "unknown";

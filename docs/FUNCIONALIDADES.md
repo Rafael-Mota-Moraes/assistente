@@ -63,8 +63,8 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 ## F5 — Memória
 
-- [ ] **F5.0 Servidor principal na VM (PC).** `ai-memory serve` em `127.0.0.1:49374` na VM, wiki git em `memory.mirror_dir` (host, montado rw); systemd do usuário; token local; `provisionar.sh` + `configurar-agentes.sh` apontam para URL local; hubd **não** encaminha `:49374` no túnel; `/api/memory` com saúde; UI com ponto de memória local (notebook off = memória OK se VM de pé).
-  Pronto quando: `curl 127.0.0.1:49374/healthz` na VM sem túnel; sessão nova recebe briefing com notebook desligado. Como testar: `incus exec …`, parar notebook, abrir Claude.
+- [x] **F5.0 Servidor principal na VM (PC).** `ai-memory serve` via `vm/ai-memory.service`, wiki em `memory.mirror_dir`; `provisionar.sh` + `configurar-agentes.sh` locais; túnel sem `:49374`; `/api/memory` + ponto na UI. Testes: `memory_http_probe_*` + `StatusBar.test.tsx`.
+  Pronto quando: `curl 127.0.0.1:49374/healthz` na VM; briefing com notebook desligado. Como testar: `./atualizar.sh`, `agentes configurar`, sessão Claude *(humano)*.
 - [x] **F5.1 Servidor no notebook** *(humano, legado)*. Validado 2026-10-19 antes da topologia PC-first. Mantido como réplica/dormir até F5.4.
   Pronto quando: (legado) `curl` pelo túnel responde. Como testar: spec 06 “Validação histórica”.
 - [x] **F5.2 Clientes na VM.** `vm/configurar-agentes.sh`; hooks/MCP por perfil. Validado com túnel (legado). **F5.0** passa token/URL do servidor local.

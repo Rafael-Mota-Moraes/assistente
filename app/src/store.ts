@@ -3,6 +3,7 @@ import type { HubClient } from "./bridge/hub";
 import type {
   AgentKind,
   Health,
+  MemoryStatus,
   NotebookStatus,
   ProfileView,
   Project,
@@ -17,6 +18,7 @@ type State = {
   health: Health | null;
   vm: VmStatus | null;
   notebook: NotebookStatus | null;
+  memory: MemoryStatus | null;
   profiles: ProfileView[];
   activeProfile: string | null;
   projects: Project[];
@@ -40,6 +42,7 @@ export const initialState: State = {
   health: null,
   vm: null,
   notebook: null,
+  memory: null,
   profiles: [],
   activeProfile: null,
   projects: [],

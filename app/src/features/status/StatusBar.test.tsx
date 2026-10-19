@@ -24,20 +24,18 @@ describe("StatusBar", () => {
     useAppStore.setState({
       vm: { state: "running", detail: null },
       health: { ok: true, version: "0.1.0", uptime_seconds: 3 },
+      memory: {
+        port: 49374,
+        mirror_dir: "/home/rafa/.local/share/assistente/memoria-copia",
+        up: true,
+        last_error: null,
+        checked_at: 0,
+      },
       notebook: {
         ssh_host: "notebook",
         tunnel_managed: true,
         tunnel: { state: "up", last_error: null, restarts: 0, since: 0 },
-        services: [
-          { name: "9router", port: 20128, up: true, last_error: null, checked_at: 0 },
-          {
-            name: "ai_memory",
-            port: 49374,
-            up: false,
-            last_error: "porta 49374 não escuta",
-            checked_at: 0,
-          },
-        ],
+        services: [{ name: "9router", port: 20128, up: true, last_error: null, checked_at: 0 }],
       },
     });
     render(<StatusBar />);
@@ -45,7 +43,7 @@ describe("StatusBar", () => {
     expect(screen.getByText("hubd 0.1.0")).toBeInTheDocument();
     expect(screen.getByText("túnel").parentElement).toHaveAttribute("data-tone", "ok");
     expect(screen.getByText("9router").parentElement).toHaveAttribute("data-tone", "ok");
-    expect(screen.getByText("ai-memory").parentElement).toHaveAttribute("data-tone", "off");
+    expect(screen.getByText("ai-memory").parentElement).toHaveAttribute("data-tone", "ok");
   });
 
   it("VM parada mostra botão Ligar", () => {

@@ -20,8 +20,9 @@ export function usePolling() {
           set({ hub });
         }
         const [health, vm] = await Promise.all([hub.health(), vmStatus()]);
-        const [notebook, profiles, sessions] = await Promise.all([
+        const [notebook, memory, profiles, sessions] = await Promise.all([
           hub.notebook(),
+          hub.memory(),
           hub.profiles(),
           hub.sessions(),
         ]);
@@ -30,6 +31,7 @@ export function usePolling() {
           health,
           vm,
           notebook,
+          memory,
           profiles,
           sessions,
           hubError: null,

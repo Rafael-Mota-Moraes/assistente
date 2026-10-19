@@ -43,7 +43,8 @@ entra em `devenv/Dockerfile`. Nunca rode `bin/assistente vm …`, `instalar.sh` 
   em pt-BR.
 - Dependências com versão exata (`=` no Cargo, sem `^` no package.json) e publicadas há pelo
   menos 14 dias (`just idade-crates`; npm via `minimumReleaseAge` em `app/pnpm-workspace.yaml`).
-- Tipos da API mudaram? Atualize `crates/hubd/src/api.rs` e `app/src/bridge/types.ts` juntos.
+- Tipos da API mudaram? Atualize `crates/hubd/src/api.rs` e `app/src/bridge/types.ts` juntos
+(inclui `/api/memory`, F5.0).
 - Rota nova começa como `not_yet("Fx.y")` e aponta para o item do backlog.
 - Scripts bash passam no `shellcheck` (está no `just check`).
 - Terminou um item do backlog? Marque `[x]` em `docs/FUNCIONALIDADES.md` no mesmo commit.

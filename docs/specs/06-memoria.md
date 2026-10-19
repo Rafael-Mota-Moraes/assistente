@@ -29,9 +29,9 @@ notebook:  réplica do wiki + ai-memory opcional só para o modo dormir (F5.4 / 
 - **Notebook** continua com 9router e o loop `dorme` (spec 08). Antes/depois do dormir, o wiki
   **sincroniza** entre PC e notebook (F5.4); à noite o agente pode usar cópia local no notebook
   enquanto o PC estiver off.
-- **Estado do código (transição):** até **F5.0**, o hubd ainda encaminha `:49374` pelo túnel SSH
-  para o ai-memory do notebook (setup antigo). A UI trata ai-memory como serviço do notebook
-  (F4.3). Depois de F5.0, saúde e túnel ficam só com o 9router; memória passa para `/api/memory`.
+- **Implementado (F5.0):** servidor na VM (`vm/ai-memory.service`), saúde em `/api/memory`, túnel
+  só encaminha o 9router (`ai_memory` em `[notebook.tunnel]` é ignorado se ainda existir na config).
+  Rode `bin/assistente vm provisionar` e `agentes configurar` para migrar uma VM antiga.
 
 ## Ligando os agentes
 

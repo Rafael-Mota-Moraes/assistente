@@ -1,6 +1,7 @@
 import type {
   Health,
   HubConnection,
+  MemoryStatus,
   NotebookStatus,
   ProfileView,
   Project,
@@ -38,6 +39,10 @@ export class HubClient {
 
   notebook(): Promise<NotebookStatus> {
     return this.get("/api/notebook");
+  }
+
+  memory(): Promise<MemoryStatus> {
+    return this.get("/api/memory");
   }
 
   sessions(): Promise<SessionInfo[]> {

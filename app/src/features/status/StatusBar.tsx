@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { vmStart, vmStatus, vmStop } from "../../bridge/host";
-import type { ServiceStatus, TunnelStatus, VmState } from "../../bridge/types";
+import type { MemoryStatus, ServiceStatus, TunnelStatus, VmState } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { StatusDot, type Tone } from "../../ui/StatusDot";
 
@@ -40,8 +40,17 @@ export function serviceTitle(sshHost: string, service: ServiceStatus): string {
 const vmActionClass =
   "rounded border border-line px-1.5 py-0.5 text-[11px] text-slate-300 hover:bg-white/5 disabled:opacity-40";
 
+/** Tooltip do ponto de memória local (F5.0). */
+export function memoryTitle(memory: MemoryStatus): string {
+  const parts = [`127.0.0.1:${memory.port}`, memory.mirror_dir];
+  if (!memory.up) parts.push(memory.last_error ?? "sem resposta");
+  if (memory.checked_at > 0)
+    parts.push(`verificado às ${new Date(memory.checked_at * 1000).toLocaleTimeString("pt-BR")}`);
+  return parts.join(" — ");
+}
+
 export function StatusBar() {
-  const { vm, health, hubError, notebook } = useAppStore();
+  const { vm, health, hubError, notebook, memory } = useAppStore();
   const [vmBusy, setVmBusy] = useState(false);
 
   async function toggleVm(action: "start" | "stop") {
@@ -99,14 +108,19 @@ export function StatusBar() {
           title={notebook.tunnel.last_error ?? `${notebook.ssh_host}: ${notebook.tunnel.state}`}
         />
       )}
-      {notebook?.services.map((service) => (
-        <StatusDot
-          key={service.name}
-          tone={service.up ? "ok" : "off"}
-          label={serviceLabel[service.name] ?? service.name}
-          title={serviceTitle(notebook.ssh_host, service)}
-        />
-      ))}
+      {memory && (
+        <StatusDot tone={memory.up ? "ok" : "off"} label="ai-memory" title={memoryTitle(memory)} />
+      )}
+      {notebook?.services
+        .filter((service) => service.name !== "ai_memory")
+        .map((service) => (
+          <StatusDot
+            key={service.name}
+            tone={service.up ? "ok" : "off"}
+            label={serviceLabel[service.name] ?? service.name}
+            title={serviceTitle(notebook.ssh_host, service)}
+          />
+        ))}
       <span className="ml-auto font-mono text-slate-500">
         {notebook ? `notebook: ${notebook.ssh_host}` : ""}
       </span>

@@ -69,6 +69,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/profiles", get(profiles))
         .route("/api/projects", get(projects))
         .route("/api/notebook", get(notebook))
+        .route("/api/memory", get(memory))
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route("/api/sessions/{id}", delete(delete_session))
         .route("/api/sessions/{id}/terminal", get(open_terminal))
@@ -275,6 +276,9 @@ async fn notebook(State(state): State<AppState>) -> Json<NotebookStatus> {
     let notebook = &state.0.config.notebook;
     let mut services = Vec::new();
     for (name, &port) in &notebook.tunnel {
+        if name == "ai_memory" {
+            continue;
+        }
         let path = match name.as_str() {
             "9router" => "/v1/models",
             _ => "/",
@@ -303,6 +307,39 @@ async fn notebook(State(state): State<AppState>) -> Json<NotebookStatus> {
         tunnel_managed: state.0.tunnel.is_some(),
         tunnel: state.0.tunnel.as_ref().map(TunnelHandle::status),
         services,
+    })
+}
+
+#[derive(Serialize)]
+struct MemoryStatus {
+    port: u16,
+    mirror_dir: String,
+    up: bool,
+    last_error: Option<String>,
+    checked_at: u64,
+}
+
+/// Servidor ai-memory local na VM (F5.0), independente do notebook.
+async fn memory(State(state): State<AppState>) -> Json<MemoryStatus> {
+    let memory = &state.0.config.memory;
+    let port = memory.port;
+    let (up, last_error) =
+        match tokio::time::timeout(Duration::from_secs(1), http_probe(port, "/healthz")).await {
+            Err(_) => (false, Some(format!("porta {port}: sem resposta em 1 s"))),
+            Ok(Ok(status)) if probe_is_up(status) => (true, None),
+            Ok(Ok(status)) => (false, Some(format!("HTTP {status} em /healthz"))),
+            Ok(Err(e)) => (false, Some(e)),
+        };
+    let checked_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Json(MemoryStatus {
+        port,
+        mirror_dir: memory.mirror_dir.display().to_string(),
+        up,
+        last_error,
+        checked_at,
     })
 }
 
@@ -517,10 +554,15 @@ mod tests {
         listener.local_addr().unwrap().port()
     }
 
-    fn notebook_app(router_port: u16, memory_port: u16) -> Router {
-        let text = EXAMPLE
-            .replace("= 20128", &format!("= {router_port}"))
-            .replace("= 49374", &format!("= {memory_port}"));
+    fn notebook_app(router_port: u16) -> Router {
+        let text = EXAMPLE.replace("= 20128", &format!("= {router_port}"));
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(&text, &home).unwrap();
+        router(AppState::new(config, home, None, None, Tmux::default()))
+    }
+
+    fn memory_app(memory_port: u16) -> Router {
+        let text = EXAMPLE.replace("port = 49374", &format!("port = {memory_port}"));
         let home = PathBuf::from("/home/rafa");
         let config = Config::parse(&text, &home).unwrap();
         router(AppState::new(config, home, None, None, Tmux::default()))
@@ -538,32 +580,35 @@ mod tests {
     #[tokio::test]
     async fn notebook_http_probe_marks_real_services_up() {
         let router = fake_http_server("200 OK", "{\"data\":[]}").await;
-        let memory = fake_http_server("401 Unauthorized", "").await; // auth pedida = serviço de pé
-        let (status, body) = call(notebook_app(router, memory), "/api/notebook", None).await;
+        let (status, body) = call(notebook_app(router), "/api/notebook", None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["tunnel_managed"], false);
         let nine = service(&body, "9router");
         assert_eq!(nine["up"], true);
         assert_eq!(nine["last_error"], serde_json::Value::Null);
         assert!(nine["checked_at"].as_u64().unwrap() > 0);
-        assert_eq!(service(&body, "ai_memory")["up"], true);
+        assert_eq!(body["services"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn notebook_http_probe_rejects_false_positives() {
         // Outro processo HTTP na porta do 9router (404 em /v1/models) não é o 9router.
         let impostor = fake_http_server("404 Not Found", "").await;
-        let memory = closed_port().await;
-        let (_, body) = call(notebook_app(impostor, memory), "/api/notebook", None).await;
+        let (_, body) = call(notebook_app(impostor), "/api/notebook", None).await;
         let nine = service(&body, "9router");
         assert_eq!(nine["up"], false);
         assert_eq!(nine["last_error"], "HTTP 404 em /v1/models");
-        let ai = service(&body, "ai_memory");
-        assert_eq!(ai["up"], false);
-        assert_eq!(
-            ai["last_error"],
-            format!("porta {memory} não escuta").as_str()
-        );
+    }
+
+    #[tokio::test]
+    async fn memory_http_probe_uses_healthz() {
+        let port = fake_http_server("200 OK", "{\"status\":\"ok\"}").await;
+        let (_, body) = call(memory_app(port), "/api/memory", None).await;
+        assert_eq!(body["up"], true);
+        assert_eq!(body["port"], port);
+        let dead = closed_port().await;
+        let (_, body) = call(memory_app(dead), "/api/memory", None).await;
+        assert_eq!(body["up"], false);
     }
 
     // ---- Sessões e terminal com tmux real (socket isolado) ----

@@ -29,15 +29,14 @@ user = "seu-usuario"
 workdir = "~/assistente"
 
 [notebook.tunnel]
-# Portas do notebook encaminhadas para 127.0.0.1 da VM pelo túnel SSH do hubd.
+# Portas do notebook encaminhadas para 127.0.0.1 da VM pelo túnel SSH do hubd (só 9router).
 "9router" = 20128
-# Legado até F5.0 (memória principal passa a ser local na VM; spec 06):
-ai_memory = 49374
 
 [memory]
 # Wiki git **principal** do ai-memory (host, montado rw na VM). Servidor na VM (F5.0).
 mirror_dir = "~/.local/share/assistente/memoria-copia"
 mirror_every_minutes = 60
+port = 49374
 
 # Um bloco por perfil. A chave (pessoal, trabalho) é o id usado na API e nos caminhos.
 [profiles.pessoal]

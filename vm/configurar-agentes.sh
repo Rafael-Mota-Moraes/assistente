@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Configura os agentes da VM: 9router (túnel), providers do PC, ai-memory (hoje via túnel;
-# F5.0: servidor local). Claude Code e opencode por perfil. Roda como o
+# Configura os agentes da VM: 9router (túnel), providers do PC, ai-memory local (F5.0).
+# Claude Code e opencode por perfil. Roda como o
 # SEU usuário dentro da VM; reexecutável. Chamado por `bin/assistente agentes configurar`, que
 # manda os providers do PC (JSON, com as chaves) pelo stdin.
 # Specs: docs/specs/04-perfis-e-projetos.md, docs/specs/06-memoria.md (F5.2, F5.3)
@@ -54,12 +54,25 @@ print("    do PC: %s" % (", ".join(host) or "nenhum"), file=sys.stderr)
 mv "$OC.novo" "$OC"
 rm -f "$OC".bak-*
 
-echo "==> token do ai-memory (lido do notebook)"
-ssh -n -o BatchMode=yes "$host" 'cat ~/.local/share/ai-memory/auth-tokens/default' > "$TOKEN_FILE.tmp"
+echo "==> token do ai-memory (servidor local na VM)"
+MIRROR="$(python3 - "$CONF" <<'PY'
+import sys, tomllib, os
+print(os.path.expanduser(tomllib.load(open(sys.argv[1], "rb"))["memory"]["mirror_dir"]))
+PY
+)"
+TOKEN_SRC="$MIRROR/auth-tokens/default"
+[ -f "$TOKEN_SRC" ] || {
+  echo "sem token em $TOKEN_SRC — rode bin/assistente vm provisionar (ai-memory init)" >&2
+  exit 1
+}
+cp "$TOKEN_SRC" "$TOKEN_FILE.tmp"
 mv "$TOKEN_FILE.tmp" "$TOKEN_FILE"
 token="$(cat "$TOKEN_FILE")"
 code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "$URL/api/v1/projects")"
-[ "$code" = 200 ] || { echo "servidor recusou o token (HTTP $code). O túnel está de pé?" >&2; exit 1; }
+[ "$code" = 200 ] || {
+  echo "servidor local recusou o token (HTTP $code). systemctl --user status ai-memory?" >&2
+  exit 1
+}
 
 # perfil<TAB>raiz<TAB>workspace
 profiles="$(python3 - "$CONF" <<'PY'

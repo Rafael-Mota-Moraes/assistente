@@ -10,4 +10,4 @@ pub mod sleep;
 
 pub use config::{Config, ConfigError, Profile, expand_home};
 pub use project::{Project, discover_projects};
-pub use session::{AgentKind, LaunchPlan, SessionSpec};
+pub use session::{AgentKind, LaunchPlan, SessionSpec, profile_data_dir};

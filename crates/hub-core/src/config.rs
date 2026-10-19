@@ -124,7 +124,7 @@ impl Config {
         let mut config: Self =
             toml::from_str(text).map_err(|e| ConfigError::Parse(PathBuf::new(), e))?;
         config.expand_paths(home);
-        config.validate()?;
+        config.validate(home)?;
         Ok(config)
     }
 
@@ -143,7 +143,7 @@ impl Config {
         // `notebook.workdir` é um caminho NO NOTEBOOK: o `~` fica para o shell remoto expandir.
     }
 
-    fn validate(&self) -> Result<(), ConfigError> {
+    fn validate(&self, home: &Path) -> Result<(), ConfigError> {
         if self.profiles.is_empty() {
             return Err(ConfigError::Invalid(
                 "defina ao menos um [profiles.<id>]".into(),
@@ -154,6 +154,15 @@ impl Config {
                 return Err(ConfigError::Invalid(format!(
                     "id de perfil \"{id}\": use só letras minúsculas, números e '-'"
                 )));
+            }
+            if let Some(key) = &profile.ssh_key {
+                let ssh_dir = home.join(".assistente/perfis").join(id).join("ssh");
+                if !key.starts_with(&ssh_dir) {
+                    return Err(ConfigError::Invalid(format!(
+                        "perfil {id}: ssh_key precisa ficar em {}/",
+                        ssh_dir.display()
+                    )));
+                }
             }
             for host in &profile.opencode_allow_hosts {
                 if !is_valid_host(host) {
@@ -272,6 +281,23 @@ mod tests {
             let err = Config::parse(&with(bad), &home()).unwrap_err();
             assert!(err.to_string().contains("opencode_allow_hosts"), "{err}");
         }
+    }
+
+    #[test]
+    fn ssh_key_must_live_under_profile_ssh_dir() {
+        let ok = EXAMPLE.replacen(
+            "# ssh_key = \"~/.assistente/perfis/trabalho/ssh/id_ed25519\"",
+            "ssh_key = \"~/.assistente/perfis/trabalho/ssh/id_ed25519\"",
+            1,
+        );
+        Config::parse(&ok, &home()).expect("caminho padrão do exemplo");
+
+        let bad = ok.replace(
+            "/perfis/trabalho/ssh/id_ed25519",
+            "/perfis/pessoal/ssh/id_ed25519",
+        );
+        let err = Config::parse(&bad, &home()).unwrap_err();
+        assert!(err.to_string().contains("ssh_key precisa ficar"), "{err}");
     }
 
     #[test]

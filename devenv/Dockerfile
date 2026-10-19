@@ -17,8 +17,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential ca-certificates curl wget file git pkg-config xz-utils \
         libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
         libgl1-mesa-dri libegl-mesa0 fonts-dejavu-core fonts-liberation \
-        shellcheck tmux \
+        shellcheck tmux bubblewrap \
     && rm -rf /var/lib/apt/lists/*
+
+# ai-jail (mesma versão da VM): testes de isolamento por perfil (F3.2)
+ARG AI_JAIL_VERSION=2.10.0
+RUN cd /tmp \
+    && curl -fsSL "https://github.com/akitaonrails/ai-jail/releases/download/v${AI_JAIL_VERSION}/ai-jail-linux-x86_64.tar.gz" \
+        -o ai-jail.tar.gz \
+    && echo "cd4b4b5dad69d6fb11a0cd9a17e6c2e1848cac4ba3d8da0a507a6eb535dc0714  ai-jail.tar.gz" | sha256sum -c - \
+    && tar -xzf ai-jail.tar.gz \
+    && install -m755 ai-jail /usr/local/bin/ai-jail \
+    && rm -f ai-jail ai-jail.tar.gz
 
 # Node.js (tarball oficial, checksum verificado) e pnpm
 RUN cd /tmp \

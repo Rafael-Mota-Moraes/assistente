@@ -93,7 +93,7 @@ PY
 while IFS=$'\t' read -r pid root workspace; do
   data="$HOME/.assistente/perfis/$pid"
   echo "==> perfil $pid"
-  mkdir -p "$data/claude" "$data/opencode"
+  mkdir -p "$data/claude" "$data/opencode" "$data/ssh"
   ai-memory install-hooks --agent claude-code --server-url "$URL" --auth-token "$token" \
     --config-file "$data/claude/settings.json" --apply >/dev/null
   ai-memory install-mcp --client claude-code --server-url "$URL" --auth-token "$token" \

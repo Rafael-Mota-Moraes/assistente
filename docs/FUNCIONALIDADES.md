@@ -47,7 +47,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 - [x] **F3.1 Sessões dentro do ai-jail.** `LaunchPlan` validado com o opencode (spec 05). Docker por projeto: `[jail] docker = true` no `.assistente.toml` → `--docker` no ai-jail.
   Pronto quando: `./dev just check` de um projeto roda de dentro da sessão. Como testar: sessão real no projeto game.
-- [ ] **F3.2 Dados por perfil.** `~/.assistente/perfis/<perfil>/{claude,opencode,ssh}`; só o perfil ativo entra via `--rw-map`.
+- [x] **F3.2 Dados por perfil.** `~/.assistente/perfis/<perfil>/{claude,opencode,ssh}`; só o perfil ativo entra via `--rw-map` (`LaunchPlan`, validação de `ssh_key`). Teste: `jail_hides_other_profile_data_dirs` (ai-jail no devenv).
   Pronto quando: de uma sessão pessoal, `ls ~/.assistente/perfis/trabalho` falha. Como testar: o próprio comando.
 - [ ] **F3.3 Permissões padrão.** `ai-jail --bootstrap` por perfil (Claude: allow/deny/ask; opencode: bash/edit/write).
   Pronto quando: `git push --force` é negado e `git push` pergunta. Como testar: pedir ao agente.

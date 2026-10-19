@@ -43,6 +43,12 @@ workdir="$PWD"
 args=(--rm --init --network host --shm-size 1g --user "$uid:$gid"
       -v "$ROOT:$ROOT" -w "$workdir"
       -e TERM="${TERM:-xterm}")
+# ai-jail real nos testes (F3.2): o bubblewrap precisa criar user/PID namespaces
+# (bloqueados pelo seccomp padrão e pelo AppArmor do host) e montar um /proc novo
+# (systempaths remove as máscaras que o Docker põe em /proc).
+args+=(--security-opt apparmor=unconfined
+       --security-opt seccomp=unconfined
+       --security-opt systempaths=unconfined)
 # Worktree do git: o diretório comum (ex.: …/assistente/.git) precisa estar montado para
 # `git`/`gh` funcionarem dentro do container.
 if [ -f "$ROOT/.git" ]; then

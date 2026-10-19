@@ -344,6 +344,17 @@ mod tests {
         )
         .unwrap();
         assert_ne!(a.argv[2], b.argv[2]);
+        assert_eq!(
+            a.argv[2],
+            "/home/rafa/.assistente/perfis/pessoal".to_owned()
+        );
+        assert_eq!(
+            b.argv[2],
+            "/home/rafa/.assistente/perfis/trabalho".to_owned()
+        );
+        let a_join = a.argv.join(" ");
+        assert!(!a_join.contains("/perfis/trabalho"));
+        assert!(!b.argv.join(" ").contains("/perfis/pessoal "));
         // opencode não ganha --claude-dir.
         assert!(!a.argv.contains(&"--claude-dir".to_owned()));
         assert_ne!(env(&a, "OPENCODE_CONFIG"), env(&b, "OPENCODE_CONFIG"));
@@ -433,6 +444,71 @@ mod tests {
         .unwrap();
         assert!(plan.argv.contains(&"--docker".to_owned()));
         fs::remove_dir_all(projects).unwrap();
+    }
+
+    /// Roda ai-jail real (devenv/VM): só o `--rw-map` do perfil ativo enxerga credenciais.
+    #[test]
+    fn jail_hides_other_profile_data_dirs() {
+        let home = scratch("jail-perfis");
+        let pessoal_data = profile_data_dir(&home, "pessoal");
+        let trabalho_data = profile_data_dir(&home, "trabalho");
+        fs::create_dir_all(pessoal_data.join("claude")).unwrap();
+        fs::create_dir_all(trabalho_data.join("claude")).unwrap();
+        fs::write(pessoal_data.join("isolado"), "ok").unwrap();
+        fs::write(trabalho_data.join("secreto"), "não").unwrap();
+        fs::create_dir_all(home.join(".local/lib/ai-memory")).unwrap();
+        fs::create_dir_all(home.join(".local/share/ai-memory")).unwrap();
+
+        let projects = home.join("projetos");
+        let game = projects.join("game");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(
+            projects.join(".ai-memory.toml"),
+            "workspace = \"pessoal\"\n",
+        )
+        .unwrap();
+
+        let text = EXAMPLE.replace(
+            "root = \"~/Documentos/pessoal/projetos\"",
+            &format!(r#"root = "{}""#, projects.display()),
+        );
+        let config = Config::parse(&text, &home).unwrap();
+        let plan = LaunchPlan::build(
+            &config,
+            &home,
+            &spec("pessoal", "game", AgentKind::Claude),
+            1,
+        )
+        .unwrap();
+
+        let other = trabalho_data.display();
+        let own = pessoal_data.join("isolado").display().to_string();
+        let script =
+            format!("test -f '{own}' && test ! -e '{other}' && test ! -e '{other}/secreto'");
+        run_in_jail(&plan, &script).unwrap_or_else(|e| panic!("isolamento por perfil: {e}"));
+
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    fn run_in_jail(plan: &LaunchPlan, script: &str) -> Result<(), String> {
+        let mut argv = plan.argv.clone();
+        let sep = argv
+            .iter()
+            .position(|a| a == "--")
+            .ok_or("LaunchPlan sem --")?;
+        argv.truncate(sep + 1);
+        argv.extend(["bash".into(), "-c".into(), script.into()]);
+        let status = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(&plan.cwd)
+            .envs(plan.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .status()
+            .map_err(|e| format!("ai-jail ausente ou não executável: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("ai-jail saiu com {status}"))
+        }
     }
 
     #[test]

@@ -20,8 +20,11 @@ disk = "60GiB"
 ip = "10.77.0.10"
 
 [notebook]
-# Alias do ~/.ssh/config da VM. Pode apontar para o IP da LAN ou para o nome no Tailscale.
+# Alias do ~/.ssh/config da VM; `bin/assistente notebook instalar` escreve esse alias a partir
+# de address/user. address pode ser o IP da LAN ou o nome no Tailscale.
 ssh_host = "notebook"
+address = "192.168.0.50"
+user = "seu-usuario"
 # Pasta de trabalho no notebook: clones dos projetos, logs do modo dormir, briefings.
 workdir = "~/assistente"
 

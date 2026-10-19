@@ -54,9 +54,9 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 ## F4 — Notebook e 9router
 
-- [ ] **F4.1 Setup do notebook** *(humano)*. `bin/assistente notebook instalar`: sshd, ai-jail, ai-memory, `dorme`, chave da VM autorizada.
+- [x] **F4.1 Setup do notebook** *(humano)*. Validado em 2026-10-19 (Linux Mint 22.3). `bin/assistente notebook instalar`: sshd, ai-jail, ai-memory, `dorme`, chave da VM autorizada.
   Pronto quando: `ssh notebook true` funciona de dentro da VM sem senha. Como testar: o próprio comando.
-- [ ] **F4.2 Túnel gerenciado pelo hubd.** Processo `ssh -N -L …` com backoff, `ServerAliveInterval` e estado exposto em `/api/notebook` (`tunnel_managed: true`).
+- [x] **F4.2 Túnel gerenciado pelo hubd.** Feito em `crates/hubd/src/tunnel.rs`; reconexão testada matando o `ssh` (volta em ~1 s). Falta o teste automático com sshd no devenv. Processo `ssh -N -L …` com backoff, `ServerAliveInterval` e estado exposto em `/api/notebook` (`tunnel_managed: true`).
   Pronto quando: desligar o Wi-Fi do notebook e religar restabelece o túnel em até 30 s. Como testar: teste com sshd local no devenv + manual.
 - [ ] **F4.3 Saúde do notebook na UI.** Pontos para SSH, 9router e ai-memory, com última verificação e erro no tooltip. Trocar o connect TCP por checagem HTTP (outro processo na porta dá falso positivo; ver spec 07).
   Pronto quando: cada serviço caído aparece vermelho. Como testar: parar o 9router no notebook.

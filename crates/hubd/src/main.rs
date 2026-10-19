@@ -2,6 +2,7 @@
 //! Spec: docs/specs/02-hubd-e-sessoes.md
 
 mod api;
+mod tunnel;
 
 use anyhow::{Context, bail};
 use clap::Parser;
@@ -24,6 +25,9 @@ struct Args {
     /// Sobrescreve `hub.listen` (ex.: 127.0.0.1:7878 para desenvolver fora da VM)
     #[arg(long)]
     listen: Option<String>,
+    /// Não abre o túnel SSH até o notebook (desenvolvimento fora da VM)
+    #[arg(long)]
+    no_tunnel: bool,
 }
 
 #[tokio::main]
@@ -44,7 +48,8 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("endereço inválido: {listen}"))?;
     let token = read_token(&config.hub.token_file, addr)?;
 
-    let state = api::AppState::new(config, home, token);
+    let tunnel = (!args.no_tunnel).then(|| tunnel::spawn(config.notebook.clone()));
+    let state = api::AppState::new(config, home, token, tunnel);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("não consegui escutar em {addr}"))?;

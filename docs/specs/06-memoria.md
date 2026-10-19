@@ -58,6 +58,15 @@ checkout, não o caminho absoluto, então o mesmo repo no PC (`~/Documentos/…/
 notebook (`~/assistente/projetos/pessoal/game`) cai no **mesmo projeto**. Isso é essencial
 para o modo dormir continuar do contexto do dia.
 
+## Estado real (2026-10-19, ai-memory 3.1.1)
+
+- Notebook: `ai-memory setup --yes --agent open-code` (na v3 o agente é `open-code`, não
+  `opencode`) criou o serviço `--user`, plugin + MCP do opencode, e roda com `--enable-web`.
+- Escuta em `127.0.0.1:49374`; saúde em `/healthz`; web UI em `/web`.
+- Token: `~/.local/share/ai-memory/auth-tokens/default` no notebook (dono-só-leitura). É ele
+  que os clientes da VM vão usar (F5.2).
+- Da VM, pelo túnel: `curl 127.0.0.1:49374/healthz` → `{"status":"ok"}`.
+
 ## Pontos a validar (F5.1)
 
 - Caminho exato do wiki git e do token no diretório de dados (a doc lida na pesquisa estava

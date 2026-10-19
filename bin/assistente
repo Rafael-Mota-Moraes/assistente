@@ -166,13 +166,29 @@ cmd_restaurar() {
 
 cmd_notebook() {
   [ "${1:-}" = "instalar" ] || die "uso: assistente notebook instalar"
-  local host
-  host="$(cfg notebook.ssh_host)"
-  scp -r "$ROOT/notebook" "$host:/tmp/assistente-notebook"
-  ssh -t "$host" bash /tmp/assistente-notebook/instalar.sh
-  echo "Chave pública da VM (autorize no notebook):"
-  incus exec "$(cfg vm.name)" -- sudo -u "$(id -un)" -i bash -c \
-    '[ -f ~/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519; cat ~/.ssh/id_ed25519.pub'
+  local name alias target
+  name="$(cfg vm.name)"
+  alias="$(cfg notebook.ssh_host)"
+  target="$(cfg notebook.user)@$(cfg notebook.address)"
+  local in_vm=(incus exec "$name" -- sudo -u "$(id -un)" -i)
+
+  echo "==> chave SSH e alias '$alias' na VM"
+  "${in_vm[@]}" bash -c '[ -f ~/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N "" -C assistente-vm -f ~/.ssh/id_ed25519'
+  "${in_vm[@]}" bash -c "touch ~/.ssh/config && chmod 600 ~/.ssh/config && grep -q '^Host $alias\$' ~/.ssh/config || printf '%s\n' 'Host $alias' '  HostName $(cfg notebook.address)' '  User $(cfg notebook.user)' '  IdentityFile ~/.ssh/id_ed25519' '  ServerAliveInterval 15' '  ServerAliveCountMax 3' >> ~/.ssh/config"
+
+  echo "==> autorizando a chave da VM no notebook ($target)"
+  local pub
+  pub="$("${in_vm[@]}" cat .ssh/id_ed25519.pub)"
+  # shellcheck disable=SC2029 # $pub expande aqui de propósito
+  ssh "$target" "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && grep -qxF '$pub' ~/.ssh/authorized_keys || echo '$pub' >> ~/.ssh/authorized_keys"
+
+  echo "==> setup do notebook (pede o sudo de lá)"
+  scp -q -r "$ROOT/notebook" "$target:/tmp/assistente-notebook"
+  ssh -t "$target" bash /tmp/assistente-notebook/instalar.sh
+
+  echo "==> testando da VM"
+  # shellcheck disable=SC2016 # $(hostname) roda no notebook
+  "${in_vm[@]}" ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$alias" 'echo "VM -> notebook ok ($(hostname))"'
 }
 
 case "${1:-}" in

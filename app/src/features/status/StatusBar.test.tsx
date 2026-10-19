@@ -15,7 +15,8 @@ describe("StatusBar", () => {
       health: { ok: true, version: "0.1.0", uptime_seconds: 3 },
       notebook: {
         ssh_host: "notebook",
-        tunnel_managed: false,
+        tunnel_managed: true,
+        tunnel: { state: "up", last_error: null, restarts: 0, since: 0 },
         services: [
           { name: "9router", port: 20128, up: true },
           { name: "ai_memory", port: 49374, up: false },
@@ -25,6 +26,7 @@ describe("StatusBar", () => {
     render(<StatusBar />);
     expect(screen.getByText("VM ligada")).toBeInTheDocument();
     expect(screen.getByText("hubd 0.1.0")).toBeInTheDocument();
+    expect(screen.getByText("túnel").parentElement).toHaveAttribute("data-tone", "ok");
     expect(screen.getByText("9router").parentElement).toHaveAttribute("data-tone", "ok");
     expect(screen.getByText("ai-memory").parentElement).toHaveAttribute("data-tone", "off");
   });

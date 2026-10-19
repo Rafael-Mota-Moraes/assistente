@@ -1,4 +1,4 @@
-import type { VmState } from "../../bridge/types";
+import type { TunnelStatus, VmState } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { StatusDot, type Tone } from "../../ui/StatusDot";
 
@@ -18,6 +18,12 @@ const vmLabel: Record<VmState, string> = {
   unknown: "VM ?",
 };
 
+const tunnelTone: Record<TunnelStatus["state"], Tone> = {
+  up: "ok",
+  connecting: "warn",
+  down: "off",
+};
+
 const serviceLabel: Record<string, string> = { "9router": "9router", ai_memory: "ai-memory" };
 
 export function StatusBar() {
@@ -34,6 +40,13 @@ export function StatusBar() {
         label={health ? `hubd ${health.version}` : "hubd offline"}
         title={hubError ?? undefined}
       />
+      {notebook?.tunnel && (
+        <StatusDot
+          tone={tunnelTone[notebook.tunnel.state]}
+          label="túnel"
+          title={notebook.tunnel.last_error ?? `${notebook.ssh_host}: ${notebook.tunnel.state}`}
+        />
+      )}
       {notebook?.services.map((service) => (
         <StatusDot
           key={service.name}

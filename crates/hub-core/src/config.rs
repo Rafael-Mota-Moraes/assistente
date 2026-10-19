@@ -38,6 +38,9 @@ pub struct VmConfig {
 #[serde(deny_unknown_fields)]
 pub struct NotebookConfig {
     pub ssh_host: String,
+    /// IP ou nome (LAN/Tailscale) e usuário; viram o alias `ssh_host` no ~/.ssh/config da VM.
+    pub address: String,
+    pub user: String,
     pub workdir: PathBuf,
     /// Nome do serviço → porta no notebook, encaminhada para a mesma porta em 127.0.0.1 da VM.
     pub tunnel: BTreeMap<String, u16>,

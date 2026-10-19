@@ -8,9 +8,17 @@ export type Project = { name: string; path: string; has_project_config: boolean 
 
 export type ServiceStatus = { name: string; port: number; up: boolean };
 
+export type TunnelStatus = {
+  state: "connecting" | "up" | "down";
+  last_error: string | null;
+  restarts: number;
+  since: number;
+};
+
 export type NotebookStatus = {
   ssh_host: string;
   tunnel_managed: boolean;
+  tunnel: TunnelStatus | null;
   services: ServiceStatus[];
 };
 

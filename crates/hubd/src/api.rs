@@ -15,6 +15,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower_http::cors::CorsLayer;
 
+use crate::tunnel::{TunnelHandle, TunnelStatus};
+
 #[derive(Clone)]
 pub struct AppState(Arc<Inner>);
 
@@ -24,15 +26,23 @@ struct Inner {
     home: PathBuf,
     token: Option<String>,
     started: Instant,
+    /// `None` com `--no-tunnel` (desenvolvimento fora da VM).
+    tunnel: Option<TunnelHandle>,
 }
 
 impl AppState {
-    pub fn new(config: Config, home: PathBuf, token: Option<String>) -> Self {
+    pub fn new(
+        config: Config,
+        home: PathBuf,
+        token: Option<String>,
+        tunnel: Option<TunnelHandle>,
+    ) -> Self {
         Self(Arc::new(Inner {
             config,
             home,
             token,
             started: Instant::now(),
+            tunnel,
         }))
     }
 }
@@ -186,8 +196,9 @@ struct ServiceStatus {
 #[derive(Serialize)]
 struct NotebookStatus {
     ssh_host: String,
-    /// O túnel SSH ainda não é gerenciado pelo hubd (F4.2); hoje só testamos as portas locais.
+    /// false com `hubd --no-tunnel`: aí só testamos as portas locais.
     tunnel_managed: bool,
+    tunnel: Option<TunnelStatus>,
     services: Vec<ServiceStatus>,
 }
 
@@ -211,7 +222,8 @@ async fn notebook(State(state): State<AppState>) -> Json<NotebookStatus> {
     }
     Json(NotebookStatus {
         ssh_host: notebook.ssh_host.clone(),
-        tunnel_managed: false,
+        tunnel_managed: state.0.tunnel.is_some(),
+        tunnel: state.0.tunnel.as_ref().map(TunnelHandle::status),
         services,
     })
 }
@@ -228,7 +240,7 @@ mod tests {
     fn app(token: Option<&str>) -> Router {
         let home = PathBuf::from("/home/rafa");
         let config = Config::parse(EXAMPLE, &home).unwrap();
-        router(AppState::new(config, home, token.map(str::to_owned)))
+        router(AppState::new(config, home, token.map(str::to_owned), None))
     }
 
     async fn call(app: Router, uri: &str, token: Option<&str>) -> (StatusCode, serde_json::Value) {

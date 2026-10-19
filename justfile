@@ -35,9 +35,9 @@ test: deps
 shellcheck:
     shellcheck dev instalar.sh bin/assistente vm/provisionar.sh notebook/instalar.sh notebook/dorme
 
-# Roda o hubd com a config de exemplo em http://127.0.0.1:7878 (fora da VM, para desenvolver)
+# Roda o hubd com a config de exemplo em http://127.0.0.1:7878, sem túnel (fora da VM)
 hubd *args:
-    cargo run -p hubd -- --config config/assistente.exemplo.toml {{args}}
+    cargo run -p hubd -- --config config/assistente.exemplo.toml --listen 127.0.0.1:7878 --no-tunnel {{args}}
 
 # Abre o app Tauri com recarga automática (janela via X11). Fala com o hubd de `just hubd`.
 app-dev: deps

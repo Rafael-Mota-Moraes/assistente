@@ -14,11 +14,15 @@ AI_MEMORY_INSTALL="https://github.com/akitaonrails/ai-memory/releases/latest/dow
 # TODO(F4.1): fixar versões e verificar checksums em vez de "latest".
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# O instalador do opencode só põe ~/.opencode/bin no .bashrc (interativo).
+export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
 
 echo "==> pacotes do sistema (pede sudo)"
 sudo apt-get update
 sudo apt-get install -y openssh-server bubblewrap tmux git curl
 sudo systemctl enable --now ssh
+# Serviços systemd --user (ai-memory) continuam rodando sem sessão aberta.
+sudo loginctl enable-linger "$USER"
 
 echo "==> ai-jail"
 if ! command -v ai-jail >/dev/null; then
@@ -32,19 +36,23 @@ echo "==> ai-memory (servidor principal da memória)"
 if ! command -v ai-memory >/dev/null; then
   curl -fsSL "$AI_MEMORY_INSTALL" | sh
 fi
-# setup instala o serviço e liga o opencode local (hooks + MCP).
+# setup (v3.x): init + serviço systemd --user + plugin/MCP do opencode ("open-code").
 # TODO(F5.1): confirmar que o serviço escuta só em 127.0.0.1:49374 e onde fica o token.
-ai-memory setup --yes --agent opencode
+ai-memory setup --yes --agent open-code
 
 echo "==> pastas e dorme"
 mkdir -p "$HOME/assistente/projetos" "$HOME/assistente/logs" "$HOME/assistente/briefings"
 install -Dm755 "$here/dorme" "$HOME/.local/bin/dorme"
 
 echo "==> conferindo serviços"
-check() { curl -fsS -o /dev/null --max-time 2 "$2" && echo "  ok  $1" || echo "  FALHOU  $1 ($2)"; }
+# Qualquer resposta HTTP conta (o 9router responde 401 sem a chave).
+check() {
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$2" || true)"
+  if [ "$code" != "000" ]; then echo "  ok  $1 (HTTP $code)"; else echo "  FALHOU  $1 ($2)"; fi
+}
 check 9router "http://127.0.0.1:20128/v1/models"
 check ai-memory "http://127.0.0.1:49374/"
 
 echo
-echo "Pronto. Falta: autorizar a chave SSH da VM em ~/.ssh/authorized_keys"
-echo "(bin/assistente notebook instalar mostra a chave)."
+echo "Notebook pronto."

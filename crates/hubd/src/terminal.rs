@@ -50,6 +50,8 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
     for arg in tmux.std_args() {
         command.arg(arg);
     }
+    // `set-clipboard` também aqui: sessões criadas por um hubd antigo passam a copiar por OSC 52.
+    command.args(["set-option", "-s", "set-clipboard", "on", ";"]);
     command.args(["attach-session", "-t", &format!("={id}")]);
     command.env("TERM", "xterm-256color");
     command.env("LANG", "C.UTF-8");

@@ -7,7 +7,7 @@ Cobre R3 (VM) e R9 (reinstalar fácil). Funcionalidades F1.x e F7.x.
 | Arquivo | Papel |
 |---|---|
 | `instalar.sh` | Bootstrap do PC: Incus/QEMU, config, token, VM, app `.deb` |
-| `bin/assistente` | CLI do host: `vm criar|iniciar|parar|shell|recriar|status`, `login`, `token`, `backup`, `restaurar`, `notebook instalar` |
+| `bin/assistente` | CLI do host: `vm criar|iniciar|parar|shell|recriar|logins|status`, `login`, `token`, `backup`, `restaurar`, `notebook instalar` |
 | `vm/cloud-init.yaml` | Primeira inicialização: usuário com UID do host, pacotes (git, tmux, bubblewrap, docker, autossh) |
 | `vm/provisionar.sh` | Reexecutável, como root na VM: ai-jail, claude, opencode, ai-memory (cliente), pastas de perfil, hubd |
 | `vm/hubd.service` | systemd do hubd, como o usuário |
@@ -55,6 +55,12 @@ O que sobrevive à formatação e onde fica:
 | Memória | wiki em `memory.mirror_dir` (host) + servidor na VM (F5.0) | backup inclui espelho; réplica no notebook (F5.4) |
 | Logins dos agentes na VM | `~/.assistente/perfis` (VM) | backup (F7.1) ou `assistente login` de novo |
 | Projetos | suas pastas / GitHub | seu backup normal |
+
+O `backup` (F7.1) gera um tar com `~/.config/assistente`, o espelho da memória e
+`vm-perfis/` — os logins de `~/.assistente/perfis` dentro da VM. A VM precisa estar ligada;
+`--sem-logins` faz o backup parcial sem ela. No `restaurar`, config e espelho voltam para o
+home e os logins ficam em `~/.local/share/assistente/restauracao/perfis` até o próximo
+`vm criar` (ou `assistente vm logins`, com a VM já criada); depois de copiados, são apagados.
 
 Roteiro:
 

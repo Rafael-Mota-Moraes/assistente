@@ -20,6 +20,7 @@ check: deps
     pnpm --dir app build
     just shellcheck
     just teste-dorme
+    just teste-backup
     just idade-crates
 
 # Formata Rust e frontend
@@ -34,11 +35,15 @@ test: deps
 
 # Lint dos scripts bash
 shellcheck:
-    shellcheck dev instalar.sh atualizar.sh bin/assistente vm/provisionar.sh vm/configurar-agentes.sh notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
+    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
 
 # Loop do modo dormir com agentes falsos, sem IA (F6.1)
 teste-dorme:
     notebook/teste-dorme.sh
+
+# Backup/restauração com incus falso, sem VM (F7.1)
+teste-backup:
+    bash bin/teste-backup.sh
 
 # Roda o hubd com a config de exemplo em http://127.0.0.1:7878, sem túnel (fora da VM)
 hubd *args:

@@ -14,6 +14,8 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: testes de rota passam. Como testar: `./dev just hubd` e `curl 127.0.0.1:7878/api/health`.
 - [x] **F0.4 Casca da UI.** Lateral com perfis e projetos, área de sessões vazia, barra de status, botão de dormir desativado.
   Pronto quando: a janela mostra a saúde do hubd. Como testar: `./dev just hubd` e, em outro terminal, `./dev just app-dev`.
+- [ ] **F0.5 `.ai-jail` fora do git.** O ai-jail esvazia/reescreve o `.ai-jail` da raiz ao abrir sessão no repo (churn já commitado: `8e886f3` esvaziou, `ba86efe` restaurou), sujando o `git status`. Decidir: `git rm --cached .ai-jail` + `/.ai-jail` no `.gitignore` (conteúdo esperado documentado na spec 05), ou manter versionado com nota no AGENTS.md de que a variação não se commita.
+  Pronto quando: abrir uma sessão no repo não deixa `.ai-jail` modificado. Como testar: `git status --short` depois de uma sessão.
 
 ## F1 — VM
 
@@ -97,7 +99,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 ## F7 — Reinstalação
 
-- [ ] **F7.1 Backup completo.** `bin/assistente backup` inclui os logins da VM (`~/.assistente/perfis`) além da config e do espelho.
+- [x] **F7.1 Backup completo.** `bin/assistente backup` puxa `~/.assistente/perfis` da VM (`tar` pelo `incus exec`, dono e modo preservados) para `vm-perfis/` no tar, junto da config e do espelho; `--sem-logins` faz o parcial sem a VM. `restaurar` devolve config e espelho ao home e deixa os logins em `~/.local/share/assistente/restauracao/perfis`, de onde entram na VM no próximo `vm criar` ou via `vm logins` (consumidos depois de copiados). Teste: `bin/teste-backup.sh` (incus falso no `just check`).
   Pronto quando: o tar tem tudo que `restaurar` precisa. Como testar: listar o tar.
 - [ ] **F7.2 Restaurar do zero** *(humano)*. Roteiro do README seguido num PC formatado.
   Pronto quando: em até 30 min o app está funcionando com memória e logins. Como testar: ensaio real (ou VM de teste).

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # CLI do host para o Assistente (a VM, backups e o notebook). O app Tauri cobre o dia a dia.
-#   assistente vm criar|provisionar|iniciar|parar|shell|recriar|status
+#   assistente vm criar|provisionar|iniciar|parar|shell|recriar|logins|status
 #   assistente login claude|opencode <perfil>   login do agente dentro da VM, por perfil
 #   assistente token                            gera ~/.config/assistente/hub.token
-#   assistente backup [arquivo.tar.gz]          config + espelho da memória + logins da VM
+#   assistente backup [--sem-logins] [arq.tar.gz]  config + espelho da memória + logins da VM
 #   assistente restaurar <arquivo.tar.gz>
 #   assistente notebook instalar                copia notebook/ e roda o instalar.sh por SSH
 #   assistente agentes configurar               9router no opencode + ai-memory nos agentes da VM
 #   assistente atualizar                        hubd novo na VM + app recompilado e reinstalado  (ou ./atualizar.sh)
-# PARCIALMENTE TESTADO: só `token` e a leitura da config. VM = F1, notebook = F4, backup = F7.
-# Spec: docs/specs/01-vm-e-instalacao.md
+# TESTADO SEM VM: `token`, leitura da config e backup/restaurar (incus falso, F7.1).
+# VM = F1, notebook = F4. Spec: docs/specs/01-vm-e-instalacao.md
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,8 +17,14 @@ CONF_DIR="$HOME/.config/assistente"
 CONF="$CONF_DIR/assistente.toml"
 NET="assistente0"
 NET_CIDR="10.77.0.1/24"
+# Logins da VM vindos de um backup (`assistente restaurar`), à espera do próximo `vm criar`
+# ou de um `vm logins`. Consumido (apagado) depois de copiado para a VM.
+RESTORE_LOGINS_DIR="$HOME/.local/share/assistente/restauracao/perfis"
+TMP_DIR=""
 
 die() { echo "assistente: $*" >&2; exit 1; }
+cleanup() { if [ -n "$TMP_DIR" ]; then rm -rf "$TMP_DIR"; fi; }
+trap cleanup EXIT
 
 # Quem acabou de entrar no grupo incus-admin só o ganha na sessão depois de logout/login; até
 # lá o socket do incus nega acesso. Nesse caso roda de novo via sg.
@@ -86,6 +92,9 @@ vm_criar() {
 
   incus start "$name"
   vm_provisionar
+  # Logins que vieram de um backup (`assistente restaurar`) entram agora, depois do
+  # provisionamento para não serem sobrescritos.
+  vm_push_logins
 }
 
 # Liga a VM se estiver parada e espera o incus-agent responder (logo após o start ele ainda
@@ -137,6 +146,11 @@ cmd_vm() {
     iniciar) incus start "$name" ;;
     parar) incus stop "$name" ;;
     shell) incus exec "$name" -- sudo -u "$(id -un)" -i ;;
+    logins)
+      [ -d "$RESTORE_LOGINS_DIR" ] \
+        || die "nada para copiar: rode 'assistente restaurar <backup.tar.gz>' antes"
+      vm_push_logins
+      ;;
     recriar)
       read -r -p "Apagar a VM $name e criar de novo? Logins dentro dela se perdem (faça backup). [s/N] " ok
       [ "$ok" = "s" ] || exit 1
@@ -144,7 +158,7 @@ cmd_vm() {
       vm_criar
       ;;
     status) incus list "^$name\$" ;;
-    *) die "uso: assistente vm criar|provisionar|iniciar|parar|shell|recriar|status" ;;
+    *) die "uso: assistente vm criar|provisionar|iniciar|parar|shell|recriar|logins|status" ;;
   esac
 }
 
@@ -169,18 +183,90 @@ cmd_token() {
   echo "token gerado em $file"
 }
 
+# Copia ~/.assistente/perfis da VM (logins dos agentes) para <destino>/vm-perfis.
+vm_pull_logins() {
+  local dest="$1" name path
+  name="$(cfg vm.name)"
+  path="/home/$(id -un)/.assistente/perfis"
+
+  incus info "$name" >/dev/null 2>&1 \
+    || die "VM $name não existe: sem logins para copiar (use --sem-logins para um backup parcial)"
+  [ "$(incus list "^$name\$" -c s -f csv)" = "RUNNING" ] \
+    || die "VM $name parada: ligue (assistente vm iniciar) para incluir os logins, ou use --sem-logins"
+  incus exec "$name" -- true 2>/dev/null \
+    || die "o agente da VM $name ainda não responde; tente de novo em instantes"
+  if ! incus exec "$name" -- test -d "$path"; then
+    echo "assistente: $path ainda não existe na VM; backup sem logins" >&2
+    return 0
+  fi
+
+  mkdir -p "$dest/vm-perfis"
+  # tar pelo stdin/stdout do incus: preserva dono e modo e não depende do estado do destino.
+  incus exec "$name" -- tar -czf - -C "/home/$(id -un)/.assistente" perfis \
+    | tar -xzf - -C "$dest/vm-perfis" --strip-components=1
+}
+
+# Copia os logins restaurados do backup para a VM. Silencioso quando não há nada pendente.
+vm_push_logins() {
+  local name path
+  [ -d "$RESTORE_LOGINS_DIR" ] || return 0
+  name="$(cfg vm.name)"
+  path="/home/$(id -un)/.assistente/perfis"
+
+  echo "==> logins restaurados do backup"
+  incus exec "$name" -- sudo -u "$(id -un)" -i mkdir -p "$path"
+  tar -czf - -C "$RESTORE_LOGINS_DIR" . | incus exec "$name" -- tar -xzf - -C "$path"
+  incus exec "$name" -- chown -R "$(id -un):" "$path"
+  rm -rf "$RESTORE_LOGINS_DIR"
+  echo "    $path"
+}
+
 cmd_backup() {
-  # TODO(F7.1): incluir ~/.assistente/perfis da VM (logins) via `incus file pull -r`.
-  local out="${1:-$HOME/assistente-backup-$(date +%F).tar.gz}"
+  local with_logins=1 out="" arg
+  for arg in "$@"; do
+    case "$arg" in
+      --sem-logins) with_logins=0 ;;
+      -h|--help) die "uso: assistente backup [--sem-logins] [arquivo.tar.gz]" ;;
+      -*) die "opção desconhecida: $arg (uso: assistente backup [--sem-logins] [arquivo.tar.gz])" ;;
+      *) [ -z "$out" ] || die "argumento sobrando: $arg"; out="$arg" ;;
+    esac
+  done
+  out="${out:-$HOME/assistente-backup-$(date +%F).tar.gz}"
+
   local mirror
   mirror="$(cfg memory.mirror_dir | sed "s|^~|$HOME|")"
-  tar -czf "$out" -C "$HOME" ".config/assistente" "${mirror#"$HOME"/}"
+  [ -d "$mirror" ] || die "espelho da memória não existe: $mirror"
+
+  local stage
+  stage="$(mktemp -d)"
+  TMP_DIR="$stage"
+
+  if [ "$with_logins" -eq 1 ]; then
+    vm_pull_logins "$stage"
+  fi
+  # GNU tar aceita mais de um -C; o layout do tar continua relativo a $HOME, e os logins da
+  # VM entram em vm-perfis/ (extraídos à parte pelo `restaurar`).
+  local tar_args=(-czf "$out" -C "$HOME" ".config/assistente" "${mirror#"$HOME"/}")
+  [ -d "$stage/vm-perfis" ] && tar_args+=(-C "$stage" vm-perfis)
+  tar "${tar_args[@]}"
   echo "backup em $out"
 }
 
 cmd_restaurar() {
-  local file="${1:?uso: assistente restaurar <arquivo.tar.gz>}"
-  tar -xzf "$file" -C "$HOME"
+  local file="${1:?uso: assistente restaurar <arquivo.tar.gz>}" entries
+  TMP_DIR="$(mktemp -d)"
+  entries="$TMP_DIR/lista"
+  tar -tzf "$file" >"$entries" || die "backup ilegível: $file"
+
+  # Config e espelho voltam para o home; os logins da VM ficam à espera (não pertencem ao host).
+  tar -xzf "$file" -C "$HOME" --exclude "vm-perfis" --exclude "vm-perfis/*"
+  # O estado pendente é sempre o do backup restaurado agora (backup antigo não deixa resto).
+  rm -rf "$RESTORE_LOGINS_DIR"
+  if grep -q "^vm-perfis/" "$entries"; then
+    mkdir -p "$RESTORE_LOGINS_DIR"
+    tar -xzf "$file" -C "$RESTORE_LOGINS_DIR" --strip-components=1 vm-perfis
+    echo "logins da VM restaurados; entram na VM no próximo 'vm criar' (ou 'assistente vm logins')"
+  fi
   echo "restaurado em $HOME (config e espelho da memória)"
 }
 

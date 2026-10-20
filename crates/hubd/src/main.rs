@@ -3,6 +3,7 @@
 
 mod api;
 mod exec;
+mod memory;
 mod sessions;
 mod sleep;
 mod terminal;

@@ -626,6 +626,25 @@ async fn start_sleep(
     let prompt =
         hub_core::sleep::render_prompt(&project_config.sleep, &format!("dorme/{date}"), &briefing);
 
+    // 5b. Sync da memória (wiki) para o notebook (F5.4), best-effort: o agente noturno
+    //     consulta a réplica local; falha não trava o dormir.
+    let memory_remote_dir = inner
+        .config
+        .notebook
+        .workdir
+        .join("memoria")
+        .display()
+        .to_string();
+    if let Err(e) = sleep::sync_memory(
+        &inner.config.memory.mirror_dir,
+        &state.sleep_remote(),
+        &memory_remote_dir,
+    )
+    .await
+    {
+        tracing::warn!("dormindo sem sync da memória: {e}");
+    }
+
     // 6. Sync (F6.2) + prompt em briefings/ + dorme num tmux do notebook.
     let workdir = inner.config.notebook.workdir.display().to_string();
     let remote_dir = sleep_remote_dir(&state, &request.profile, &request.project);
@@ -672,15 +691,33 @@ async fn collect_sleep(
     let dir = sleep_project_dir(&state, &request.profile, &request.project)
         .map_err(|(status, msg)| error(status, msg))?;
     let remote_dir = sleep_remote_dir(&state, &request.profile, &request.project);
-    sleep::collect_project(&dir, &state.sleep_remote(), &remote_dir, &request.date)
+    let report = sleep::collect_project(&dir, &state.sleep_remote(), &remote_dir, &request.date)
         .await
-        .map(Json)
         .map_err(|e| {
             error(
                 StatusCode::BAD_GATEWAY,
                 &format!("não consegui recolher do notebook: {e}"),
             )
-        })
+        })?;
+    // Recolhe também o wiki (memória) do notebook (F5.4), best-effort.
+    let memory_remote_dir = state
+        .0
+        .config
+        .notebook
+        .workdir
+        .join("memoria")
+        .display()
+        .to_string();
+    if let Err(e) = sleep::collect_memory(
+        &state.0.config.memory.mirror_dir,
+        &state.sleep_remote(),
+        &memory_remote_dir,
+    )
+    .await
+    {
+        tracing::warn!("recolhendo sem sync da memória: {e}");
+    }
+    Ok(Json(report))
 }
 
 /// POST /api/sleep/merge (F6.5): fast-forward da base até a branch recolhida. 409 quando

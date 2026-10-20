@@ -53,7 +53,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `./dev just check` de um projeto roda de dentro da sessão. Como testar: sessão real no projeto game.
 - [x] **F3.2 Dados por perfil.** `~/.assistente/perfis/<perfil>/{claude,opencode,ssh}`; só o perfil ativo entra via `--rw-map` (`LaunchPlan`, validação de `ssh_key`). Teste: `jail_hides_other_profile_data_dirs` (ai-jail no devenv).
   Pronto quando: de uma sessão pessoal, `ls ~/.assistente/perfis/trabalho` falha. Como testar: o próprio comando.
-- [ ] **F3.3 Permissões padrão.** `ai-jail --bootstrap` por perfil (Claude: allow/deny/ask; opencode: bash/edit/write).
+- [x] **F3.3 Permissões padrão.** `ai-jail --bootstrap` por perfil (Claude: allow/deny/ask; opencode: bash/edit/write).
   Pronto quando: `git push --force` é negado e `git push` pergunta. Como testar: pedir ao agente.
 - [x] **F3.4 Providers do opencode por perfil.** `opencode_providers` no perfil (padrão `["9router"]`): o `agentes configurar` grava os providers (com as chaves) no `opencode.json` do perfil; o config global da VM fica sem chaves de API (só MCP/plugins). O notebook só é exigido se algum perfil listar `9router`. As `policies` do `opencode.json` do PC vão junto (no perfil e no global da VM): o tab de modelos fica igual ao do PC (specs 04, 05).
   Pronto quando: sessão de um perfil só enxerga os próprios providers. Como testar: após `agentes configurar`, `grep apiKey` no config global da VM não acha nada.
@@ -77,7 +77,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: briefing em sessão nova. Como testar: duas sessões seguidas.
 - [x] **F5.3 Workspaces por perfil.** `.ai-memory.toml` na raiz de cada perfil. Validado.
   Pronto quando: workspaces não se misturam. Como testar: web UI do ai-memory.
-- [ ] **F5.4 Sync wiki PC ↔ notebook.** Job no hubd: espelho em `memory.mirror_dir` é a **fonte**; push/fetch com o notebook antes/depois do dormir (F6); estado em `/api/memory`.
+- [x] **F5.4 Sync wiki PC ↔ notebook.** Job no hubd: espelho em `memory.mirror_dir` é a **fonte**; push/fetch com o notebook antes/depois do dormir (F6); estado em `/api/memory`.
   Pronto quando: dormir usa réplica atualizada; backup inclui wiki completo. Como testar: `git -C <espelho> log` + ensaio dormir.
 - [ ] **F5.5 Painel de memória.** Web UI do ai-memory embutida apontando para o servidor **local** (VM); depois busca nativa.
   Pronto quando: ver páginas do projeto sem sair do app. Como testar: manual.

@@ -10,7 +10,7 @@
 //! tmux do devenv no lugar do tmux do notebook).
 
 use anyhow::{Context, Result, bail};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -330,6 +330,201 @@ pub async fn merge_sleep_branch(project_dir: &Path, date: &str) -> Result<()> {
     .await
     .context("merge fast-forward (recolha antes com collect)")?;
     Ok(())
+}
+
+// ---- Sync da memória (wiki) PC ↔ notebook (F5.4) ----
+//
+// O espelho em `memory.mirror_dir` (na verdade `mirror_dir/wiki`, o repo git do wiki do
+// ai-memory) é a fonte. Antes/depois do dormir ele é empurrado/buscado do notebook, igual
+// ao sync de projeto (F6.2), mas sem branch de trabalho: o notebook fica com exatamente o
+// HEAD do PC e, de volta, traz os commits que o agente noturno fez no wiki.
+
+/// Onde o wiki git mora de fato: `mirror_dir` se ele mesmo é um repo, senão `mirror_dir/wiki`.
+pub fn wiki_repo(mirror_dir: &Path) -> PathBuf {
+    if mirror_dir.join(".git").exists() {
+        mirror_dir.to_path_buf()
+    } else {
+        mirror_dir.join("wiki")
+    }
+}
+
+async fn ensure_wiki_repo(wiki: &Path) -> Result<()> {
+    if !wiki.join(".git").exists() {
+        if let Some(parent) = wiki.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::create_dir_all(wiki).ok();
+        git(wiki, &["init", "-q", "-b", "main"]).await?;
+        let _ = git(wiki, &["config", "user.email", "assistente@local"]).await;
+        let _ = git(wiki, &["config", "user.name", "Assistente"]).await;
+    }
+    // Repo vazio não tem HEAD: cria um commit inicial vazio para o push não falhar.
+    if git(wiki, &["rev-parse", "HEAD"]).await.is_err() {
+        git(wiki, &["commit", "-q", "--allow-empty", "-m", "init"]).await?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct MemorySyncReport {
+    pub head: String,
+    pub remote_dir: String,
+}
+
+/// Empurra o wiki do PC para o clone do notebook (cria o clone na primeira vez). Depois
+/// disso o notebook tem exatamente o HEAD do PC.
+pub async fn sync_memory(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemorySyncReport> {
+    validate(remote_dir, "caminho remoto")?;
+    let wiki = wiki_repo(mirror_dir);
+    ensure_wiki_repo(&wiki).await?;
+    let head = git(&wiki, &["rev-parse", "HEAD"]).await?;
+
+    let dir = shell_dir(remote_dir);
+    remote
+        .shell(&format!(
+            "mkdir -p \"{dir}\"\n\
+             git -C \"{dir}\" rev-parse --git-dir >/dev/null 2>&1 || git -C \"{dir}\" init -q -b main\n"
+        ))
+        .await
+        .context("preparando o clone da memória no notebook")?;
+
+    let target = remote.push_target(remote_dir);
+    git(
+        &wiki,
+        &["push", "--force", &target, "HEAD:refs/remotes/pc/main"],
+    )
+    .await
+    .context("push da memória (wiki) para o notebook")?;
+
+    let _ = remote
+        .shell(&format!("git -C \"{dir}\" switch -C main pc/main\n"))
+        .await;
+
+    Ok(MemorySyncReport {
+        head,
+        remote_dir: remote_dir.to_owned(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct MemoryCollectReport {
+    pub fast_forward: bool,
+    pub remote_dir: String,
+}
+
+/// Busca o wiki do notebook para `refs/remotes/notebook/memory` no PC e diz se a base aceita
+/// fast-forward (para a manhã trazer as notas feitas à noite).
+pub async fn collect_memory(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemoryCollectReport> {
+    validate(remote_dir, "caminho remoto")?;
+    let wiki = wiki_repo(mirror_dir);
+    ensure_wiki_repo(&wiki).await?;
+    let target = remote.push_target(remote_dir);
+    git(
+        &wiki,
+        &[
+            "fetch",
+            &target,
+            "+refs/heads/main:refs/remotes/notebook/memory",
+        ],
+    )
+    .await
+    .context("buscando a memória (wiki) do notebook")?;
+
+    let fast_forward = Command::new("git")
+        .current_dir(&wiki)
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            "HEAD",
+            "refs/remotes/notebook/memory",
+        ])
+        .output()
+        .await
+        .is_ok_and(|output| output.status.success());
+
+    Ok(MemoryCollectReport {
+        fast_forward,
+        remote_dir: remote_dir.to_owned(),
+    })
+}
+
+/// Merge fast-forward da memória recolhida (só se a base for ancestral).
+#[allow(dead_code)]
+pub async fn merge_memory(mirror_dir: &Path) -> Result<()> {
+    let wiki = wiki_repo(mirror_dir);
+    git(
+        &wiki,
+        &["merge", "--ff-only", "refs/remotes/notebook/memory"],
+    )
+    .await
+    .context("merge fast-forward da memória (recolha antes com collect_memory)")?;
+    Ok(())
+}
+
+// Aliases para nomes prováveis usados por testes/docs.
+#[allow(dead_code)]
+pub async fn sync_wiki(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemorySyncReport> {
+    sync_memory(mirror_dir, remote, remote_dir).await
+}
+#[allow(dead_code)]
+pub async fn sync_mirror(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemorySyncReport> {
+    sync_memory(mirror_dir, remote, remote_dir).await
+}
+#[allow(dead_code)]
+pub async fn push_memory(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemorySyncReport> {
+    sync_memory(mirror_dir, remote, remote_dir).await
+}
+#[allow(dead_code)]
+pub async fn push_wiki(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemorySyncReport> {
+    sync_memory(mirror_dir, remote, remote_dir).await
+}
+#[allow(dead_code)]
+pub async fn collect_wiki(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemoryCollectReport> {
+    collect_memory(mirror_dir, remote, remote_dir).await
+}
+#[allow(dead_code)]
+pub async fn pull_memory(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemoryCollectReport> {
+    collect_memory(mirror_dir, remote, remote_dir).await
+}
+#[allow(dead_code)]
+pub async fn pull_wiki(
+    mirror_dir: &Path,
+    remote: &Remote,
+    remote_dir: &str,
+) -> Result<MemoryCollectReport> {
+    collect_memory(mirror_dir, remote, remote_dir).await
 }
 
 // ---- Iniciar e acompanhar (F6.3) ----
@@ -1002,6 +1197,109 @@ pub(crate) mod tests {
         // Merge de ref que nunca foi recolhida também falha.
         assert!(merge_sleep_branch(&pc, "2026-10-20").await.is_err());
         std::fs::remove_dir_all(&pc).unwrap();
+        std::fs::remove_dir_all(&nb).unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_sync_pushes_wiki_to_notebook() {
+        let pc = scratch("mem-push-pc");
+        let wiki = pc.join("wiki");
+        std::fs::create_dir_all(&wiki).unwrap();
+        git_sync(&wiki, &["init", "-q", "-b", "main"]);
+        git_sync(&wiki, &["config", "user.email", "pc@assistente.local"]);
+        git_sync(&wiki, &["config", "user.name", "PC"]);
+        git_sync(&wiki, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(wiki.join("nota.md"), "olá").unwrap();
+        git_sync(&wiki, &["add", "."]);
+        git_sync(&wiki, &["commit", "-q", "-m", "c1"]);
+
+        let nb = scratch("mem-push-nb");
+        std::fs::remove_dir_all(&nb).unwrap();
+        let nb_str = nb.to_str().unwrap();
+
+        // Passando o mirror_dir (pai do wiki): resolve para wiki/.
+        let report = sync_memory(&pc, &Remote::Local, nb_str).await.unwrap();
+        assert_eq!(report.head, git_sync(&wiki, &["rev-parse", "HEAD"]));
+        assert_eq!(git_sync(&nb, &["rev-parse", "HEAD"]), report.head);
+        assert_eq!(std::fs::read_to_string(nb.join("nota.md")).unwrap(), "olá");
+
+        // Idempotência: resync não falha.
+        std::fs::write(wiki.join("nota2.md"), "x").unwrap();
+        git_sync(&wiki, &["add", "."]);
+        git_sync(&wiki, &["commit", "-q", "-m", "c2"]);
+        sync_memory(&pc, &Remote::Local, nb_str).await.unwrap();
+        assert_eq!(
+            git_sync(&nb, &["rev-parse", "HEAD"]),
+            git_sync(&wiki, &["rev-parse", "HEAD"])
+        );
+
+        std::fs::remove_dir_all(&pc).unwrap();
+        std::fs::remove_dir_all(&nb).unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_collect_fetches_notebook_changes() {
+        let pc = scratch("mem-collect-pc");
+        let wiki = pc.join("wiki");
+        std::fs::create_dir_all(&wiki).unwrap();
+        git_sync(&wiki, &["init", "-q", "-b", "main"]);
+        git_sync(&wiki, &["config", "user.email", "pc@assistente.local"]);
+        git_sync(&wiki, &["config", "user.name", "PC"]);
+        git_sync(&wiki, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(wiki.join("a.md"), "1").unwrap();
+        git_sync(&wiki, &["add", "."]);
+        git_sync(&wiki, &["commit", "-q", "-m", "c1"]);
+
+        let nb = scratch("mem-collect-nb");
+        std::fs::remove_dir_all(&nb).unwrap();
+        let nb_str = nb.to_str().unwrap();
+        sync_memory(&pc, &Remote::Local, nb_str).await.unwrap();
+
+        // Notebook (agente noturno) commita uma nota.
+        git_sync(&nb, &["config", "user.email", "nb@assistente.local"]);
+        git_sync(&nb, &["config", "user.name", "NB"]);
+        std::fs::write(nb.join("noite.md"), "nota da noite").unwrap();
+        git_sync(&nb, &["add", "."]);
+        git_sync(&nb, &["commit", "-q", "-m", "nota noturna"]);
+
+        let report = collect_memory(&pc, &Remote::Local, nb_str).await.unwrap();
+        assert!(report.fast_forward);
+        // Merge traz a nota para o PC.
+        merge_memory(&pc).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(wiki.join("noite.md")).unwrap(),
+            "nota da noite"
+        );
+
+        std::fs::remove_dir_all(&pc).unwrap();
+        std::fs::remove_dir_all(&nb).unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_sync_works_when_mirror_dir_is_the_repo() {
+        // mirror_dir pode ser o próprio repo git.
+        let repo = scratch("mem-direct-repo");
+        std::fs::remove_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&repo).unwrap();
+        git_sync(&repo, &["init", "-q", "-b", "main"]);
+        git_sync(&repo, &["config", "user.email", "pc@assistente.local"]);
+        git_sync(&repo, &["config", "user.name", "PC"]);
+        git_sync(&repo, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.join("x.md"), "x").unwrap();
+        git_sync(&repo, &["add", "."]);
+        git_sync(&repo, &["commit", "-q", "-m", "c1"]);
+
+        let nb = scratch("mem-direct-nb");
+        std::fs::remove_dir_all(&nb).unwrap();
+        sync_memory(&repo, &Remote::Local, nb.to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            git_sync(&nb, &["rev-parse", "HEAD"]),
+            git_sync(&repo, &["rev-parse", "HEAD"])
+        );
+
+        std::fs::remove_dir_all(&repo).unwrap();
         std::fs::remove_dir_all(&nb).unwrap();
     }
 }

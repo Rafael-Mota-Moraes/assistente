@@ -33,7 +33,8 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 | POST | `/api/sessions` | pronto | `{profile, project, agent: "claude"|"opencode"}` → sessão |
 | DELETE | `/api/sessions/{id}` | pronto | mata a sessão tmux |
 | GET (WS) | `/api/sessions/{id}/terminal` | pronto | ver protocolo abaixo |
-| GET/POST | `/api/sleep` | F6.3 | spec 08 |
+| GET | `/api/sleep` | pronto (F6.3) | `?profile&project` → `{sleeping, log_tail}` (tmux + tail do log no notebook) |
+| POST | `/api/sleep` | pronto (F6.3) | `{profile, project, wip?}` → 202 `{date, session, remote_dir, prompt_file, log_file}`; 409 árvore suja/já rodando |
 | POST | `/api/sleep/stop` | pronto (F6.4) | 204; cria `STOP` no notebook via ssh (502 sem notebook) |
 | POST | `/api/sleep/collect` | pronto (F6.5) | `{profile, project, date}` → `{base, sleep_branch, commits, relatorio, fast_forward}`; 502 sem notebook |
 | POST | `/api/sleep/merge` | pronto (F6.5) | 204 fast-forward; 409 se a base andou durante a noite |

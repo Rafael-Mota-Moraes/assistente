@@ -17,8 +17,10 @@ PC (hubd)                                         notebook
 2. git push nb:~/assistente/projetos/<perfil>/<proj> \
        HEAD:refs/remotes/pc/<base>  ─────────────► clone (criado na 1ª vez)
 3. ssh: git switch -C dorme/<data> pc/<base>  ───► branch de trabalho
-4. exporta briefing do ai-memory (servidor PC/VM; réplica no notebook após sync F5.4) → prompt
-   (hub_core::sleep::render_prompt)
+4. exporta briefing do ai-memory (servidor local na VM, F5.0: `GET
+   /api/v1/workspaces/<memory_workspace>/projects/<projeto>/briefing` com o token de
+   `<memory.data_dir>/auth-tokens/default`; melhor esforço — sem servidor, o prompt segue
+   sem a seção de memória) → prompt (`hub_core::sleep::render_prompt`)
 5. scp prompt → ~/assistente/briefings/<proj>.md
 6. ssh: tmux new -d -s dorme-<proj> \
      env AGENTE_PROMPT_FILE=… AGENTE_MAX_MIN=… \
@@ -74,3 +76,9 @@ terminou fora da base, ou houve `attempts` iterações seguidas sem commit novo.
   commits ou escreve RELATORIO, conferindo cada condição de parada. `AGENTE_ESPERA=0` tira a
   espera entre tentativas sem progresso.
 - Sync: dois repos locais no devenv simulando PC e notebook (`file://`).
+- Ciclo completo pelas rotas (devenv, `Remote::Local` + tmux local):
+  `sleep_full_cycle_start_status_collect_merge` em `crates/hubd/src/api.rs` — POST /api/sleep
+  (prompt renderizado no "notebook", clone na `dorme/<data>`), GET até o loop encerrar
+  (agente falso commita + STOP), collect e merge trazem o commit para o PC.
+  `sleep_start_guards_dirty_tree_and_duplicate_run`: 409 árvore suja, WIP autorizado,
+  409 duplicado e STOP pela rota.

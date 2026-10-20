@@ -9,6 +9,9 @@ import type {
   SessionInfo,
   SessionSpec,
   SleepRequest,
+  SleepStartRequest,
+  SleepStatus,
+  StartedSleep,
 } from "./types";
 
 export class HubError extends Error {
@@ -57,6 +60,18 @@ export class HubClient {
 
   async deleteSession(id: string): Promise<void> {
     await this.request("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
+  }
+
+  /** Hora de dormir (F6.3): entrega o projeto ao notebook; 409 se a árvore está suja. */
+  startSleep(request: SleepStartRequest): Promise<StartedSleep> {
+    return this.request("POST", "/api/sleep", request);
+  }
+
+  /** O dorme está rodando? + tail do log no notebook (F6.3). */
+  sleepStatus(profile: string, project: string): Promise<SleepStatus> {
+    return this.get(
+      `/api/sleep?profile=${encodeURIComponent(profile)}&project=${encodeURIComponent(project)}`,
+    );
   }
 
   /** Pede parada do modo dormir (cria o STOP no notebook; a iteração atual termina). */

@@ -1,14 +1,13 @@
-//! Modo dormir, parte git (F6.2): levar o HEAD do PC até o clone no notebook e deixar a
-//! branch de trabalho `dorme/<data>` pronta, sem tocar em nada que é do notebook.
-//! Spec: docs/specs/08-modo-dormir.md (passos 2 e 3 do fluxo).
+//! Orquestração do modo dormir no hubd (F6.2–F6.4): levar o HEAD do PC até o clone no
+//! notebook, gerar o prompt com o briefing do ai-memory, iniciar o `dorme` num tmux de lá,
+//! acompanhar (status + log), parar (STOP) e recolher de manhã (fetch + merge).
+//! Spec: docs/specs/08-modo-dormir.md.
 //!
 //! O hubd roda na VM, onde as raízes dos perfis estão montadas no MESMO caminho do PC
 //! (virtiofs), então `git -C <raiz>/<perfil>/<projeto>` aqui vê o repo do PC. O notebook é
 //! alcançado pelo alias ssh da config (`Remote::Ssh`); nos testes, `Remote::Local` roda o
-//! mesmo script bash num diretório local (dois repos locais simulando PC e notebook).
-//!
-//! O resto da orquestração (briefing, prompt, tmux remoto) é F6.3.
-#![allow(dead_code)] // sync_project entra em uso na rota POST /api/sleep (F6.3)
+//! mesmo script bash num diretório local (dois repos locais simulando PC e notebook, e o
+//! tmux do devenv no lugar do tmux do notebook).
 
 use anyhow::{Context, Result, bail};
 use std::path::Path;
@@ -19,7 +18,11 @@ use tokio::process::Command;
 /// Onde fica o "notebook": alias ssh (produção) ou o próprio host (testes).
 #[derive(Debug, Clone)]
 pub enum Remote {
-    Ssh { host: String },
+    Ssh {
+        host: String,
+    },
+    /// O "notebook" é o próprio host: usado nos testes do devenv (tmux e git locais).
+    #[cfg_attr(not(test), allow(dead_code))]
     Local,
 }
 
@@ -321,6 +324,293 @@ pub async fn merge_sleep_branch(project_dir: &Path, date: &str) -> Result<()> {
     .await
     .context("merge fast-forward (recolha antes com collect)")?;
     Ok(())
+}
+
+// ---- Iniciar e acompanhar (F6.3) ----
+
+/// Base64 sem crate nova: o prompt viaja num script shell imune a quoting.
+fn base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Percent-encoding mínimo para segmentos de path/query do ai-memory.
+fn encode_uri(part: &str) -> String {
+    let mut out = String::new();
+    for byte in part.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// GET com Bearer no ai-memory local (sem crate HTTP: o mesmo tokio do probe). Best-effort
+/// na chamada: qualquer falha vira `Err` e o prompt segue sem briefing.
+async fn memory_get(port: u16, path: &str, token: Option<&str>) -> Result<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .context("ai-memory fora do ar")?;
+    let auth = token
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{auth}Accept: application/json\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await?;
+    let text = String::from_utf8_lossy(&response);
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .context("resposta HTTP inválida")?;
+    let status = head.split(' ').nth(1).unwrap_or("?");
+    if status != "200" {
+        bail!("ai-memory respondeu {status}");
+    }
+    Ok(body.to_owned())
+}
+
+/// Passo 4 da spec 08: exporta o briefing do projeto no ai-memory local (servidor da VM,
+/// F5.0) como texto para o prompt. O token é o do servidor (`<data_dir>/auth-tokens/default`).
+pub async fn export_briefing(
+    port: u16,
+    token: Option<&str>,
+    workspace: &str,
+    project: &str,
+) -> Result<String> {
+    let path = format!(
+        "/api/v1/workspaces/{}/projects/{}/briefing?limit=10",
+        encode_uri(workspace),
+        encode_uri(project)
+    );
+    let body = memory_get(port, &path, token).await?;
+    let snapshot: serde_json::Value =
+        serde_json::from_str(body.trim()).context("briefing não é JSON")?;
+    Ok(hub_core::sleep::briefing_text(&snapshot))
+}
+
+/// Árvore limpa é pré-requisito (spec 08, passo 1). Com `wip`, o que está solto vira um
+/// commit WIP; sem `wip`, árvore suja é erro (a UI oferece a opção). Devolve `true` se
+/// fez o commit WIP.
+pub async fn ensure_clean_tree(project_dir: &Path, wip: bool) -> Result<bool> {
+    let status = git(project_dir, &["status", "--porcelain"]).await?;
+    if status.is_empty() {
+        return Ok(false);
+    }
+    if !wip {
+        bail!("árvore suja — commite as mudanças ou autorize o commit WIP antes de dormir");
+    }
+    git(project_dir, &["add", "-A"]).await?;
+    git(
+        project_dir,
+        &["commit", "-q", "-m", "wip: hora de dormir (auto)"],
+    )
+    .await
+    .context("commit WIP")?;
+    Ok(true)
+}
+
+/// Data local de hoje (`YYYY-MM-DD`) — o `<data>` do sync e da branch `dorme/<data>`.
+pub async fn today() -> Result<String> {
+    let output = Command::new("date")
+        .arg("+%F")
+        .output()
+        .await
+        .context("date +%F")?;
+    let date = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    validate(&date, "data")?;
+    Ok(date)
+}
+
+/// A sessão tmux `dorme-<projeto>` existe no notebook?
+pub async fn is_sleeping(remote: &Remote, project: &str) -> Result<bool> {
+    validate(project, "projeto")?;
+    let out = remote
+        .shell_out(&format!(
+            "tmux has-session -t \"=dorme-{project}\" 2>/dev/null && echo RUNNING || true"
+        ))
+        .await?;
+    Ok(out.contains("RUNNING"))
+}
+
+/// Estado do dormir para a UI (passo 7 da spec 08): rodando? + tail do log.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SleepStatusReport {
+    pub sleeping: bool,
+    pub log_tail: Option<String>,
+}
+
+pub async fn sleep_status(
+    remote: &Remote,
+    workdir: &str,
+    project: &str,
+) -> Result<SleepStatusReport> {
+    validate(workdir, "workdir")?;
+    validate(project, "projeto")?;
+    let wd = shell_dir(workdir);
+    let script = format!(
+        "wd=\"{wd}\"\n\
+         if tmux has-session -t \"=dorme-{project}\" 2>/dev/null; then printf '@@RUNNING\\n'; fi\n\
+         printf '@@LOG\\n'\n\
+         tail -n 200 \"$wd/logs/{project}.log\" 2>/dev/null || true\n"
+    );
+    let out = remote.shell_out(&script).await?;
+    let sleeping = out.lines().any(|line| line == "@@RUNNING");
+    let log_tail = out
+        .split_once("@@LOG\n")
+        .map(|(_, rest)| rest.trim_end().to_owned())
+        .filter(|text| !text.is_empty());
+    Ok(SleepStatusReport { sleeping, log_tail })
+}
+
+/// Limites por iteração vindos do `.assistente.toml` do projeto (spec 08).
+#[derive(Debug, Clone)]
+pub struct SleepLimits {
+    pub max_minutes: u32,
+    pub attempts: u32,
+    pub model: String,
+}
+
+#[derive(Debug)]
+pub enum StartSleepError {
+    /// Já existe `dorme-<projeto>` no notebook.
+    AlreadyRunning,
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for StartSleepError {
+    fn from(error: anyhow::Error) -> Self {
+        StartSleepError::Other(error)
+    }
+}
+
+/// Tudo que o hubd precisa para iniciar o dormir num projeto.
+pub struct StartSleep<'a> {
+    pub project_dir: &'a Path,
+    pub remote: &'a Remote,
+    /// `<workdir>/projetos/<perfil>/<projeto>` no notebook.
+    pub remote_dir: &'a str,
+    /// `<workdir>` do notebook (briefings/, logs/, STOP).
+    pub workdir: &'a str,
+    pub project: &'a str,
+    pub date: &'a str,
+    pub prompt: &'a str,
+    pub limits: SleepLimits,
+    /// Produção: `dorme` (PATH do notebook). Testes: caminho do script no repo.
+    pub dorme_command: &'a str,
+    /// Env extra do tmux (testes: `AGENTE_OPENCODE` falso, `AGENTE_JAIL=""`).
+    pub extra_env: &'a [(String, String)],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StartedSleep {
+    pub date: String,
+    pub session: String,
+    pub remote_dir: String,
+    pub prompt_file: String,
+    pub log_file: String,
+}
+
+/// Passos 2–6 da spec 08: sync (F6.2), prompt escrito em `briefings/`, `dorme` num tmux
+/// do notebook com os limites do projeto. O PC pode desligar depois disso.
+pub async fn start_sleep(opts: StartSleep<'_>) -> Result<StartedSleep, StartSleepError> {
+    let fail = |e: anyhow::Error| StartSleepError::Other(e);
+    for (part, what) in [
+        (opts.project, "projeto"),
+        (opts.workdir, "workdir"),
+        (opts.remote_dir, "caminho remoto"),
+        (opts.date, "data"),
+        (opts.dorme_command, "comando dorme"),
+    ] {
+        validate(part, what).map_err(fail)?;
+    }
+    let session = format!("dorme-{}", opts.project);
+    if is_sleeping(opts.remote, opts.project).await.map_err(fail)? {
+        return Err(StartSleepError::AlreadyRunning);
+    }
+
+    // Clone criado/atualizado e branch dorme/<data> pronta (F6.2).
+    sync_project(opts.project_dir, opts.remote, opts.remote_dir, opts.date)
+        .await
+        .map_err(fail)?;
+
+    // Prompt por base64: imune a qualquer quoting do texto.
+    let wd = shell_dir(opts.workdir);
+    let prompt_file = format!("{wd}/briefings/{}.md", opts.project);
+    let log_file = format!("{wd}/logs/{}.log", opts.project);
+    let stop_file = format!("{wd}/STOP");
+    let b64 = base64(opts.prompt.as_bytes());
+    opts.remote
+        .shell(&format!(
+            "mkdir -p \"{wd}/briefings\" \"{wd}/logs\"\nprintf '%s' '{b64}' | base64 -d > \"{prompt_file}\"\n"
+        ))
+        .await
+        .map_err(fail)?;
+
+    // tmux com env por flag (-e): nada de quoting do prompt/valores no comando.
+    let remote_dir = shell_dir(opts.remote_dir);
+    let mut envs = vec![
+        format!("-e \"AGENTE_PROMPT_FILE={prompt_file}\""),
+        format!("-e \"AGENTE_LOG={log_file}\""),
+        format!("-e \"AGENTE_STOP={stop_file}\""),
+        format!("-e \"AGENTE_MAX_MIN={}\"", opts.limits.max_minutes),
+        format!("-e \"AGENTE_TENTATIVAS={}\"", opts.limits.attempts),
+        // O instalador do notebook põe o dorme/opencode/ai-jail em ~/.local/bin e
+        // ~/.opencode/bin, fora do PATH de shells não interativos (spec 07).
+        "-e \"PATH=$HOME/.local/bin:$HOME/.opencode/bin:$PATH\"".to_owned(),
+    ];
+    if !opts.limits.model.is_empty() {
+        validate(&opts.limits.model, "modelo").map_err(fail)?;
+        envs.push(format!("-e \"AGENTE_MODEL={}\"", opts.limits.model));
+    }
+    for (key, value) in opts.extra_env {
+        validate(key, "nome de variável").map_err(fail)?;
+        // Valor vazio é legítimo (AGENTE_JAIL="" desliga o sandbox nos testes).
+        if !value.is_empty() {
+            validate(value, "valor de variável").map_err(fail)?;
+        }
+        envs.push(format!("-e \"{key}={value}\""));
+    }
+    opts.remote
+        .shell(&format!(
+            "tmux new-session -d -s \"{session}\" -c \"{remote_dir}\" {} \"{dorme}\"\n",
+            envs.join(" "),
+            dorme = opts.dorme_command
+        ))
+        .await
+        .map_err(fail)?;
+
+    Ok(StartedSleep {
+        date: opts.date.to_owned(),
+        session,
+        remote_dir: opts.remote_dir.to_owned(),
+        // Para a UI: o caminho como na config (`~/…`), não a expansão do shell remoto.
+        prompt_file: format!("{}/briefings/{}.md", opts.workdir, opts.project),
+        log_file: format!("{}/logs/{}.log", opts.workdir, opts.project),
+    })
 }
 
 /// F6.4: cria o arquivo STOP no notebook. O `dorme` confere no topo de cada iteração: a

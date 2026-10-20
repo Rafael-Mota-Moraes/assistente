@@ -18,7 +18,10 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
 use crate::sessions::{SessionInfo, Tmux, next_seq};
-use crate::sleep::{self, CollectReport, Remote, request_stop};
+use crate::sleep::{
+    self, CollectReport, Remote, SleepLimits, SleepStatusReport, StartSleepError, StartedSleep,
+    request_stop,
+};
 use crate::terminal;
 use crate::tunnel::{TunnelHandle, TunnelStatus};
 
@@ -37,6 +40,10 @@ struct Inner {
     argv_override: Option<Vec<String>>,
     /// Só nos testes: troca o notebook (ssh) pelo host local.
     sleep_remote_override: Option<Remote>,
+    /// Só nos testes: env extra do `dorme` (agente falso, sem jail) e o comando no lugar
+    /// do `dorme` instalado (o script do repo).
+    sleep_env_override: Vec<(String, String)>,
+    dorme_override: Option<String>,
     /// Pasta com o build da UI servido em `/ui/*` (F8.3).
     ui_dir: Option<PathBuf>,
 }
@@ -60,6 +67,8 @@ impl AppState {
             tmux,
             argv_override: None,
             sleep_remote_override: None,
+            sleep_env_override: Vec::new(),
+            dorme_override: None,
             ui_dir: ui_dir.is_dir().then_some(ui_dir),
         }))
     }
@@ -91,6 +100,16 @@ impl AppState {
         Self(Arc::new(inner))
     }
 
+    #[cfg(test)]
+    fn with_dorme(self, command: String, env: Vec<(String, String)>) -> Self {
+        let mut inner = Arc::try_unwrap(self.0)
+            .ok()
+            .expect("estado ainda não compartilhado");
+        inner.dorme_override = Some(command);
+        inner.sleep_env_override = env;
+        Self(Arc::new(inner))
+    }
+
     /// Como falar com o notebook: ssh pelo alias da config (produção) ou o host local
     /// (testes).
     fn sleep_remote(&self) -> Remote {
@@ -113,10 +132,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route("/api/sessions/{id}", delete(delete_session))
         .route("/api/sessions/{id}/terminal", get(open_terminal))
-        .route(
-            "/api/sleep",
-            get(|| not_yet("F6.3")).post(|| not_yet("F6.3")),
-        )
+        .route("/api/sleep", get(sleep_status).post(start_sleep))
         .route("/api/sleep/stop", post(stop_sleep))
         .route("/api/sleep/collect", post(collect_sleep))
         .route("/api/sleep/merge", post(merge_sleep))
@@ -179,14 +195,6 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
-}
-
-async fn not_yet(feature: &'static str) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({ "error": "ainda não implementado", "feature": feature })),
-    )
-        .into_response()
 }
 
 #[derive(Serialize)]
@@ -448,36 +456,157 @@ struct SleepRequest {
 /// O `Err` é pequeno de propósito (clippy::result_large_err): vira `Response` no chamador.
 fn sleep_project_dir(
     state: &AppState,
-    request: &SleepRequest,
+    profile: &str,
+    project: &str,
 ) -> Result<PathBuf, (StatusCode, &'static str)> {
-    let Some(profile) = state.0.config.profile(&request.profile) else {
+    let Some(profile_config) = state.0.config.profile(profile) else {
         return Err((StatusCode::NOT_FOUND, "perfil desconhecido"));
     };
-    if request.project.is_empty()
-        || request.project.starts_with('.')
-        || request.project.contains(['/', '\\'])
-    {
+    if project.is_empty() || project.starts_with('.') || project.contains(['/', '\\']) {
         return Err((StatusCode::BAD_REQUEST, "nome de projeto inválido"));
     }
-    let dir = profile.root.join(&request.project);
-    if !dir.join(".git").exists() || !dir.starts_with(&profile.root) {
+    let dir = profile_config.root.join(project);
+    if !dir.join(".git").exists() || !dir.starts_with(&profile_config.root) {
         return Err((StatusCode::NOT_FOUND, "projeto não encontrado neste perfil"));
     }
     Ok(dir)
 }
 
 /// `<workdir>/projetos/<perfil>/<projeto>`: onde o sync (F6.2) cria o clone no notebook.
-fn sleep_remote_dir(state: &AppState, request: &SleepRequest) -> String {
+fn sleep_remote_dir(state: &AppState, profile: &str, project: &str) -> String {
     state
         .0
         .config
         .notebook
         .workdir
         .join("projetos")
-        .join(&request.profile)
-        .join(&request.project)
+        .join(profile)
+        .join(project)
         .display()
         .to_string()
+}
+
+#[derive(Deserialize)]
+struct SleepStartRequest {
+    profile: String,
+    project: String,
+    /// Árvore suja: autoriza o commit WIP antes de dormir (a UI oferece).
+    #[serde(default)]
+    wip: bool,
+}
+
+#[derive(Deserialize)]
+struct SleepQuery {
+    profile: String,
+    project: String,
+}
+
+/// GET /api/sleep (F6.3): o `dorme` está rodando no notebook? + tail do log ao vivo.
+async fn sleep_status(
+    State(state): State<AppState>,
+    Query(query): Query<SleepQuery>,
+) -> Result<Json<SleepStatusReport>, Response> {
+    sleep_project_dir(&state, &query.profile, &query.project)
+        .map_err(|(status, msg)| error(status, msg))?;
+    let workdir = state.0.config.notebook.workdir.display().to_string();
+    sleep::sleep_status(&state.sleep_remote(), &workdir, &query.project)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            error(
+                StatusCode::BAD_GATEWAY,
+                &format!("não consegui ver o notebook: {e}"),
+            )
+        })
+}
+
+/// POST /api/sleep (F6.3): entrega o projeto ao notebook — árvore limpa (ou WIP), sync,
+/// briefing do ai-memory, prompt e `dorme` num tmux de lá. O PC pode desligar depois.
+async fn start_sleep(
+    State(state): State<AppState>,
+    Json(request): Json<SleepStartRequest>,
+) -> Result<(StatusCode, Json<StartedSleep>), Response> {
+    let inner = &state.0;
+    let dir = sleep_project_dir(&state, &request.profile, &request.project)
+        .map_err(|(status, msg)| error(status, msg))?;
+    let profile = inner
+        .config
+        .profile(&request.profile)
+        .expect("sleep_project_dir já validou o perfil");
+
+    // 1. Árvore limpa (ou commit WIP autorizado no pedido).
+    sleep::ensure_clean_tree(&dir, request.wip)
+        .await
+        .map_err(|e| error(StatusCode::CONFLICT, &e.to_string()))?;
+
+    // 2. Limites do dormir vêm do projeto (.assistente.toml; ausente = padrões).
+    let text = std::fs::read_to_string(dir.join(".assistente.toml")).unwrap_or_default();
+    let project_config = hub_core::sleep::ProjectConfig::parse(&text).map_err(|e| {
+        error(
+            StatusCode::BAD_REQUEST,
+            &format!(".assistente.toml inválido: {e}"),
+        )
+    })?;
+
+    // 3. A data de hoje nomeia a branch dorme/<data>.
+    let date = sleep::today().await.map_err(|e| internal(&e.to_string()))?;
+
+    // 4. Briefing do ai-memory local (F5.0), melhor esforço: sem ele o prompt segue sem
+    //    a seção de memória (o agente noturno consulta a réplica do notebook, se houver).
+    let token = std::fs::read_to_string(inner.config.memory.data_dir.join("auth-tokens/default"))
+        .ok()
+        .map(|token| token.trim().to_owned());
+    let briefing = sleep::export_briefing(
+        inner.config.memory.port,
+        token.as_deref(),
+        &profile.memory_workspace,
+        &request.project,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("dormindo sem briefing: {e}");
+        String::new()
+    });
+
+    // 5. Prompt da iteração (template do hub-core).
+    let prompt =
+        hub_core::sleep::render_prompt(&project_config.sleep, &format!("dorme/{date}"), &briefing);
+
+    // 6. Sync (F6.2) + prompt em briefings/ + dorme num tmux do notebook.
+    let workdir = inner.config.notebook.workdir.display().to_string();
+    let remote_dir = sleep_remote_dir(&state, &request.profile, &request.project);
+    let started = sleep::start_sleep(sleep::StartSleep {
+        project_dir: &dir,
+        remote: &state.sleep_remote(),
+        remote_dir: &remote_dir,
+        workdir: &workdir,
+        project: &request.project,
+        date: &date,
+        prompt: &prompt,
+        limits: SleepLimits {
+            max_minutes: project_config.sleep.max_minutes,
+            attempts: project_config.sleep.attempts,
+            model: project_config.sleep.model.clone(),
+        },
+        dorme_command: inner.dorme_override.as_deref().unwrap_or("dorme"),
+        extra_env: &inner.sleep_env_override,
+    })
+    .await
+    .map_err(|e| match e {
+        StartSleepError::AlreadyRunning => error(
+            StatusCode::CONFLICT,
+            "o dorme deste projeto já está rodando",
+        ),
+        StartSleepError::Other(e) => error(
+            StatusCode::BAD_GATEWAY,
+            &format!("não consegui iniciar o modo dormir no notebook: {e}"),
+        ),
+    })?;
+    tracing::info!(
+        "modo dormir iniciado: {} (noite de {date})",
+        started.session
+    );
+    Ok((StatusCode::ACCEPTED, Json(started)))
 }
 
 /// POST /api/sleep/collect (F6.5): busca `dorme/<data>` e `agente/*` do notebook para
@@ -486,8 +615,9 @@ async fn collect_sleep(
     State(state): State<AppState>,
     Json(request): Json<SleepRequest>,
 ) -> Result<Json<CollectReport>, Response> {
-    let dir = sleep_project_dir(&state, &request).map_err(|(status, msg)| error(status, msg))?;
-    let remote_dir = sleep_remote_dir(&state, &request);
+    let dir = sleep_project_dir(&state, &request.profile, &request.project)
+        .map_err(|(status, msg)| error(status, msg))?;
+    let remote_dir = sleep_remote_dir(&state, &request.profile, &request.project);
     sleep::collect_project(&dir, &state.sleep_remote(), &remote_dir, &request.date)
         .await
         .map(Json)
@@ -505,7 +635,8 @@ async fn merge_sleep(
     State(state): State<AppState>,
     Json(request): Json<SleepRequest>,
 ) -> Result<StatusCode, Response> {
-    let dir = sleep_project_dir(&state, &request).map_err(|(status, msg)| error(status, msg))?;
+    let dir = sleep_project_dir(&state, &request.profile, &request.project)
+        .map_err(|(status, msg)| error(status, msg))?;
     sleep::merge_sleep_branch(&dir, &request.date)
         .await
         .map(|()| StatusCode::NO_CONTENT)
@@ -682,11 +813,200 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    // ---- Modo dormir de ponta a ponta no devenv (F6.3): tmux local + agente falso ----
+
+    /// O `dorme` de verdade, no caminho absoluto do repo (canonicalize tira os `..`).
+    fn dorme_script() -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../notebook/dorme");
+        std::fs::canonicalize(path).unwrap().display().to_string()
+    }
+
+    fn make_agent(dir: &std::path::Path, name: &str, body: &str) -> String {
+        let agent = dir.join(name);
+        std::fs::write(&agent, format!("#!/usr/bin/env bash\nset -eu\n{body}")).unwrap();
+        std::process::Command::new("chmod")
+            .arg("+x")
+            .arg(&agent)
+            .output()
+            .unwrap();
+        agent.display().to_string()
+    }
+
+    fn sleep_app_with_dorme(
+        root: &std::path::Path,
+        workdir: &std::path::Path,
+        agent: &str,
+    ) -> Router {
+        let text = EXAMPLE
+            .replace("~/Documentos/pessoal/projetos", &root.display().to_string())
+            .replace("~/assistente", &workdir.display().to_string());
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(&text, &home).unwrap();
+        router(
+            AppState::new(config, home, None, None, Tmux::default())
+                .with_sleep_remote(Remote::Local)
+                .with_dorme(
+                    dorme_script(),
+                    vec![
+                        ("AGENTE_OPENCODE".to_owned(), agent.to_owned()),
+                        ("AGENTE_JAIL".to_owned(), String::new()),
+                        ("AGENTE_ESPERA".to_owned(), "0".to_owned()),
+                    ],
+                ),
+        )
+    }
+
     #[tokio::test]
-    async fn pending_routes_say_which_feature() {
-        let (status, body) = call(app(None), "/api/sleep", None).await;
-        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-        assert_eq!(body["feature"], "F6.3");
+    async fn sleep_full_cycle_start_status_collect_merge() {
+        let dir = scratch("sleep-cycle");
+        let root = dir.join("raiz");
+        let pc = root.join("proj");
+        init_repo(&pc);
+        let workdir = dir.join("nb");
+        // Agente falso: commita a tarefa e pede parada (o loop encerra na 1ª iteração).
+        let agent = make_agent(
+            &dir,
+            "agente-noite.sh",
+            "git config user.email agente@notebook\ngit config user.name Agente\necho trabalho >> feito.txt\ngit add feito.txt\ngit commit -q -m \"feat: tarefa da noite\"\ntouch \"$AGENTE_STOP\"\n",
+        );
+        let app = || sleep_app_with_dorme(&root, &workdir, &agent);
+
+        // Passo 6: POST /api/sleep → 202 com a sessão e a data da noite.
+        let (status, started) = call_post(
+            app(),
+            "/api/sleep",
+            r#"{"profile":"pessoal","project":"proj"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+        assert_eq!(started["session"], "dorme-proj");
+        let date = started["date"].as_str().unwrap().to_owned();
+        assert_eq!(date.len(), 10, "{date}");
+
+        // No "notebook": clone na branch de trabalho e prompt renderizado.
+        let nb = workdir.join("projetos/pessoal/proj");
+        assert_eq!(
+            git_sync(&nb, &["branch", "--show-current"]),
+            format!("dorme/{date}")
+        );
+        let prompt = std::fs::read_to_string(workdir.join("briefings/proj.md")).unwrap();
+        assert!(prompt.contains("hora de dormir"), "{prompt}");
+        assert!(prompt.contains("docs/FUNCIONALIDADES.md"), "{prompt}");
+        assert!(
+            prompt.contains(&format!("a partir de dorme/{date}")),
+            "{prompt}"
+        );
+
+        // Passo 7: GET /api/sleep até o agente falso (commit + STOP) encerrar o loop.
+        let mut last = serde_json::Value::Null;
+        let ended = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let (status, body) =
+                    call(app(), "/api/sleep?profile=pessoal&project=proj", None).await;
+                assert_eq!(status, StatusCode::OK);
+                last = body.clone();
+                if body["sleeping"] == false
+                    && body["log_tail"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("modo-dormir encerrado")
+                {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(ended, "dorme não terminou; último estado: {last}");
+
+        // Passos 8-9: a manhã (F6.5) vê o commit da noite e o merge traz para o PC.
+        let request = format!(r#"{{"profile":"pessoal","project":"proj","date":"{date}"}}"#);
+        let (status, report) = call_post(app(), "/api/sleep/collect", &request).await;
+        assert_eq!(status, StatusCode::OK, "{report}");
+        assert_eq!(report["fast_forward"], true);
+        assert_eq!(report["commits"][0]["subject"], "feat: tarefa da noite");
+        let (status, _) = call_post(app(), "/api/sleep/merge", &request).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            std::fs::read_to_string(pc.join("feito.txt")).unwrap(),
+            "trabalho\n"
+        );
+        assert_eq!(
+            git_sync(&pc, &["rev-parse", "HEAD"]),
+            git_sync(&nb, &["rev-parse", "HEAD"])
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sleep_start_guards_dirty_tree_and_duplicate_run() {
+        let dir = scratch("sleep-guard");
+        let root = dir.join("raiz");
+        let pc = root.join("projguarda");
+        init_repo(&pc);
+        let workdir = dir.join("nb");
+        // Agente demorado: dá tempo de ver "rodando" e de recusar a duplicata.
+        let agent = make_agent(&dir, "agente-lento.sh", "sleep 30\n");
+        let app = || sleep_app_with_dorme(&root, &workdir, &agent);
+        let request = r#"{"profile":"pessoal","project":"projguarda"}"#;
+
+        // Árvore suja sem autorização: 409 pedindo commit ou WIP.
+        std::fs::write(pc.join("solto.txt"), "x").unwrap();
+        let (status, body) = call_post(app(), "/api/sleep", request).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(
+            body["error"].as_str().unwrap().contains("árvore suja"),
+            "{body}"
+        );
+
+        // Com wip: o que estava solto vira commit WIP e o dormir começa.
+        let (status, started) = call_post(
+            app(),
+            "/api/sleep",
+            r#"{"profile":"pessoal","project":"projguarda","wip":true}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{started}");
+        assert_eq!(
+            git_sync(&pc, &["log", "-1", "--format=%s"]),
+            "wip: hora de dormir (auto)"
+        );
+
+        // Rodando: GET vê a sessão no tmux e o POST duplicado é recusado.
+        let (status, body) =
+            call(app(), "/api/sleep?profile=pessoal&project=projguarda", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["sleeping"], true, "{body}");
+        let (status, body) = call_post(
+            app(),
+            "/api/sleep",
+            r#"{"profile":"pessoal","project":"projguarda","wip":true}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(
+            body["error"].as_str().unwrap().contains("já está rodando"),
+            "{body}"
+        );
+
+        // F6.4 pela rota: o STOP aparece no workdir do "notebook".
+        let response = app()
+            .oneshot(
+                Request::post("/api/sleep/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(workdir.join("STOP").is_file());
+
+        // Limpeza: encerra o dorme lento.
+        let _ = std::process::Command::new("tmux")
+            .args(["kill-session", "-t", "dorme-projguarda"])
+            .output();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test]

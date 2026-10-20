@@ -8,4 +8,5 @@ description = "Domínio do Assistente: config, perfis, projetos, sessões e modo
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true

@@ -76,3 +76,15 @@ export type CollectReport = {
 };
 
 export type SleepRequest = { profile: string; project: string; date: string };
+
+export type SleepStartRequest = { profile: string; project: string; wip?: boolean };
+
+export type StartedSleep = {
+  date: string;
+  session: string;
+  remote_dir: string;
+  prompt_file: string;
+  log_file: string;
+};
+
+export type SleepStatus = { sleeping: boolean; log_tail: string | null };

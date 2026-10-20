@@ -68,6 +68,53 @@ pub fn jail_config_at(project_root: &Path) -> JailConfig {
         .unwrap_or_default()
 }
 
+/// Formata o snapshot de briefing do ai-memory (`GET
+/// /api/v1/workspaces/<w>/projects/<p>/briefing`, o mesmo payload do `memory_briefing`)
+/// como texto para o prompt. Tolerante a versões do formato: campo ausente só omite a
+/// linha; snapshot vazio vira texto vazio (o prompt fica sem a seção de memória).
+pub fn briefing_text(snapshot: &serde_json::Value) -> String {
+    let get = |value: &serde_json::Value, path: &[&str]| -> u64 {
+        let mut current = value;
+        for key in path {
+            current = &current[key];
+        }
+        current.as_u64().unwrap_or(0)
+    };
+    let mut out = String::new();
+    if snapshot.get("counts").is_some() {
+        out.push_str(&format!(
+            "- Memória: {} páginas, {} sessões. Últimos 7 dias: {} sessões, {} páginas atualizadas.\n",
+            get(snapshot, &["counts", "pages_latest"]),
+            get(snapshot, &["counts", "sessions"]),
+            get(snapshot, &["activity_7d", "sessions"]),
+            get(snapshot, &["activity_7d", "pages_updated"]),
+        ));
+        let pending = get(snapshot, &["pending_handoff_count"]);
+        if pending > 0 {
+            out.push_str(&format!("- {pending} handoff(s) pendente(s) na memória.\n"));
+        }
+    }
+    for (key, label) in [
+        ("rules", "Regras do projeto"),
+        ("slots", "Foco atual"),
+        ("recent_pages", "Páginas recentes"),
+    ] {
+        let Some(items) = snapshot.get(key).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        if items.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("{label}:\n"));
+        for item in items.iter().take(10) {
+            let path = item["path"].as_str().unwrap_or("?");
+            let title = item["title"].as_str().unwrap_or(path);
+            out.push_str(&format!("- {title} ({path})\n"));
+        }
+    }
+    out.trim_end().to_owned()
+}
+
 /// Prompt de uma iteração. `base` é a branch em que o notebook trabalha (`dorme/<data>`);
 /// `briefing` é o resumo do ai-memory exportado na hora de dormir (pode ser vazio).
 pub fn render_prompt(config: &SleepConfig, base: &str, briefing: &str) -> String {
@@ -126,6 +173,43 @@ mod tests {
             .replace("docker = false", "docker = true");
         let config = ProjectConfig::parse(&text).unwrap();
         assert!(config.jail.docker);
+    }
+
+    #[test]
+    fn briefing_formats_counts_rules_and_pages() {
+        let snapshot = serde_json::json!({
+            "counts": { "pages_latest": 138, "pages_all": 162, "sessions": 27, "observations": 4198 },
+            "activity_7d": { "days": 7, "sessions": 6, "observations": 921, "pages_updated": 41 },
+            "pending_handoff_count": 2,
+            "rules": [{ "path": "_rules/postgres.md", "title": "Postgres only" }],
+            "slots": [],
+            "recent_pages": [
+                { "path": "sessions/2026-10-19.md", "title": "Session 2026-10-19" },
+                { "path": "decisions/d1.md" }
+            ]
+        });
+        let text = briefing_text(&snapshot);
+        assert!(text.contains("138 páginas, 27 sessões"), "{text}");
+        assert!(text.contains("7 dias: 6 sessões, 41 páginas"), "{text}");
+        assert!(text.contains("2 handoff(s) pendente(s)"), "{text}");
+        assert!(
+            text.contains("Regras do projeto:\n- Postgres only (_rules/postgres.md)"),
+            "{text}"
+        );
+        assert!(!text.contains("Foco atual"), "slot vazio some: {text}");
+        assert!(
+            text.contains("- decisions/d1.md (decisions/d1.md)"),
+            "sem título usa o path: {text}"
+        );
+    }
+
+    #[test]
+    fn briefing_empty_snapshot_is_empty_text() {
+        assert_eq!(briefing_text(&serde_json::json!({})), "");
+        assert_eq!(
+            briefing_text(&serde_json::json!({"counts": {}})),
+            "- Memória: 0 páginas, 0 sessões. Últimos 7 dias: 0 sessões, 0 páginas atualizadas."
+        );
     }
 
     #[test]

@@ -150,6 +150,22 @@ sozinha resolve a maior parte; F9.2–F9.4 antes de F9.5–F9.7 (as duas mexem n
 - [ ] **F9.8 Validação na VM real** *(humano)*. Do jail: 7879 acessível, 7878 não; `projetos.toml`, `hub.token` e socket do tmux invisíveis; `--network`; agentes usam o `fora-do-jail` sozinhos.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
 
+## F10 — Editor com diff
+
+Ver e ajustar o que o agente mudou sem sair do app (o Cursor, F2.6, segue para trabalho
+pesado). Os arquivos moram na VM: o hubd lê e grava; a UI só mostra. Tudo restrito à pasta
+do projeto, dentro da raiz do perfil (mesma checagem do `open_in_cursor`). Rotas novas começam
+em `not_yet("F10.x")`.
+
+- [ ] **F10.1 Arquivos e git no hubd.** `GET /api/projects/{profile}/{project}/files` (árvore, sem `.git` nem o que o `.gitignore` ignora), `GET/PUT …/files/{*path}` (texto UTF-8, recusa binário e > 1 MiB, escrita atômica, rejeita `..` e symlink que saia do projeto), `GET …/git/status` (arquivos alterados: modificado/novo/apagado/staged) e `GET …/git/diff/{*path}` (conteúdo do `HEAD` e da árvore de trabalho, para a UI montar o diff).
+  Pronto quando: as rotas leem, gravam e devolvem status/diff de um repo de teste e recusam caminhos fora do projeto. Como testar: testes de rota com repo git temporário (`init_repo`).
+- [ ] **F10.2 Editor na UI.** Aba "Editor" ao lado dos terminais (botão junto de Claude/OpenCode/Terminal): árvore de arquivos à esquerda, editor com destaque de sintaxe (CodeMirror 6, versões com ≥ 14 dias), Ctrl+S salva pelo `PUT`, aviso ao fechar com alteração não salva e ao gravar arquivo que mudou no disco desde a abertura.
+  Pronto quando: dá para abrir, editar e salvar um arquivo do projeto pelo app. Como testar: vitest com hub fake.
+- [ ] **F10.3 Diff do git.** Lista de alterados (do `git/status`) com contador na aba; clicar abre o diff `HEAD` × árvore de trabalho (lado a lado, com opção inline, via `@codemirror/merge`), editável do lado direito; botão para descartar a alteração de um bloco ou do arquivo inteiro (confirma antes).
+  Pronto quando: depois de uma sessão de agente, a lista mostra o que mudou e o diff de cada arquivo. Como testar: vitest com hub fake + rota com repo temporário.
+- [ ] **F10.4 Diff da manhã.** Na tela "Bom dia" (F6.6), cada commit da noite abre no mesmo visualizador de diff (`GET …/git/diff` com `from`/`to` de commits).
+  Pronto quando: dá para revisar o trabalho noturno arquivo a arquivo antes de mesclar. Como testar: vitest com dados fake.
+
 ## Depois
 
 - Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.

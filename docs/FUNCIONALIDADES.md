@@ -14,7 +14,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: testes de rota passam. Como testar: `./dev just hubd` e `curl 127.0.0.1:7878/api/health`.
 - [x] **F0.4 Casca da UI.** Lateral com perfis e projetos, área de sessões vazia, barra de status, botão de dormir desativado.
   Pronto quando: a janela mostra a saúde do hubd. Como testar: `./dev just hubd` e, em outro terminal, `./dev just app-dev`.
-- [ ] **F0.5 `.ai-jail` fora do git.** O ai-jail esvazia/reescreve o `.ai-jail` da raiz ao abrir sessão no repo (churn já commitado: `8e886f3` esvaziou, `ba86efe` restaurou), sujando o `git status`. Decidir: `git rm --cached .ai-jail` + `/.ai-jail` no `.gitignore` (conteúdo esperado documentado na spec 05), ou manter versionado com nota no AGENTS.md de que a variação não se commita.
+- [x] **F0.5 `.ai-jail` fora do git.** O ai-jail mascara o `.ai-jail` (vazio) dentro do sandbox, e o README dele recomenda o gitignore. Este repo: `git rm --cached` + `/.ai-jail` no `.gitignore`. Todos os projetos: `sleep::exclude_jail_config` põe `/.ai-jail` no `info/exclude` ao abrir sessão e antes de dormir, e o `sync_project` faz o mesmo no clone do notebook (senão o `dorme` parava com árvore suja). Spec 05. Testes: `jail_config_does_not_dirty_the_pc_tree` (inclui worktree) e `jail_config_does_not_dirty_the_notebook_clone`.
   Pronto quando: abrir uma sessão no repo não deixa `.ai-jail` modificado. Como testar: `git status --short` depois de uma sessão.
 
 ## F1 — VM

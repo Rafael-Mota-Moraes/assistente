@@ -47,6 +47,26 @@ No 2.x o Docker vem **desligado** (`--docker` liga; equivale a root na VM). Proj
 `./dev` (como o game) precisam dele para o agente rodar `just check`: ligue por projeto com
 `[jail] docker = true` no `.assistente.toml` (F3.1), não globalmente.
 
+## `.ai-jail` no projeto (F0.5)
+
+O ai-jail grava um `.ai-jail` na raiz do projeto na primeira execução e, dentro do sandbox,
+o **mascara**: o agente vê um arquivo vazio. Versionado, ele aparece sempre modificado para o
+agente, que acaba commitando a versão vazia (foi o churn de `8e886f3`). Solto, suja a árvore:
+o `POST /api/sleep` responde 409 (e o WIP o commitaria) e o `dorme` para na primeira tarefa.
+
+Por isso o arquivo nunca entra no git:
+
+- este repo: `/.ai-jail` no `.gitignore`;
+- todos os projetos: o hubd põe `/.ai-jail` no `info/exclude` do repo
+  (`sleep::exclude_jail_config`) ao abrir sessão e antes de dormir, e o sync põe o mesmo
+  padrão no clone do notebook. O exclude vale por clone, não é commitado e o jail o enxerga,
+  porque o `.git` fica dentro do projeto. Arquivo já rastreado não é afetado: num repo que
+  versiona o `.ai-jail`, falta um `git rm --cached .ai-jail`.
+
+O conteúdo fora do jail varia com o último agente (`command = ["claude"]` ou `["opencode"]`)
+e não importa: o `LaunchPlan` passa tudo por flag. Segundo o README do ai-jail, o `.ai-jail`
+do projeto não é confiável e só pode restringir o sandbox, nunca afrouxar.
+
 ## Permissões dos agentes (F3.3)
 
 `ai-jail --bootstrap` gera, por perfil (com `CLAUDE_CONFIG_DIR`/`OPENCODE_CONFIG` do perfil):

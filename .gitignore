@@ -24,5 +24,8 @@ dist/
 # Modo dormir: sinal de parada para revisão humana
 /RELATORIO.md
 
+# ai-jail: config local, mascarada dentro do sandbox (spec 05)
+/.ai-jail
+
 # Git worktrees locais
 .worktrees/

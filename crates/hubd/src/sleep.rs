@@ -155,10 +155,16 @@ pub async fn sync_project(
     let head = git(project_dir, &["rev-parse", "HEAD"]).await?;
 
     let dir = shell_dir(remote_dir);
-    // Clone criado na primeira vez; repo existente é reutilizado.
+    // Clone criado na primeira vez; repo existente é reutilizado. A cada sync, o `.ai-jail`
+    // que o ai-jail cria no clone sai do `git status` (senão o `dorme` para na 1ª tarefa).
     remote
         .shell(&format!(
-            "mkdir -p \"{dir}\"\ngit -C \"{dir}\" rev-parse --git-dir >/dev/null 2>&1 || git -C \"{dir}\" init -q -b main\n"
+            "mkdir -p \"{dir}\"\n\
+             git -C \"{dir}\" rev-parse --git-dir >/dev/null 2>&1 || git -C \"{dir}\" init -q -b main\n\
+             cd \"{dir}\"\n\
+             f=\"$(git rev-parse --git-path info/exclude)\"\n\
+             mkdir -p \"$(dirname \"$f\")\"\n\
+             grep -qxF '{JAIL_CONFIG_EXCLUDE}' \"$f\" 2>/dev/null || echo '{JAIL_CONFIG_EXCLUDE}' >> \"$f\"\n"
         ))
         .await
         .context("preparando o clone no notebook")?;
@@ -412,10 +418,42 @@ pub async fn export_briefing(
     Ok(hub_core::sleep::briefing_text(&snapshot))
 }
 
+/// O ai-jail grava `.ai-jail` na raiz do projeto e o mascara (vazio) dentro do sandbox:
+/// versionado, aparece sempre modificado; solto, suja a árvore e trava o modo dormir. O
+/// padrão vai no `info/exclude` do repo: vale por clone, nunca é commitado e o jail enxerga
+/// (spec 05, F0.5).
+const JAIL_CONFIG_EXCLUDE: &str = "/.ai-jail";
+
+/// Põe `JAIL_CONFIG_EXCLUDE` no `info/exclude` do repo se ainda não estiver lá.
+pub async fn exclude_jail_config(project_dir: &Path) -> Result<()> {
+    // `--git-path` acerta também em worktrees (aí o caminho volta absoluto).
+    let rel = git(project_dir, &["rev-parse", "--git-path", "info/exclude"]).await?;
+    let path = project_dir.join(rel);
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+    if current
+        .lines()
+        .any(|line| line.trim() == JAIL_CONFIG_EXCLUDE)
+    {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let sep = if current.is_empty() || current.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    std::fs::write(&path, format!("{current}{sep}{JAIL_CONFIG_EXCLUDE}\n"))
+        .with_context(|| format!("gravando {}", path.display()))
+}
+
 /// Árvore limpa é pré-requisito (spec 08, passo 1). Com `wip`, o que está solto vira um
 /// commit WIP; sem `wip`, árvore suja é erro (a UI oferece a opção). Devolve `true` se
 /// fez o commit WIP.
 pub async fn ensure_clean_tree(project_dir: &Path, wip: bool) -> Result<bool> {
+    // Antes do status: o `.ai-jail` das sessões não conta como sujeira nem entra no WIP.
+    exclude_jail_config(project_dir).await?;
     let status = git(project_dir, &["status", "--porcelain"]).await?;
     if status.is_empty() {
         return Ok(false);
@@ -753,6 +791,66 @@ pub(crate) mod tests {
             git_sync(&nb, &["show", "minha-branch:nb.txt"]),
             "trabalho do notebook"
         );
+        std::fs::remove_dir_all(&pc).unwrap();
+        std::fs::remove_dir_all(&nb).unwrap();
+    }
+
+    /// Quantas vezes o padrão do `.ai-jail` aparece no `info/exclude` do repo.
+    fn jail_exclude_lines(repo: &Path) -> usize {
+        std::fs::read_to_string(repo.join(".git/info/exclude"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| *line == JAIL_CONFIG_EXCLUDE)
+            .count()
+    }
+
+    #[tokio::test]
+    async fn jail_config_does_not_dirty_the_pc_tree() {
+        let pc = repo_pc("jail-pc");
+        std::fs::write(pc.join(".ai-jail"), "command = [\"opencode\"]\n").unwrap();
+
+        // Só o `.ai-jail` solto: árvore limpa, nada de WIP.
+        assert!(!ensure_clean_tree(&pc, false).await.unwrap());
+        exclude_jail_config(&pc).await.unwrap();
+        assert_eq!(jail_exclude_lines(&pc), 1, "o exclude não se repete");
+
+        // O exclude não esconde o resto: outro arquivo solto continua sujando.
+        std::fs::write(pc.join("solto.txt"), "x").unwrap();
+        assert!(ensure_clean_tree(&pc, false).await.is_err());
+
+        // Worktree: `--git-path` aponta para o `info/exclude` comum do repo.
+        let wt = scratch("jail-wt");
+        std::fs::remove_dir_all(&wt).unwrap();
+        git_sync(&pc, &["worktree", "add", "-q", wt.to_str().unwrap()]);
+        std::fs::write(wt.join(".ai-jail"), "").unwrap();
+        exclude_jail_config(&wt).await.unwrap();
+        assert_eq!(git_sync(&wt, &["status", "--porcelain"]), "");
+        assert_eq!(jail_exclude_lines(&pc), 1);
+
+        std::fs::remove_dir_all(&wt).unwrap();
+        std::fs::remove_dir_all(&pc).unwrap();
+    }
+
+    #[tokio::test]
+    async fn jail_config_does_not_dirty_the_notebook_clone() {
+        let pc = repo_pc("jail-sync");
+        let nb = scratch("jail-sync-nb");
+        std::fs::remove_dir_all(&nb).unwrap();
+        let nb_str = nb.to_str().unwrap();
+        sync_project(&pc, &Remote::Local, nb_str, "2026-10-20")
+            .await
+            .unwrap();
+
+        // O ai-jail do `dorme` cria o arquivo no clone: o `git status --porcelain` do loop
+        // continua vazio.
+        std::fs::write(nb.join(".ai-jail"), "command = [\"opencode\"]\n").unwrap();
+        assert_eq!(git_sync(&nb, &["status", "--porcelain"]), "");
+
+        // Resync (noite seguinte) não duplica a linha.
+        sync_project(&pc, &Remote::Local, nb_str, "2026-10-21")
+            .await
+            .unwrap();
+        assert_eq!(jail_exclude_lines(&nb), 1);
         std::fs::remove_dir_all(&pc).unwrap();
         std::fs::remove_dir_all(&nb).unwrap();
     }

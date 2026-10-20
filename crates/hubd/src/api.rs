@@ -672,6 +672,10 @@ async fn create_session(
             "projeto não encontrado neste perfil",
         ));
     }
+    // O ai-jail cria `.ai-jail` na raiz: fora do `git status` antes de a sessão subir (F0.5).
+    if let Err(e) = sleep::exclude_jail_config(&plan.cwd).await {
+        tracing::warn!("sem exclude do .ai-jail em {}: {e:#}", plan.cwd.display());
+    }
     if let Some(argv) = &inner.argv_override {
         plan.argv = argv.clone();
     }

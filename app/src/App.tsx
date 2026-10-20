@@ -1,5 +1,6 @@
 import { ExecApprovals } from "./features/exec/ExecApprovals";
 import { MemoryButton } from "./features/memory/MemoryButton";
+import { MemoryPanel } from "./features/memory/MemoryPanel";
 import { ProfileSwitcher } from "./features/profiles/ProfileSwitcher";
 import { ProjectList } from "./features/projects/ProjectList";
 import { ProjectSettingsDialog } from "./features/projects/ProjectSettingsDialog";
@@ -9,11 +10,13 @@ import { GoodMorning } from "./features/sleep/GoodMorning";
 import { MorningButton, SleepButton } from "./features/sleep/SleepButton";
 import { StatusBar } from "./features/status/StatusBar";
 import { usePolling } from "./features/status/usePolling";
+import { useAppStore } from "./store";
 import { Toast } from "./ui/Toast";
 
 export function App() {
   usePolling();
   useShortcuts();
+  const memoryOpen = useAppStore((s) => s.memoryPanelOpen);
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
@@ -33,7 +36,7 @@ export function App() {
           </div>
         </aside>
         <main className="flex min-w-0 flex-1 flex-col">
-          <SessionArea />
+          {memoryOpen ? <MemoryPanel /> : <SessionArea />}
         </main>
       </div>
       <StatusBar />

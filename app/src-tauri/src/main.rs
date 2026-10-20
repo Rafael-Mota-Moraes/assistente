@@ -1,13 +1,13 @@
 //! Casca desktop do Assistente: a UI fala direto com o hubd (HTTP/WS). Aqui só ficam as
-//! coisas que precisam do HOST: ler a config local, ver o estado da VM, abrir o Cursor e a
-//! janela da memória.
+//! coisas que precisam do HOST: ler a config local, ver o estado da VM, abrir o Cursor e
+//! ancorar a webview da memória na janela principal.
 //! Spec: docs/specs/03-interface.md
 
 // Sem janela de console extra no Windows em release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use hub_core::Config;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::Manager;
@@ -200,25 +200,86 @@ fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("não consegui abrir o navegador: {e}"))
 }
 
-/// Abre a web UI do ai-memory numa janela própria (F5.5), não num iframe: em iframe o cookie do
-/// hubd seria de terceiros e o WebKitGTK não o envia. A janela `memoria` fica fora de
-/// capabilities/default.json, então a página remota não alcança os comandos do app.
-#[tauri::command]
-async fn open_memory_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    let url: tauri::Url = url.parse().map_err(|e| format!("URL inválida: {e}"))?;
-    if !matches!(url.scheme(), "http" | "https") {
+/// Rótulo da webview filha com a web UI do ai-memory, ancorada na área principal (F5.5).
+const MEMORY_WEBVIEW: &str = "memoria";
+
+/// Valida a URL da memória: só http/https e sem caracteres de controle.
+fn memory_url(url: &str) -> Result<tauri::Url, String> {
+    let parsed: tauri::Url = url.parse().map_err(|e| format!("URL inválida: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") || url.chars().any(|c| c.is_control()) {
         return Err(format!("URL não permitida: {url}"));
     }
-    if let Some(window) = app.get_webview_window("memoria") {
-        window.navigate(url).map_err(|e| e.to_string())?;
-        return window.set_focus().map_err(|e| e.to_string());
+    Ok(parsed)
+}
+
+/// Retângulo em pixels lógicos (o mesmo que px de CSS), vindo da UI.
+#[derive(Serialize, Deserialize)]
+struct PanelRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl PanelRect {
+    fn bounds(self) -> tauri::Rect {
+        tauri::Rect {
+            position: tauri::LogicalPosition::new(self.x, self.y).into(),
+            size: tauri::LogicalSize::new(self.width, self.height).into(),
+        }
     }
-    tauri::WebviewWindowBuilder::new(&app, "memoria", tauri::WebviewUrl::External(url))
-        .title("Memória — Assistente")
-        .inner_size(1200.0, 820.0)
-        .build()
+}
+
+/// Aloca a web UI do ai-memory DENTRO da janela principal: uma webview filha cobre a área
+/// de conteúdo, como um iframe mas fora do processo da UI. No topo, a origem é a do hubd,
+/// então o cookie de sessão não é de terceiros e o WebKitGTK o envia (iframe não funciona).
+/// O chrome do painel (título/fechar) é desenhado pela React; a webview só preenche o retângulo.
+#[tauri::command]
+async fn open_memory_panel(
+    app: tauri::AppHandle,
+    url: String,
+    rect: PanelRect,
+) -> Result<(), String> {
+    let url = memory_url(&url)?;
+    let window = app
+        .get_window("main")
+        .ok_or_else(|| "janela principal não encontrada".to_owned())?;
+    if let Some(webview) = app.get_webview(MEMORY_WEBVIEW) {
+        webview.navigate(url).map_err(|e| e.to_string())?;
+        webview
+            .set_bounds(rect.bounds())
+            .map_err(|e| e.to_string())?;
+        return webview.show().map_err(|e| e.to_string());
+    }
+    let bounds = rect.bounds();
+    window
+        .add_child(
+            tauri::webview::WebviewBuilder::new(MEMORY_WEBVIEW, tauri::WebviewUrl::External(url)),
+            bounds.position,
+            bounds.size,
+        )
         .map(|_| ())
-        .map_err(|e| format!("não consegui abrir a janela da memória: {e}"))
+        .map_err(|e| format!("não consegui alocar o painel da memória: {e}"))
+}
+
+/// Acompanha o retângulo do âncora (janela redimensionada, layout mudou).
+#[tauri::command]
+async fn update_memory_panel_bounds(app: tauri::AppHandle, rect: PanelRect) -> Result<(), String> {
+    if let Some(webview) = app.get_webview(MEMORY_WEBVIEW) {
+        webview
+            .set_bounds(rect.bounds())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Fecha a webview filha (o painel React também sai do DOM).
+#[tauri::command]
+async fn close_memory_panel(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(webview) = app.get_webview(MEMORY_WEBVIEW) {
+        webview.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn main() {
@@ -237,7 +298,9 @@ fn main() {
             vm_stop,
             open_in_cursor,
             open_url,
-            open_memory_window
+            open_memory_panel,
+            update_memory_panel_bounds,
+            close_memory_panel
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Assistente");

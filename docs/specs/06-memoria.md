@@ -100,7 +100,10 @@ hooks/MCP por perfil, `.ai-memory.toml` na raiz. Prova end-to-end com túnel ao 
 - F5.4: sync git do wiki PC ↔ notebook (não “fetch do notebook como principal”).
 - F5.5 (feito): web UI pelo hubd. `/memoria/entrar?token=<token do hub>` entrega o cookie
   `hub_memoria` (sorteado a cada início do hubd) e redireciona para `/web`; o proxy só aceita
-  esse cookie ou o Bearer do hub e troca o `Authorization` pelo token do ai-memory. Janela
-  própria no app, não iframe: o WebKitGTK não envia cookie de terceiros dentro de iframe.
+  esse cookie ou o Bearer do hub e troca o `Authorization` pelo token do ai-memory. Embutida
+  na **área principal do app**: webview filha do Tauri (`open_memory_panel`, feature
+  `unstable`), não iframe — o WebKitGTK não envia cookie de terceiros dentro de iframe, mas a
+  origem de topo da webview filha é a do hubd, então o cookie vale lá. No navegador (pnpm
+  dev) o painel cai num iframe.
 - F5.6: visão operacional (paths, wiki git, erros, sync) — spec 03.
 - Spool offline: detalhes na doc upstream do ai-memory 3.x.

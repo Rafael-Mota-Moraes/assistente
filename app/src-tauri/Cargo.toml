@@ -12,7 +12,8 @@ tauri-build.workspace = true
 hub-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri.workspace = true
+# unstable: janelas com várias webviews (o painel da memória é uma webview filha da principal)
+tauri = { workspace = true, features = ["unstable"] }
 tauri-plugin-clipboard-manager.workspace = true
 tauri-plugin-http.workspace = true
 tauri-plugin-websocket.workspace = true

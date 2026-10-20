@@ -36,13 +36,26 @@ export function openInCursor(path: string): Promise<void> {
   return invoke("open_in_cursor", { path });
 }
 
-/** Abre a web UI do ai-memory numa janela própria do app (F5.5). */
-export function openMemoryWindow(url: string): Promise<void> {
-  if (!isTauri()) {
-    window.open(url, "_blank", "noopener");
-    return Promise.resolve();
-  }
-  return invoke("open_memory_window", { url });
+/** Retângulo do âncora do painel em pixels lógicos (igual ao px do CSS). */
+export type PanelRect = { x: number; y: number; width: number; height: number };
+
+/** Webview da memória dentro da janela principal (F5.5): no app é uma webview filha ancorada
+ * sobre a área de conteúdo; no navegador (pnpm dev), o painel usa iframe e aqui não faz nada. */
+export function openMemoryPanel(url: string, rect: PanelRect): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke("open_memory_panel", { url, rect });
+}
+
+/** Acompanha o âncora do painel (janela redimensionou, layout mudou). */
+export function updateMemoryPanelBounds(rect: PanelRect): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke("update_memory_panel_bounds", { rect });
+}
+
+/** Fecha a webview da memória. */
+export function closeMemoryPanel(): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke("close_memory_panel");
 }
 
 /** Abre uma URL no navegador padrão (links clicáveis do terminal). */

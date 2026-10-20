@@ -70,6 +70,7 @@ terminou fora da base, ou houve `attempts` iterações seguidas sem commit novo.
 
 ## Testes (F6.1, F6.2, F6.5)
 
-- `notebook/teste-dorme.sh` (a criar): repo temporário, `AGENTE_OPENCODE` falso que faz commits
-  ou escreve RELATORIO, conferindo cada condição de parada.
+- `notebook/teste-dorme.sh` (no `just check`): repo temporário, `AGENTE_OPENCODE` falso que faz
+  commits ou escreve RELATORIO, conferindo cada condição de parada. `AGENTE_ESPERA=0` tira a
+  espera entre tentativas sem progresso.
 - Sync: dois repos locais no devenv simulando PC e notebook (`file://`).

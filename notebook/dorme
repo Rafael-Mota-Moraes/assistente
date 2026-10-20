@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dorme — modo "hora de dormir" no notebook: agente autônomo que roda tarefas do backlog
 # em loop, sem humano, até você intervir. Generalizado a partir do game/dorme.sh.
-# NÃO TESTADO NESTA VERSÃO (F6.1). Spec: docs/specs/08-modo-dormir.md
+# Testado por notebook/teste-dorme.sh (agentes falsos no devenv). Spec: docs/specs/08-modo-dormir.md
 #
 # Quem chama é o hubd (via SSH, dentro de um tmux no notebook), já na raiz do clone do projeto
 # e na branch base `dorme/<data>`. O prompt vem pronto do hubd (hub-core/src/sleep_prompt.md).
@@ -19,6 +19,7 @@
 #   AGENTE_MAX_MIN     minutos máx. por tarefa    (padrão 240)
 #   AGENTE_MODEL       modelo do opencode         (padrão: o do opencode.json)
 #   AGENTE_TENTATIVAS  tentativas sem progresso   (padrão 3)
+#   AGENTE_ESPERA      segundos entre tentativas sem progresso (padrão 60; testes usam 0)
 #   AGENTE_JAIL        sandbox                    (padrão ai-jail; "" desliga — não recomendado)
 set -u
 
@@ -28,6 +29,7 @@ STOP="${AGENTE_STOP:-$HOME/assistente/STOP}"
 LOG="${AGENTE_LOG:-$HOME/assistente/logs/$PROJETO.log}"
 MAX_MIN="${AGENTE_MAX_MIN:-240}"
 TENTATIVAS="${AGENTE_TENTATIVAS:-3}"
+ESPERA="${AGENTE_ESPERA:-60}"
 JAIL="${AGENTE_JAIL-ai-jail}"
 OPENCODE="${AGENTE_OPENCODE:-opencode}"
 MODEL_ARG=()
@@ -74,7 +76,7 @@ WIP salvo nas branches agente/*. Recomendo rodar de novo ou fixar AGENTE_MODEL.
 RELE
     break
   fi
-  log "sem progresso (HEAD igual, rc=$rc) — novo sorteio do combo em 60s."
-  sleep 60
+  log "sem progresso (HEAD igual, rc=$rc) — novo sorteio do combo em ${ESPERA}s."
+  sleep "$ESPERA"
 done
 log "modo-dormir encerrado. Revise no app (Recolher) ou: git log --first-parent $BASE"

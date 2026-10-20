@@ -80,8 +80,8 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 ## F6 — Modo hora de dormir
 
-- [ ] **F6.1 `notebook/dorme` generalizado.** Prompt e limites vêm do hubd; roda dentro do ai-jail.
-  Pronto quando: com um repo de teste e um prompt fake (`AGENTE_OPENCODE` falso), o loop para nos casos de STOP, RELATORIO, árvore suja e sem progresso. Como testar: `notebook/teste-dorme.sh` (a criar) no devenv.
+- [x] **F6.1 `notebook/dorme` generalizado.** Prompt e limites vêm por env (o hubd preenche, F6.3); roda dentro do ai-jail (`AGENTE_JAIL`, `""` desliga). `AGENTE_ESPERA` torna a espera entre tentativas configurável. Teste: `notebook/teste-dorme.sh` no `just check` (11 verificações: STOP, RELATORIO antes/depois, árvore suja antes/depois, fora da base, desistência sem progresso, progresso que commita na base).
+  Pronto quando: com um repo de teste e um prompt fake (`AGENTE_OPENCODE` falso), o loop para nos casos de STOP, RELATORIO, árvore suja e sem progresso. Como testar: `notebook/teste-dorme.sh` no devenv.
 - [ ] **F6.2 Sync git PC → notebook.** `git push <notebook>:<clone> HEAD:refs/remotes/pc/<base>`, clone criado na primeira vez, branch `dorme/<data>`.
   Pronto quando: o notebook tem exatamente o HEAD do PC sem mexer nas branches dele. Como testar: dois repos locais no devenv.
 - [ ] **F6.3 Iniciar e acompanhar.** `POST /api/sleep {profile, project}` exige árvore limpa (ou oferece commit WIP), exporta briefing, gera prompt (`hub_core::sleep::render_prompt`) e inicia `dorme` num tmux do notebook. `GET` mostra o log ao vivo.

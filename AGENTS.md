@@ -1,9 +1,9 @@
 # AGENTS.md
 
 Hub pessoal de agentes de IA: app Tauri (host) + `hubd` (Rust/axum, numa VM Incus) +
-notebook (9router, ai-memory, modo dormir). O usuário fala português; responda em pt-BR.
+notebook (só 9router e modo dormir). O usuário fala português; responda em pt-BR.
 
-- **O que** e **por quê**: `docs/VISAO.md` (requisitos R1–R9)
+- **O que** e **por quê**: `docs/VISAO.md` (requisitos R1–R11)
 - **Como**: `docs/ARQUITETURA.md` e `docs/specs/`
 - **O que fazer agora**, com IDs (F2.2, F6.1…): `docs/FUNCIONALIDADES.md`
 
@@ -32,13 +32,15 @@ entra em `devenv/Dockerfile`. Nunca rode `bin/assistente vm …`, `instalar.sh` 
 - `crates/hubd`: `main.rs` (CLI, token, servidor), `api.rs` (rotas; pendentes respondem 501
   com o ID da funcionalidade).
 - `app/src-tauri`: casca fina com os comandos de host (`hub_connection`, `vm_status`,
-  `vm_start`, `vm_stop`, `open_in_cursor`).
+  `vm_start`, `vm_stop`, `open_in_cursor`, `open_url`, `open_memory_window`).
 - `app/src`: React. `bridge/hub.ts` (cliente do hubd), `bridge/host.ts` (comandos Tauri),
   `bridge/types.ts` (espelho dos tipos da API), `store.ts` (zustand), `features/<área>/`.
 - `bin/assistente`, `instalar.sh`, `vm/`: host e VM. `notebook/`: setup e loop `dorme`.
 
 ## Regras
 
+- Tudo roda no PC principal (host + VM). O notebook só serve o 9router e o modo dormir
+  (`docs/VISAO.md`); nada novo pode depender dele fora disso.
 - Código, identificadores e chaves de config em inglês; docs, mensagens de UI/CLI e commits
   em pt-BR.
 - Dependências com versão exata (`=` no Cargo, sem `^` no package.json) e publicadas há pelo

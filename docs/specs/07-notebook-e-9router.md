@@ -36,16 +36,14 @@ Host notebook
 ## Túnel gerenciado pelo hubd (F4.2)
 
 - Processo filho: `ssh -N -o ExitOnForwardFailure=yes -L 20128:127.0.0.1:20128 … notebook`
-  (portas em `[notebook.tunnel]`). **Hoje** inclui `49374` (legado). **F5.0** remove o forward
-  de memória; só o 9router fica no túnel.
+  (portas em `[notebook.tunnel]`). Só o 9router passa pelo túnel; `ai_memory` na config é
+  ignorado (F5.0).
 - Reinício com backoff exponencial (1 s → 30 s); estado `connecting|up|down` + último erro.
 - `/api/notebook` passa a ter `tunnel_managed: true` e o estado do SSH; os serviços são
   testados por HTTP em 127.0.0.1 (F4.3, implementado).
-- **Porta 49374 na VM (transição):** conflito entre túnel legado e servidor local (F5.0). Com
-  memória na VM, o túnel **não** deve encaminhar 49374; o hubd local usa a porta.
-- **Saúde (F4.3, feito):** HTTP em `127.0.0.1` — `GET /v1/models` no 9router; ai-memory no
-  `/api/notebook` enquanto o legado existir. **Depois de F5.0:** ai-memory sai do notebook na UI;
-  probe em `/api/memory` (servidor local).
+- **Porta 49374 na VM:** é do servidor ai-memory local (F5.0); o túnel nunca a encaminha.
+- **Saúde (F4.3, feito):** HTTP em `127.0.0.1` — `GET /v1/models` no 9router. O ai-memory não
+  aparece como serviço do notebook: o probe é `/api/memory`, no servidor local.
 - Alternativa avaliada: `autossh` (instalado na VM) como unidade systemd separada. Mais simples,
   mas o hubd perde o estado fino; fica como plano B.
 

@@ -32,7 +32,7 @@ if ! command -v ai-jail >/dev/null; then
   rm -rf "$tmp"
 fi
 
-echo "==> ai-memory (servidor principal da memória)"
+echo "==> ai-memory (réplica do wiki para o modo dormir; o principal fica no PC)"
 if ! command -v ai-memory >/dev/null; then
   curl -fsSL "$AI_MEMORY_INSTALL" | sh
 fi

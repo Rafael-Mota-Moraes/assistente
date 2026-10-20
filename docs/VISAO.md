@@ -8,6 +8,11 @@ noite entrega o trabalho em andamento ao notebook para seguir desenvolvendo sozi
 Hoje o uso é espalhado: Claude, Cursor e OpenCode, cada um com sua config, sem memória
 comum, rodando direto no sistema. O 9router (gateway de modelos) mora no notebook.
 
+**Regra: tudo roda no PC principal** (host + VM). O notebook só cuida de duas coisas: o
+**9router** e o **modo hora de dormir** (R6), incluindo a réplica do wiki que o dormir usa. Com
+o notebook desligado, toda funcionalidade do dia a dia segue funcionando, só sem o 9router.
+Funcionalidade nova não pode depender do notebook fora desses dois casos.
+
 ## Requisitos
 
 Cada requisito aponta para a funcionalidade (docs/FUNCIONALIDADES.md) e a spec que o cobrem.

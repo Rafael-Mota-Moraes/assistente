@@ -112,6 +112,15 @@ describe("ProjectList", () => {
     expect(openInCursor).toHaveBeenCalledWith("/raiz/game");
   });
 
+  it("a engrenagem abre as configurações do projeto", async () => {
+    const { hub } = fakeHub({ pessoal: [project("game")] });
+    connect(hub);
+    render(<ProjectList />);
+    await screen.findByText("game");
+    fireEvent.click(screen.getByTitle("Configurações do projeto (jail)"));
+    expect(useAppStore.getState().projectSettings).toEqual({ profile: "pessoal", project: "game" });
+  });
+
   it("falha ao abrir o Cursor vira toast em vez de silêncio", async () => {
     vi.mocked(openInCursor).mockRejectedValueOnce(
       new Error("não consegui abrir o Cursor: program not found"),

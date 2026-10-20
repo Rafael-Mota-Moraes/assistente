@@ -28,6 +28,8 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 | GET | `/ui/*` | pronto (F8.3) | build da UI (`just build-ui`), aberto sem token; rota ausente se a pasta não existe |
 | GET | `/api/profiles` | pronto | `[{id, label, color, root}]` |
 | GET | `/api/projects?profile=<id>` | pronto | `[{name, path, has_project_config}]` |
+| GET | `/api/projects/{profile}/{project}/settings` | pronto (F9.2) | `{settings: {docker, allow_hosts, full_network, allowed_commands}, docker_from_project_file}` |
+| PUT | `/api/projects/{profile}/{project}/settings` | pronto (F9.2) | `settings` → mesma resposta; 400 host/comando inválido; vale para sessões novas |
 | GET | `/api/notebook` | parcial (F4.2) | `{ssh_host, tunnel_managed, services: [{name, port, up}]}` |
 | GET | `/api/sessions` | pronto | `[{id, profile, project, agent, created_at, attached}]` |
 | POST | `/api/sessions` | pronto | `{profile, project, agent: "claude"|"opencode"|"shell"}` → sessão (`shell` = aba Terminal, F9.1) |

@@ -5,9 +5,11 @@
 
 pub mod config;
 pub mod project;
+pub mod project_settings;
 pub mod session;
 pub mod sleep;
 
 pub use config::{Config, ConfigError, Profile, expand_home};
 pub use project::{Project, discover_projects};
-pub use session::{AgentKind, LaunchPlan, SessionSpec, profile_data_dir};
+pub use project_settings::{ProjectSettings, SettingsFile, load_settings, settings_path};
+pub use session::{AgentKind, LaunchOptions, LaunchPlan, SessionSpec, profile_data_dir};

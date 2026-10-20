@@ -8,7 +8,10 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use hub_core::{Config, LaunchPlan, Project, SessionSpec, discover_projects};
+use hub_core::{
+    Config, LaunchOptions, LaunchPlan, Project, ProjectSettings, SessionSpec, discover_projects,
+    load_settings, settings_path,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -46,6 +49,8 @@ struct Inner {
     dorme_override: Option<String>,
     /// Pasta com o build da UI servido em `/ui/*` (F8.3).
     ui_dir: Option<PathBuf>,
+    /// Serializa leitura-modificação-escrita de `~/.assistente/projetos.toml` (F9.2).
+    settings_lock: tokio::sync::Mutex<()>,
 }
 
 impl AppState {
@@ -70,6 +75,7 @@ impl AppState {
             sleep_env_override: Vec::new(),
             dorme_override: None,
             ui_dir: ui_dir.is_dir().then_some(ui_dir),
+            settings_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -127,6 +133,10 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/api/profiles", get(profiles))
         .route("/api/projects", get(projects))
+        .route(
+            "/api/projects/{profile}/{project}/settings",
+            get(project_settings).put(save_project_settings),
+        )
         .route("/api/notebook", get(notebook))
         .route("/api/memory", get(memory))
         .route("/api/sessions", get(list_sessions).post(create_session))
@@ -155,7 +165,7 @@ fn cors() -> CorsLayer {
             HeaderValue::from_static("http://tauri.localhost"),
             HeaderValue::from_static("http://localhost:1420"),
         ])
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
 }
 
@@ -643,6 +653,80 @@ async fn merge_sleep(
         .map_err(|e| error(StatusCode::CONFLICT, &format!("merge recusado: {e}")))
 }
 
+#[derive(Serialize)]
+struct ProjectSettingsView {
+    settings: ProjectSettings,
+    /// `[jail] docker = true` no `.assistente.toml` do repo: liga o Docker mesmo com
+    /// `settings.docker` desligado (compatibilidade; o agente pode editar esse arquivo).
+    docker_from_project_file: bool,
+}
+
+fn settings_view(dir: &std::path::Path, settings: ProjectSettings) -> ProjectSettingsView {
+    ProjectSettingsView {
+        settings,
+        docker_from_project_file: hub_core::sleep::jail_config_at(dir).docker,
+    }
+}
+
+/// GET /api/projects/{profile}/{project}/settings (F9.2).
+async fn project_settings(
+    State(state): State<AppState>,
+    Path((profile, project)): Path<(String, String)>,
+) -> Result<Json<ProjectSettingsView>, Response> {
+    let dir = sleep_project_dir(&state, &profile, &project).map_err(|(s, m)| error(s, m))?;
+    let file = load_settings(&state.0.home).map_err(|e| internal(&e))?;
+    Ok(Json(settings_view(&dir, file.get(&profile, &project))))
+}
+
+/// PUT /api/projects/{profile}/{project}/settings (F9.2): troca as configurações do projeto.
+/// Valem para as sessões novas.
+async fn save_project_settings(
+    State(state): State<AppState>,
+    Path((profile, project)): Path<(String, String)>,
+    Json(settings): Json<ProjectSettings>,
+) -> Result<Json<ProjectSettingsView>, Response> {
+    let dir = sleep_project_dir(&state, &profile, &project).map_err(|(s, m)| error(s, m))?;
+    settings
+        .validate()
+        .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
+    update_settings(&state, |file| {
+        file.set(&profile, &project, settings.clone())
+    })
+    .await
+    .map_err(|e| internal(&e))?;
+    tracing::info!("configurações de {profile}/{project}: {settings:?}");
+    Ok(Json(settings_view(&dir, settings)))
+}
+
+/// Lê, muda e grava `projetos.toml` sob o lock; escrita atômica (tmp + rename), modo 0600.
+async fn update_settings(
+    state: &AppState,
+    change: impl FnOnce(&mut hub_core::SettingsFile),
+) -> Result<(), String> {
+    let _guard = state.0.settings_lock.lock().await;
+    let mut file = load_settings(&state.0.home)?;
+    change(&mut file);
+    let path = settings_path(&state.0.home);
+    let tmp = path.with_extension("toml.tmp");
+    let write = || -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        out.write_all(file.to_toml().as_bytes())?;
+        out.sync_all()?;
+        std::fs::rename(&tmp, &path)
+    };
+    write().map_err(|e| format!("{}: {e}", path.display()))
+}
+
 async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<SessionInfo>>, Response> {
     state
         .0
@@ -663,7 +747,16 @@ async fn create_session(
     };
     let existing = inner.tmux.list().await.map_err(|e| internal(&e))?;
     let seq = next_seq(&existing, &spec);
-    let mut plan = LaunchPlan::build(&inner.config, &inner.home, &spec, seq)
+    // Arquivo inválido: a sessão nasce com o jail padrão (o mais fechado), não falha.
+    let settings = match load_settings(&inner.home) {
+        Ok(file) => file.get(&spec.profile, &spec.project),
+        Err(e) => {
+            tracing::warn!("configurações dos projetos ignoradas: {e}");
+            ProjectSettings::default()
+        }
+    };
+    let options = LaunchOptions { settings };
+    let mut plan = LaunchPlan::build_with(&inner.config, &inner.home, &spec, seq, &options)
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
     // Só projetos de verdade (repo git na raiz do perfil).
     if !plan.cwd.join(".git").exists() || !plan.cwd.starts_with(&profile.root) {
@@ -1029,6 +1122,120 @@ mod tests {
         let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("STOP não chegou ao notebook"), "{text}");
+    }
+
+    // ---- Configurações do projeto (F9.2) ----
+
+    async fn call_method(
+        app: Router,
+        method: &str,
+        uri: &str,
+        body: Option<&str>,
+        token: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let body = body.map_or_else(Body::empty, |b| Body::from(b.to_owned()));
+        let response = app.oneshot(request.body(body).unwrap()).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    /// Home e raiz do perfil pessoal temporários, com o repo `game`.
+    fn settings_app(name: &str, token: Option<&str>) -> (Router, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("hubd-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("raiz");
+        std::fs::create_dir_all(root.join("game/.git")).unwrap();
+        let home = dir.join("home");
+        let text = EXAMPLE.replace("~/Documentos/pessoal/projetos", &root.display().to_string());
+        let config = Config::parse(&text, &home).unwrap();
+        let state = AppState::new(
+            config,
+            home,
+            token.map(str::to_owned),
+            None,
+            Tmux::default(),
+        );
+        (router(state), dir)
+    }
+
+    #[tokio::test]
+    async fn project_settings_round_trip() {
+        let (app, dir) = settings_app("config-projeto", None);
+        let uri = "/api/projects/pessoal/game/settings";
+        let (status, body) = call_method(app.clone(), "GET", uri, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["settings"]["docker"], false);
+        assert_eq!(body["docker_from_project_file"], false);
+
+        let loose = r#"{"docker":true,"allow_hosts":["pypi.org"],"full_network":false,"allowed_commands":["./dev just check"]}"#;
+        let (status, body) = call_method(app.clone(), "PUT", uri, Some(loose), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, body) = call_method(app.clone(), "GET", uri, None, None).await;
+        assert_eq!(body["settings"]["allow_hosts"], json!(["pypi.org"]));
+        assert_eq!(
+            body["settings"]["allowed_commands"],
+            json!(["./dev just check"])
+        );
+
+        let path = settings_path(&dir.join("home"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[pessoal.game]"), "{text}");
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+
+        // O `[jail]` do repo aparece separado (compatibilidade).
+        std::fs::write(
+            dir.join("raiz/game/.assistente.toml"),
+            "[jail]\ndocker = true\n",
+        )
+        .unwrap();
+        let (_, body) = call_method(app.clone(), "GET", uri, None, None).await;
+        assert_eq!(body["docker_from_project_file"], true);
+
+        // Voltar ao padrão tira o projeto do arquivo.
+        let (status, _) = call_method(app, "PUT", uri, Some("{}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("game"), "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn project_settings_reject_bad_input() {
+        let (app, dir) = settings_app("config-projeto-erros", Some("s3gredo"));
+        let token = Some("s3gredo");
+        let get = |uri: &'static str, token| call_method(app.clone(), "GET", uri, None, token);
+        let (status, _) = get("/api/projects/pessoal/game/settings", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = get("/api/projects/nope/game/settings", token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = get("/api/projects/pessoal/nao-existe/settings", token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = get("/api/projects/pessoal/..%2Ffora/settings", token).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, body) = call_method(
+            app.clone(),
+            "PUT",
+            "/api/projects/pessoal/game/settings",
+            Some(r#"{"allow_hosts":["https://pypi.org"]}"#),
+            token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(!settings_path(&dir.join("home")).exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     // ---- Recolher de manhã (F6.5): collect + merge com repos locais ----

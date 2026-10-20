@@ -6,6 +6,8 @@ import type {
   NotebookStatus,
   ProfileView,
   Project,
+  ProjectSettings,
+  ProjectSettingsView,
   SessionInfo,
   SessionSpec,
   SleepRequest,
@@ -21,6 +23,10 @@ export class HubError extends Error {
   ) {
     super(message);
   }
+}
+
+function settingsPath(profile: string, project: string): string {
+  return `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/settings`;
 }
 
 /** Cliente HTTP do hubd. O WebSocket dos terminais fica em terminal.ts. */
@@ -40,6 +46,19 @@ export class HubClient {
 
   projects(profile: string): Promise<Project[]> {
     return this.get(`/api/projects?profile=${encodeURIComponent(profile)}`);
+  }
+
+  /** Configurações do projeto que afrouxam o jail (F9.2). */
+  projectSettings(profile: string, project: string): Promise<ProjectSettingsView> {
+    return this.get(settingsPath(profile, project));
+  }
+
+  saveProjectSettings(
+    profile: string,
+    project: string,
+    settings: ProjectSettings,
+  ): Promise<ProjectSettingsView> {
+    return this.request("PUT", settingsPath(profile, project), settings);
   }
 
   notebook(): Promise<NotebookStatus> {

@@ -1,5 +1,6 @@
 import { ProfileSwitcher } from "./features/profiles/ProfileSwitcher";
 import { ProjectList } from "./features/projects/ProjectList";
+import { ProjectSettingsDialog } from "./features/projects/ProjectSettingsDialog";
 import { SessionArea } from "./features/sessions/SessionArea";
 import { useShortcuts } from "./features/sessions/shortcuts";
 import { GoodMorning } from "./features/sleep/GoodMorning";
@@ -35,6 +36,7 @@ export function App() {
       <StatusBar />
       <Toast />
       <GoodMorning />
+      <ProjectSettingsDialog />
     </div>
   );
 }

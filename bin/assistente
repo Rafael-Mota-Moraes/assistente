@@ -20,6 +20,8 @@ NET_CIDR="10.77.0.1/24"
 # Logins da VM vindos de um backup (`assistente restaurar`), à espera do próximo `vm criar`
 # ou de um `vm logins`. Consumido (apagado) depois de copiado para a VM.
 RESTORE_LOGINS_DIR="$HOME/.local/share/assistente/restauracao/perfis"
+# Configurações dos projetos (engrenagem, F9.4): mesmo ciclo dos logins.
+RESTORE_PROJECTS_FILE="$HOME/.local/share/assistente/restauracao/projetos.toml"
 TMP_DIR=""
 
 die() { echo "assistente: $*" >&2; exit 1; }
@@ -147,7 +149,7 @@ cmd_vm() {
     parar) incus stop "$name" ;;
     shell) incus exec "$name" -- sudo -u "$(id -un)" -i ;;
     logins)
-      [ -d "$RESTORE_LOGINS_DIR" ] \
+      [ -d "$RESTORE_LOGINS_DIR" ] || [ -f "$RESTORE_PROJECTS_FILE" ] \
         || die "nada para copiar: rode 'assistente restaurar <backup.tar.gz>' antes"
       vm_push_logins
       ;;
@@ -183,11 +185,13 @@ cmd_token() {
   echo "token gerado em $file"
 }
 
-# Copia ~/.assistente/perfis da VM (logins dos agentes) para <destino>/vm-perfis.
+# Copia ~/.assistente/perfis da VM (logins dos agentes) para <destino>/vm-perfis e as
+# configurações dos projetos (~/.assistente/projetos.toml, F9.4) para <destino>/vm-projetos.toml.
 vm_pull_logins() {
-  local dest="$1" name path
+  local dest="$1" name path projects
   name="$(cfg vm.name)"
   path="/home/$(id -un)/.assistente/perfis"
+  projects="/home/$(id -un)/.assistente/projetos.toml"
 
   incus info "$name" >/dev/null 2>&1 \
     || die "VM $name não existe: sem logins para copiar (use --sem-logins para um backup parcial)"
@@ -195,6 +199,9 @@ vm_pull_logins() {
     || die "VM $name parada: ligue (assistente vm iniciar) para incluir os logins, ou use --sem-logins"
   incus exec "$name" -- true 2>/dev/null \
     || die "o agente da VM $name ainda não responde; tente de novo em instantes"
+  if incus exec "$name" -- test -f "$projects"; then
+    (umask 077; incus exec "$name" -- cat "$projects" >"$dest/vm-projetos.toml")
+  fi
   if ! incus exec "$name" -- test -d "$path"; then
     echo "assistente: $path ainda não existe na VM; backup sem logins" >&2
     return 0
@@ -206,12 +213,24 @@ vm_pull_logins() {
     | tar -xzf - -C "$dest/vm-perfis" --strip-components=1
 }
 
-# Copia os logins restaurados do backup para a VM. Silencioso quando não há nada pendente.
+# Copia os logins (e as configurações dos projetos) restaurados do backup para a VM.
+# Silencioso quando não há nada pendente.
 vm_push_logins() {
-  local name path
-  [ -d "$RESTORE_LOGINS_DIR" ] || return 0
+  local name path projects
   name="$(cfg vm.name)"
   path="/home/$(id -un)/.assistente/perfis"
+  projects="/home/$(id -un)/.assistente/projetos.toml"
+
+  if [ -f "$RESTORE_PROJECTS_FILE" ]; then
+    echo "==> configurações dos projetos restauradas do backup"
+    incus exec "$name" -- sudo -u "$(id -un)" -i mkdir -p "$(dirname "$projects")"
+    incus exec "$name" -- tee "$projects" >/dev/null <"$RESTORE_PROJECTS_FILE"
+    incus exec "$name" -- chown "$(id -un):" "$projects"
+    incus exec "$name" -- chmod 600 "$projects"
+    rm -f "$RESTORE_PROJECTS_FILE"
+    echo "    $projects"
+  fi
+  [ -d "$RESTORE_LOGINS_DIR" ] || return 0
 
   echo "==> logins restaurados do backup"
   incus exec "$name" -- sudo -u "$(id -un)" -i mkdir -p "$path"
@@ -245,9 +264,12 @@ cmd_backup() {
     vm_pull_logins "$stage"
   fi
   # GNU tar aceita mais de um -C; o layout do tar continua relativo a $HOME, e os logins da
-  # VM entram em vm-perfis/ (extraídos à parte pelo `restaurar`).
+  # VM entram em vm-perfis/ e vm-projetos.toml (extraídos à parte pelo `restaurar`).
   local tar_args=(-czf "$out" -C "$HOME" ".config/assistente" "${mirror#"$HOME"/}")
-  [ -d "$stage/vm-perfis" ] && tar_args+=(-C "$stage" vm-perfis)
+  local extras=()
+  [ -d "$stage/vm-perfis" ] && extras+=(vm-perfis)
+  [ -f "$stage/vm-projetos.toml" ] && extras+=(vm-projetos.toml)
+  [ "${#extras[@]}" -gt 0 ] && tar_args+=(-C "$stage" "${extras[@]}")
   tar "${tar_args[@]}"
   echo "backup em $out"
 }
@@ -259,9 +281,15 @@ cmd_restaurar() {
   tar -tzf "$file" >"$entries" || die "backup ilegível: $file"
 
   # Config e espelho voltam para o home; os logins da VM ficam à espera (não pertencem ao host).
-  tar -xzf "$file" -C "$HOME" --exclude "vm-perfis" --exclude "vm-perfis/*"
+  tar -xzf "$file" -C "$HOME" --exclude "vm-perfis" --exclude "vm-perfis/*" \
+    --exclude "vm-projetos.toml"
   # O estado pendente é sempre o do backup restaurado agora (backup antigo não deixa resto).
-  rm -rf "$RESTORE_LOGINS_DIR"
+  rm -rf "$RESTORE_LOGINS_DIR" "$RESTORE_PROJECTS_FILE"
+  if grep -qx "vm-projetos.toml" "$entries"; then
+    mkdir -p "$(dirname "$RESTORE_PROJECTS_FILE")"
+    (umask 077; tar -xzOf "$file" vm-projetos.toml >"$RESTORE_PROJECTS_FILE")
+    echo "configurações dos projetos restauradas; entram na VM junto com os logins"
+  fi
   if grep -q "^vm-perfis/" "$entries"; then
     mkdir -p "$RESTORE_LOGINS_DIR"
     tar -xzf "$file" -C "$RESTORE_LOGINS_DIR" --strip-components=1 vm-perfis

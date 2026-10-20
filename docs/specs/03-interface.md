@@ -51,7 +51,10 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
   jail**, com o env do perfil. Para o que o agente não consegue rodar (Docker, rede, `git push`)
   sem procurar a pasta num terminal do PC. A aba também fica âmbar.
 - 🌙 ao lado do projeto = tem `.assistente.toml` (pronto para o modo dormir).
-- Passar o mouse num projeto mostra "abrir no Cursor".
+- Passar o mouse num projeto mostra a **engrenagem** (F9.3) e "abrir no Cursor". A engrenagem
+  abre as configurações do jail do projeto: Docker, rede completa (aviso vermelho), hosts
+  liberados e comandos sempre permitidos. Valem para as sessões novas; o Docker ligado pelo
+  `[jail]` do `.assistente.toml` aparece marcado e travado.
 
 ## Estados
 

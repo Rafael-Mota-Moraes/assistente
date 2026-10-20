@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# teste-backup — exercita `assistente backup`/`restaurar`/`vm logins` (F7.1) com um incus
-# falso, sem VM: config + espelho + logins, --sem-logins, VM parada e o envio dos logins.
+# teste-backup — exercita `assistente backup`/`restaurar`/`vm logins` (F7.1, F9.4) com um
+# incus falso, sem VM: config + espelho + logins + configurações dos projetos, --sem-logins,
+# VM parada e o envio dos logins.
 # Roda no devenv:  ./dev just teste-backup
 set -uo pipefail
 
@@ -33,6 +34,7 @@ mkdir -p "$VM_HOME/.assistente/perfis/pessoal/claude" "$VM_HOME/.assistente/perf
 echo '{"token":"secreto"}' >"$VM_HOME/.assistente/perfis/pessoal/claude/.credentials.json"
 chmod 600 "$VM_HOME/.assistente/perfis/pessoal/claude/.credentials.json"
 echo "chave" >"$VM_HOME/.assistente/perfis/pessoal/ssh/id_ed25519"
+printf '[pessoal.game]\ndocker = true\n' >"$VM_HOME/.assistente/projetos.toml"
 
 # incus falso: `info`/`list` respondem pelo estado em FAKE_VM_STATE e `exec` roda o comando
 # localmente, trocando /home/<usuário> pelo home falso da VM.
@@ -96,7 +98,8 @@ for item in \
   ".config/assistente/assistente.toml" \
   ".local/share/assistente/memoria-copia/wiki/inicio.md" \
   "vm-perfis/pessoal/claude/.credentials.json" \
-  "vm-perfis/pessoal/ssh/id_ed25519"; do
+  "vm-perfis/pessoal/ssh/id_ed25519" \
+  "vm-projetos.toml"; do
   if grep -qxF "$item" <<<"$lista"; then ok "o tar tem $item"; else falha "o tar tem $item — ausente"; fi
 done
 
@@ -175,6 +178,13 @@ if [ -f "$HOME2/.local/share/assistente/restauracao/perfis/pessoal/claude/.crede
 else
   falha "logins ficam à espera da VM — ausente"
 fi
+if [ -e "$HOME2/vm-projetos.toml" ]; then
+  falha "configurações dos projetos não vão para o home — vm-projetos.toml criado"
+elif grep -q "docker = true" "$HOME2/.local/share/assistente/restauracao/projetos.toml" 2>/dev/null; then
+  ok "configurações dos projetos ficam à espera da VM"
+else
+  falha "configurações dos projetos ficam à espera da VM — ausente"
+fi
 
 echo "== restaurar backup antigo (sem logins) limpa pendências"
 HOME3="$WORK/home3"
@@ -207,6 +217,17 @@ if [ -f "$VM_HOME/.assistente/perfis/pessoal/claude/.credentials.json" ]; then
   ok "credenciais chegam à VM"
 else
   falha "credenciais chegam à VM — ausente"
+fi
+if grep -q "docker = true" "$VM_HOME/.assistente/projetos.toml" 2>/dev/null \
+  && [ "$(stat -c %a "$VM_HOME/.assistente/projetos.toml")" = "600" ]; then
+  ok "configurações dos projetos chegam à VM (modo 600)"
+else
+  falha "configurações dos projetos chegam à VM (modo 600) — ausente ou modo errado"
+fi
+if [ -e "$HOME2/.local/share/assistente/restauracao/projetos.toml" ]; then
+  falha "configurações pendentes são consumidas — arquivo ficou"
+else
+  ok "configurações pendentes são consumidas"
 fi
 if [ -d "$HOME2/.local/share/assistente/restauracao/perfis" ]; then
   falha "logins pendentes são consumidos — pasta ficou"

@@ -54,13 +54,16 @@ O que sobrevive à formatação e onde fica:
 | Config + token | `~/.config/assistente` | `backup.tar.gz` → `instalar.sh backup.tar.gz` |
 | Memória | wiki em `memory.mirror_dir` (host) + servidor na VM (F5.0) | backup inclui espelho; réplica no notebook (F5.4) |
 | Logins dos agentes na VM | `~/.assistente/perfis` (VM) | backup (F7.1) ou `assistente login` de novo |
+| Configurações dos projetos (engrenagem) | `~/.assistente/projetos.toml` (VM) | backup (F9.4) |
 | Projetos | suas pastas / GitHub | seu backup normal |
 
 O `backup` (F7.1) gera um tar com `~/.config/assistente`, o espelho da memória e
 `vm-perfis/` — os logins de `~/.assistente/perfis` dentro da VM. A VM precisa estar ligada;
-`--sem-logins` faz o backup parcial sem ela. No `restaurar`, config e espelho voltam para o
-home e os logins ficam em `~/.local/share/assistente/restauracao/perfis` até o próximo
-`vm criar` (ou `assistente vm logins`, com a VM já criada); depois de copiados, são apagados.
+`--sem-logins` faz o backup parcial sem ela. Com a VM, entra também `vm-projetos.toml` (as
+configurações dos projetos, F9.4). No `restaurar`, config e espelho voltam para o home e os
+logins ficam em `~/.local/share/assistente/restauracao/perfis` (as configurações em
+`restauracao/projetos.toml`) até o próximo `vm criar` (ou `assistente vm logins`, com a VM já
+criada); depois de copiados, são apagados.
 
 Roteiro:
 

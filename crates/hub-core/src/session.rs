@@ -3,6 +3,7 @@
 //! Spec: docs/specs/02-hubd-e-sessoes.md e docs/specs/05-sandbox.md
 
 use crate::config::{Config, Profile, is_valid_id};
+use crate::project_settings::ProjectSettings;
 use crate::sleep::jail_config_at;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -51,6 +52,20 @@ pub struct LaunchPlan {
     pub argv: Vec<String>,
 }
 
+/// O que o hubd lê de fora (arquivos, segredos) e entrega pronto: o `LaunchPlan` fica puro.
+#[derive(Debug, Clone, Default)]
+pub struct LaunchOptions {
+    /// Configurações do projeto em `~/.assistente/projetos.toml` (F9.2).
+    pub settings: ProjectSettings,
+}
+
+/// O jail efetivo: configurações do projeto + `[jail]` do `.assistente.toml` (compatibilidade).
+struct JailOptions<'a> {
+    docker: bool,
+    full_network: bool,
+    allow_hosts: &'a [String],
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum LaunchError {
     UnknownProfile(String),
@@ -82,6 +97,16 @@ impl LaunchPlan {
         spec: &SessionSpec,
         seq: u32,
     ) -> Result<Self, LaunchError> {
+        Self::build_with(config, home, spec, seq, &LaunchOptions::default())
+    }
+
+    pub fn build_with(
+        config: &Config,
+        home: &Path,
+        spec: &SessionSpec,
+        seq: u32,
+        options: &LaunchOptions,
+    ) -> Result<Self, LaunchError> {
         let profile = config
             .profile(&spec.profile)
             .ok_or_else(|| LaunchError::UnknownProfile(spec.profile.clone()))?;
@@ -98,16 +123,13 @@ impl LaunchPlan {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
             vec!["bash".to_owned(), "-l".to_owned()]
         } else {
-            let jail = jail_config_at(&cwd);
-            jail_argv(
-                config,
-                home,
-                profile,
-                &data_dir,
-                &env,
-                spec.agent,
-                jail.docker,
-            )
+            let settings = &options.settings;
+            let jail = JailOptions {
+                docker: settings.docker || jail_config_at(&cwd).docker,
+                full_network: settings.full_network,
+                allow_hosts: &settings.allow_hosts,
+            };
+            jail_argv(config, home, profile, &data_dir, &env, spec.agent, &jail)
         };
         Ok(Self {
             tmux_session: tmux_session_name(&spec.profile, &spec.project, spec.agent, seq),
@@ -150,7 +172,7 @@ fn jail_argv(
     data_dir: &Path,
     env: &[(String, String)],
     agent: AgentKind,
-    docker: bool,
+    jail: &JailOptions,
 ) -> Vec<String> {
     let mut argv = vec![
         "ai-jail".to_owned(),
@@ -161,21 +183,32 @@ fn jail_argv(
         argv.push("--claude-dir".to_owned());
         argv.push(data_dir.join("claude").display().to_string());
     }
-    for (name, port) in &config.notebook.tunnel {
-        if name == "ai_memory" {
-            continue;
+    if jail.full_network {
+        // Rede sem filtro (F9.2): o ai-jail recusa `--forward-port` junto, e o filtro de
+        // hosts deixa de existir.
+        argv.push("--network".to_owned());
+    } else {
+        for (name, port) in &config.notebook.tunnel {
+            if name == "ai_memory" {
+                continue;
+            }
+            argv.push("--forward-port".to_owned());
+            argv.push(port.to_string());
         }
+        // O ai-memory é local na VM (F5.0), mas o sandbox tem loopback próprio: sem o relay os
+        // hooks/MCP do agente não alcançam 127.0.0.1:porta e a captura cai no spool para sempre.
         argv.push("--forward-port".to_owned());
-        argv.push(port.to_string());
-    }
-    // O ai-memory é local na VM (F5.0), mas o sandbox tem loopback próprio: sem o relay os
-    // hooks/MCP do agente não alcançam 127.0.0.1:porta e a captura cai no spool para sempre.
-    argv.push("--forward-port".to_owned());
-    argv.push(config.memory.port.to_string());
-    // Provedores do opencode fora do 9router (copiados do PC): o proxy do jail só libera os
-    // hosts do preset. Soma à lista do preset; o Claude não ganha rede extra.
-    if agent == AgentKind::Opencode {
-        for host in &profile.opencode_allow_hosts {
+        argv.push(config.memory.port.to_string());
+        // Provedores do opencode fora do 9router (copiados do PC): o proxy do jail só libera os
+        // hosts do preset. Soma à lista do preset; o Claude não ganha esses hosts.
+        if agent == AgentKind::Opencode {
+            for host in &profile.opencode_allow_hosts {
+                argv.push("--allow-host".to_owned());
+                argv.push(host.clone());
+            }
+        }
+        // Hosts liberados pela engrenagem do projeto (F9.2): valem para os dois agentes.
+        for host in jail.allow_hosts {
             argv.push("--allow-host".to_owned());
             argv.push(host.clone());
         }
@@ -194,7 +227,7 @@ fn jail_argv(
     // claude/opencode (que prendem o mouse e copiam sozinhos) não chega ao app. Do outro lado
     // está o tmux, que só repassa ao app o OSC 52 de escrita (set-clipboard on).
     argv.push("--terminal-passthrough".to_owned());
-    if docker {
+    if jail.docker {
         argv.push("--docker".to_owned());
     }
     for (key, _) in env {
@@ -490,6 +523,84 @@ mod tests {
         .unwrap();
         assert!(plan.argv.contains(&"--docker".to_owned()));
         fs::remove_dir_all(projects).unwrap();
+    }
+
+    fn with_settings(settings: ProjectSettings) -> LaunchOptions {
+        LaunchOptions { settings }
+    }
+
+    #[test]
+    fn project_settings_loosen_the_jail() {
+        let (config, home) = setup();
+        let options = with_settings(ProjectSettings {
+            docker: true,
+            allow_hosts: vec!["pypi.org".into()],
+            ..Default::default()
+        });
+        for agent in [AgentKind::Claude, AgentKind::Opencode] {
+            let plan =
+                LaunchPlan::build_with(&config, &home, &spec("pessoal", "x", agent), 1, &options)
+                    .unwrap();
+            let argv = plan.argv.join(" ");
+            assert!(argv.contains(" --docker "), "{argv}");
+            assert!(argv.contains("--allow-host pypi.org"), "{argv}");
+            assert!(!argv.contains("--network"), "{argv}");
+        }
+        // A aba Terminal já está fora do jail: as configurações não mudam nada nela.
+        let shell = LaunchPlan::build_with(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Shell),
+            1,
+            &options,
+        )
+        .unwrap();
+        assert_eq!(shell.argv, ["bash", "-l"]);
+    }
+
+    #[test]
+    fn full_network_drops_forward_ports_and_host_filter() {
+        let (config, home) = setup();
+        let options = with_settings(ProjectSettings {
+            full_network: true,
+            allow_hosts: vec!["pypi.org".into()],
+            ..Default::default()
+        });
+        let plan = LaunchPlan::build_with(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Opencode),
+            1,
+            &options,
+        )
+        .unwrap();
+        let argv = plan.argv.join(" ");
+        assert!(argv.contains(" --network "), "{argv}");
+        assert!(!argv.contains("--forward-port"), "{argv}");
+        assert!(!argv.contains("--allow-host"), "{argv}");
+    }
+
+    #[test]
+    fn settings_file_is_outside_every_jail_mount() {
+        let (config, home) = setup();
+        let file = crate::project_settings::settings_path(&home);
+        for agent in [AgentKind::Claude, AgentKind::Opencode] {
+            let plan =
+                LaunchPlan::build(&config, &home, &spec("pessoal", "game", agent), 1).unwrap();
+            let mounts = plan
+                .argv
+                .windows(2)
+                .filter(|w| matches!(w[0].as_str(), "--map" | "--rw-map" | "--claude-dir"));
+            for pair in mounts {
+                assert!(
+                    !file.starts_with(&pair[1]),
+                    "{} expõe {}",
+                    pair[1],
+                    file.display()
+                );
+            }
+            assert!(!file.starts_with(&plan.cwd));
+        }
     }
 
     /// Roda ai-jail real (devenv/VM): só o `--rw-map` do perfil ativo enxerga credenciais.

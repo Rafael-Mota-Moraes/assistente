@@ -50,6 +50,8 @@ type State = {
   toast: string | null;
   /** Modal "Bom dia" (F6.6): revisar e mesclar o que o agente fez no notebook. */
   morning: MorningState | null;
+  /** Modal de configurações do projeto (engrenagem, F9.3); `null` = fechado. */
+  projectSettings: { profile: string; project: string } | null;
 };
 
 export const initialState: State = {
@@ -70,6 +72,7 @@ export const initialState: State = {
   actionError: null,
   toast: null,
   morning: null,
+  projectSettings: null,
 };
 
 /** Sessões visíveis (abas) do projeto ativo: as do perfil/projeto, menos as abas fechadas. */

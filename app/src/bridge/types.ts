@@ -65,6 +65,21 @@ export type SessionInfo = {
 
 export type SessionSpec = { profile: string; project: string; agent: AgentKind };
 
+/** Afrouxa o ai-jail do projeto (F9.2); guardado na VM em ~/.assistente/projetos.toml. */
+export type ProjectSettings = {
+  docker: boolean;
+  allow_hosts: string[];
+  full_network: boolean;
+  allowed_commands: string[];
+};
+
+/** GET/PUT /api/projects/{profile}/{project}/settings. */
+export type ProjectSettingsView = {
+  settings: ProjectSettings;
+  /** `[jail] docker = true` no .assistente.toml do repo liga o Docker de qualquer jeito. */
+  docker_from_project_file: boolean;
+};
+
 export type CollectedCommit = { hash: string; subject: string };
 
 /** Resumo da manhã (POST /api/sleep/collect, F6.5). */

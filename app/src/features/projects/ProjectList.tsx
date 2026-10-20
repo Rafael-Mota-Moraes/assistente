@@ -1,4 +1,4 @@
-import { FolderGit2, Moon, SquareArrowOutUpRight } from "lucide-react";
+import { FolderGit2, Moon, Settings, SquareArrowOutUpRight } from "lucide-react";
 import { useEffect } from "react";
 import { openInCursor } from "../../bridge/host";
 import { useAppStore } from "../../store";
@@ -53,6 +53,19 @@ export function ProjectList() {
                   aria-label="pronto p/ modo dormir"
                 />
               )}
+            </button>
+            <button
+              type="button"
+              title="Configurações do projeto (jail)"
+              onClick={() =>
+                activeProfile &&
+                useAppStore.setState({
+                  projectSettings: { profile: activeProfile, project: project.name },
+                })
+              }
+              className="invisible rounded-md p-1.5 text-slate-500 hover:text-white group-hover:visible"
+            >
+              <Settings className="size-3.5" />
             </button>
             <button
               type="button"

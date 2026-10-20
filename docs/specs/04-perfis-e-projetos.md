@@ -65,13 +65,29 @@ separados) e as ferramentas instaladas.
 worktree), sem ocultos, em ordem alfabética. Raiz inexistente = lista vazia. Projetos em
 subpastas mais fundas ficam para depois (config `scan_depth`, se precisar).
 
+### Configurações do projeto (engrenagem, F9.2)
+
+`~/.assistente/projetos.toml` **na VM**, escrito pelo hubd (`PUT …/settings`) e fora de todo
+mount do ai-jail. O `.assistente.toml` fica no repo, onde o agente escreve: uma permissão
+guardada lá ele poderia se dar sozinho. Parse em `hub_core::project_settings`.
+
+```toml
+[pessoal.game]
+docker = true
+allow_hosts = ["pypi.org"]
+full_network = false
+allowed_commands = ["cargo build"]
+```
+
+Projeto no padrão não aparece no arquivo. Entra no backup (F9.4).
+
 ### `.assistente.toml` (por projeto, opcional)
 
 Exemplo: `config/projeto.exemplo.toml`. Parse em `hub_core::sleep::ProjectConfig`:
 
 | Seção | Uso |
 |---|---|
-| `[jail]` | `docker = true` liga `--docker` do ai-jail na sessão (spec 05, F3.1) |
+| `[jail]` | `docker = true` liga `--docker` do ai-jail na sessão (spec 05, F3.1). Legado: prefira a engrenagem (abaixo), que o agente não consegue editar |
 | `[sleep]` | Modo dormir (spec 08) |
 
 Vai versionado no repo do projeto.

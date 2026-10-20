@@ -34,6 +34,9 @@ O `LaunchPlan` (`hub_core::session::jail_argv`) monta:
 | `--map <raiz do perfil>/.ai-memory.toml` | marcador do workspace; sem ele a memória cai em `default` |
 | `--terminal-passthrough` | o proxy de terminal do ai-jail descarta o OSC 52: sem isso copiar com o mouse no claude/opencode não chega ao app. O agente passa a escrever direto no painel do tmux, que só repassa ao app o OSC 52 de escrita |
 | `--env NOME` (uma por variável do perfil) | o valor vem do env do tmux, não aparece na linha de comando |
+| `--docker` | engrenagem do projeto (F9.2) ou `[jail] docker` do `.assistente.toml` |
+| `--allow-host <host>` (os dois agentes) | `allow_hosts` da engrenagem do projeto (F9.2) |
+| `--network` | `full_network` da engrenagem: rede sem filtro. O ai-jail não aceita junto com `--forward-port`, então os relays e os `--allow-host` saem |
 | `-- claude` / `-- opencode --standalone` | o preset vale com ou sem `--`. O opencode 2 é cliente de um servidor em segundo plano compartilhado, que não sobrevive ao jail: `--standalone` sobe um por sessão |
 
 O preset do opencode monta `~/.config/opencode` e `~/.local/share/opencode`, que são
@@ -44,8 +47,9 @@ plugins e node_modules. Isolar o histórico por perfil (`XDG_DATA_HOME`) fica pa
 ## Docker dentro da sessão
 
 No 2.x o Docker vem **desligado** (`--docker` liga; equivale a root na VM). Projetos com
-`./dev` (como o game) precisam dele para o agente rodar `just check`: ligue por projeto com
-`[jail] docker = true` no `.assistente.toml` (F3.1), não globalmente.
+`./dev` (como o game) precisam dele para o agente rodar `just check`: ligue por projeto na
+engrenagem (F9.2) ou, legado, com `[jail] docker = true` no `.assistente.toml` (F3.1), nunca
+globalmente.
 
 ## `.ai-jail` no projeto (F0.5)
 
@@ -74,8 +78,12 @@ nenhuma no PC: a VM continua sendo a fronteira.
 
 - **Aba Terminal (F9.1).** `bash -l` no tmux, sem ai-jail, na pasta do projeto e com o env do
   perfil (identidade git, `GIT_SSH_COMMAND`). Equivale a você digitando na VM.
-- **Configurações do projeto (F9.2–F9.3).** Afrouxam o jail por projeto; ficam fora do
-  projeto para o agente não se dar permissão.
+- **Configurações do projeto (F9.2–F9.3).** Engrenagem na lista de projetos: Docker, hosts
+  liberados, rede completa e comandos sempre permitidos. Ficam em `~/.assistente/projetos.toml`
+  na VM, fora do projeto e de todo mount do jail (teste `settings_file_is_outside_every_jail_mount`):
+  o agente não se dá permissão. **Fraqueza conhecida:** o `[jail] docker` do `.assistente.toml`
+  continua valendo por compatibilidade, e esse arquivo o agente pode editar (vale na sessão
+  seguinte). Projetos novos: use a engrenagem.
 - **Pedido do agente com aprovação (F9.5–F9.7).** O agente pede, você aprova no app e o hubd
   roda o comando na VM, fora do jail.
 

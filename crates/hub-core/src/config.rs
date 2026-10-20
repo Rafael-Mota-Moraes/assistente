@@ -222,7 +222,7 @@ pub(crate) fn is_valid_id(id: &str) -> bool {
 }
 
 /// Hosts viram `--allow-host` do ai-jail, que libera o host e os subdomínios.
-fn is_valid_host(host: &str) -> bool {
+pub(crate) fn is_valid_host(host: &str) -> bool {
     !host.is_empty()
         && !host.starts_with(['.', '-'])
         && host

@@ -1,7 +1,7 @@
 //! `~/.config/assistente/assistente.toml`. Exemplo comentado: `config/assistente.exemplo.toml`.
 
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -68,6 +68,10 @@ fn default_memory_port() -> u16 {
     49374
 }
 
+fn default_opencode_providers() -> Vec<String> {
+    vec!["9router".to_owned()]
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
@@ -83,6 +87,11 @@ pub struct Profile {
     pub opencode_model: Option<String>,
     #[serde(default)]
     pub opencode_small_model: Option<String>,
+    /// Providers que o opencode deste perfil enxerga: `"9router"` (notebook) e/ou nomes de
+    /// providers do `opencode.json` do PC. F3.4: o `agentes configurar` grava cada um (com a
+    /// chave) no `opencode.json` do perfil; o config global da VM não carrega chaves de API.
+    #[serde(default = "default_opencode_providers")]
+    pub opencode_providers: Vec<String>,
     /// Hosts que o proxy do ai-jail libera para o opencode (provedores fora do 9router).
     #[serde(default)]
     pub opencode_allow_hosts: Vec<String>,
@@ -172,6 +181,20 @@ impl Config {
                     )));
                 }
             }
+            let mut seen = BTreeSet::new();
+            for provider in &profile.opencode_providers {
+                if !is_valid_provider(provider) {
+                    return Err(ConfigError::Invalid(format!(
+                        "perfil {id}: opencode_providers \"{provider}\" não é um id de provider \
+                         (letras, números, '-', '_' ou '.')"
+                    )));
+                }
+                if !seen.insert(provider) {
+                    return Err(ConfigError::Invalid(format!(
+                        "perfil {id}: opencode_providers repete \"{provider}\""
+                    )));
+                }
+            }
         }
         // Raízes aninhadas misturariam projetos (e credenciais) de perfis diferentes.
         let roots: Vec<(&String, &PathBuf)> =
@@ -204,6 +227,14 @@ fn is_valid_host(host: &str) -> bool {
         && host
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+}
+
+/// Ids de provider viram chave no `opencode.json` e parte da referência `"<provider>/<modelo>"`.
+fn is_valid_provider(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 /// `~` e `~/x` viram caminhos dentro de `home`; o resto fica igual.
@@ -280,6 +311,35 @@ mod tests {
         ] {
             let err = Config::parse(&with(bad), &home()).unwrap_err();
             assert!(err.to_string().contains("opencode_allow_hosts"), "{err}");
+        }
+    }
+
+    #[test]
+    fn opencode_providers_default_to_9router_and_validate() {
+        let config = Config::parse(EXAMPLE, &home()).unwrap();
+        assert_eq!(
+            config.profile("pessoal").unwrap().opencode_providers,
+            ["9router"]
+        );
+        let with = |list: &str| {
+            EXAMPLE.replacen(
+                "# opencode_providers = [\"9router\", \"meu-provedor\"]",
+                &format!("opencode_providers = {list}"),
+                1,
+            )
+        };
+        let config = Config::parse(&with(r#"["meu-provedor"]"#), &home()).unwrap();
+        assert_eq!(
+            config.profile("pessoal").unwrap().opencode_providers,
+            ["meu-provedor"]
+        );
+        for bad in [
+            r#"[""]"#,
+            r#"["provedor/modelo"]"#,
+            r#"["9router", "9router"]"#,
+        ] {
+            let err = Config::parse(&with(bad), &home()).unwrap_err();
+            assert!(err.to_string().contains("opencode_providers"), "{err}");
         }
     }
 

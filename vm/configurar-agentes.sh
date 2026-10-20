@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Configura os agentes da VM: 9router (túnel), providers do PC, ai-memory local (F5.0).
+# Configura os agentes da VM: providers do opencode por perfil (F3.4), ai-memory local (F5.0).
 # Claude Code e opencode por perfil. Roda como o
 # SEU usuário dentro da VM; reexecutável. Chamado por `bin/assistente agentes configurar`, que
 # manda os providers do PC (JSON, com as chaves) pelo stdin.
@@ -20,37 +20,31 @@ host="$(python3 -c "import tomllib;print(tomllib.load(open('$CONF','rb'))['noteb
 router_port="$(python3 -c "import tomllib;print(tomllib.load(open('$CONF','rb'))['notebook']['tunnel']['9router'])")"
 OC="$HOME/.config/opencode/opencode.json"
 
-echo "==> opencode: provider 9router (modelos lidos do próprio 9router) e providers do PC"
-# A chave fica no server.env do notebook (o opencode de lá usa {env:ROUTER_API_KEY}).
-router_key="$(ssh -n -o BatchMode=yes "$host" "sed -n 's/^ROUTER_API_KEY=//p' ~/.config/opencode/server.env")"
-[ -n "$router_key" ] || { echo "sem ROUTER_API_KEY no notebook" >&2; exit 1; }
+echo "==> opencode: config global (sem providers — as chaves vão por perfil, F3.4)"
+# Só toca no notebook se algum perfil for usar o 9router.
+needs_router="$(python3 - "$CONF" <<'PY'
+import sys, tomllib
+profiles = tomllib.load(open(sys.argv[1], "rb"))["profiles"]
+print(any("9router" in p.get("opencode_providers", ["9router"]) for p in profiles.values()))
+PY
+)"
+router_key=""
+router_models=""
+if [ "$needs_router" = "True" ]; then
+  echo "==> 9router: chave e modelos (notebook)"
+  # A chave fica no server.env do notebook (o opencode de lá usa {env:ROUTER_API_KEY}).
+  router_key="$(ssh -n -o BatchMode=yes "$host" "sed -n 's/^ROUTER_API_KEY=//p' ~/.config/opencode/server.env")"
+  [ -n "$router_key" ] || { echo "sem ROUTER_API_KEY no notebook" >&2; exit 1; }
+  router_models="$(curl -s -m10 -H "Authorization: Bearer $router_key" "http://127.0.0.1:$router_port/v1/models" \
+    | python3 -c 'import json, sys; print("\n".join(m["id"] for m in json.load(sys.stdin).get("data", [])))')"
+  [ -n "$router_models" ] || { echo "o 9router não listou modelos" >&2; exit 1; }
+  echo "    $(printf '%s\n' "$router_models" | wc -l) modelos"
+fi
 mkdir -p "$HOME/.config/opencode"
-# shellcheck disable=SC2016 # o python abaixo é literal
-curl -s -m10 -H "Authorization: Bearer $router_key" "http://127.0.0.1:$router_port/v1/models" \
-  | ROUTER_KEY="$router_key" ROUTER_PORT="$router_port" HOST_PROVIDERS="$host_providers" python3 -c '
-import json, os, sys
-ids = [m["id"] for m in json.load(sys.stdin).get("data", [])]
-if not ids:
-    sys.exit("o 9router não listou modelos")
-config = {
-    "$schema": "https://opencode.ai/config.json",
-    "model": "9router/" + ("free" if "free" in ids else ids[0]),
-    "provider": {"9router": {
-        "npm": "@ai-sdk/openai-compatible",
-        "name": "9router (notebook)",
-        "options": {"baseURL": "http://127.0.0.1:%s/v1" % os.environ["ROUTER_PORT"],
-                    "apiKey": os.environ["ROUTER_KEY"]},
-        "models": {i: {"name": i} for i in ids},
-    }},
-}
-# Providers do PC entram como estão (baseURL, chave, modelos); o 9router daqui prevalece.
-host = {k: v for k, v in json.loads(os.environ["HOST_PROVIDERS"]).items() if k != "9router"}
-config["provider"].update(host)
-print(json.dumps(config, indent=2))
-print("    9router: %d modelos" % len(ids), file=sys.stderr)
-print("    do PC: %s" % (", ".join(host) or "nenhum"), file=sys.stderr)
-' > "$OC.novo"
-# Arquivo gerado do zero: só o 9router e os providers do PC (o MCP entra logo abaixo).
+# Arquivo gerado do zero: sem providers nem chaves (o opencode.json de cada perfil traz os
+# seus; o MCP do ai-memory entra mais abaixo).
+# shellcheck disable=SC2016 # o JSON é literal
+printf '{\n  "$schema": "https://opencode.ai/config.json"\n}\n' > "$OC.novo"
 mv "$OC.novo" "$OC"
 rm -f "$OC".bak-*
 
@@ -99,20 +93,48 @@ while IFS=$'\t' read -r pid root workspace; do
   ai-memory install-mcp --client claude-code --server-url "$URL" --auth-token "$token" \
     --config-file "$data/claude/.claude.json" --apply >/dev/null
   chmod 600 "$data/claude/settings.json" "$data/claude/.claude.json"
-  # O opencode mescla a config global com esta (gerada aqui; sempre regravada).
-  python3 - "$CONF" "$pid" "$data/opencode/opencode.json" <<'PY'
-import json, sys, tomllib
-profile = tomllib.load(open(sys.argv[1], "rb"))["profiles"][sys.argv[2]]
+  # O opencode mescla a config global com esta (gerada aqui; sempre regravada). Os providers
+  # vêm do opencode_providers do perfil (F3.4): o 9router é montado com a chave/modelos do
+  # notebook e os do PC copiados como estão. O arquivo carrega chaves de API: fica 0600.
+  ROUTER_KEY="$router_key" ROUTER_PORT="$router_port" ROUTER_MODELS="$router_models" \
+    HOST_PROVIDERS="$host_providers" \
+    python3 - "$CONF" "$pid" "$data/opencode/opencode.json" <<'PY'
+import json, os, sys, tomllib
+pid = sys.argv[2]
+profile = tomllib.load(open(sys.argv[1], "rb"))["profiles"][pid]
 config = {"$schema": "https://opencode.ai/config.json"}
 for key, field in (("model", "opencode_model"), ("small_model", "opencode_small_model")):
     if profile.get(field):
         config[key] = profile[field]
-if len(config) > 1:
-    with open(sys.argv[3], "w") as f:
-        json.dump(config, f, indent=2)
-        f.write("\n")
-    print("    opencode: %s" % " · ".join(config[k] for k in ("model", "small_model") if k in config))
+# Um "9router" que exista no PC não substitui o do notebook.
+host = {k: v for k, v in json.loads(os.environ.get("HOST_PROVIDERS") or "{}").items() if k != "9router"}
+router_models = [m for m in os.environ.get("ROUTER_MODELS", "").splitlines() if m]
+providers = {}
+for name in profile.get("opencode_providers", ["9router"]):
+    if name == "9router":
+        if not router_models:
+            sys.exit(f"perfil {pid}: 9router em opencode_providers, mas o notebook não listou modelos")
+        providers[name] = {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "9router (notebook)",
+            "options": {"baseURL": "http://127.0.0.1:%s/v1" % os.environ["ROUTER_PORT"],
+                        "apiKey": os.environ["ROUTER_KEY"]},
+            "models": {m: {"name": m} for m in router_models},
+        }
+    elif name in host:
+        providers[name] = host[name]
+    else:
+        known = ", ".join(sorted(["9router", *host]))
+        sys.exit(f'perfil {pid}: opencode_providers tem "{name}" (disponíveis: {known})')
+if providers:
+    config["provider"] = providers
+with open(sys.argv[3], "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+models = " · ".join(config[k] for k in ("model", "small_model") if k in config)
+print("    opencode: %s%s" % (", ".join(providers) or "sem providers", f" (modelo {models})" if models else ""))
 PY
+  chmod 600 "$data/opencode/opencode.json"
   # Marcador do workspace na raiz do perfil (F5.3): pessoal e trabalho não se misturam.
   if [ -d "$root" ] && [ ! -f "$root/.ai-memory.toml" ]; then
     printf '# Criado pelo Assistente (vm/configurar-agentes.sh): todo repo abaixo daqui é deste workspace.\nworkspace = "%s"\n' "$workspace" > "$root/.ai-memory.toml"

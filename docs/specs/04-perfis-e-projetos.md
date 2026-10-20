@@ -21,6 +21,7 @@ Blocos: `[hub]`, `[vm]`, `[notebook]` + `[notebook.tunnel]`, `[memory]`, `[profi
 | `memory_workspace` | `"trabalho"` | `.ai-memory.toml` na raiz (spec 06) |
 | `opencode_model` (opcional) | `"9router/free"` | modelo padrão do opencode no perfil |
 | `opencode_small_model` (opcional) | `"meu-provedor/modelo-pequeno"` | `small_model` do opencode (títulos, resumos) |
+| `opencode_providers` (opcional) | `["9router", "meu-provedor"]` | providers que o perfil enxerga (F3.4); padrão `["9router"]` |
 | `opencode_allow_hosts` (opcional) | `["api.meu-provedor.com"]` | `--allow-host` do ai-jail, só nas sessões do opencode |
 | `claude_via_9router` | `false` | `true` = `ANTHROPIC_BASE_URL` aponta para o 9router |
 
@@ -31,10 +32,12 @@ são só nomes (sem `https://`, porta ou caminho).
 ### Provedores do opencode do PC
 
 `assistente agentes configurar` copia os `provider` do `~/.config/opencode/opencode.json` do
-host (com as chaves, pelo stdin) para o `~/.config/opencode/opencode.json` da VM, ao lado do
-9router. Para um perfil usar um deles: `opencode_model = "<provedor>/<modelo>"` e o host da
-API em `opencode_allow_hosts` (o proxy do jail bloqueia o resto). Trocou a chave ou o plano no
-PC? Rode `assistente agentes configurar` de novo.
+host (com as chaves, pelo stdin) para o `opencode.json` **de cada perfil** que os lista em
+`opencode_providers` (F3.4) — o config global da VM fica sem chaves de API (só MCP, plugins e
+node_modules). Para um perfil usar um provider: liste-o em `opencode_providers`, aponte
+`opencode_model = "<provedor>/<modelo>"` e libere o host da API em `opencode_allow_hosts` (o
+proxy do jail bloqueia o resto). O notebook só é necessário quando algum perfil lista
+`"9router"`. Trocou a chave ou o plano no PC? Rode `assistente agentes configurar` de novo.
 
 ## O que é separado por perfil
 
@@ -45,6 +48,7 @@ PC? Rode `assistente agentes configurar` de novo.
 | Chave SSH | `GIT_SSH_COMMAND` |
 | Login, histórico e settings do Claude | `CLAUDE_CONFIG_DIR=~/.assistente/perfis/<id>/claude` |
 | Config e login do opencode | `OPENCODE_CONFIG=~/.assistente/perfis/<id>/opencode/opencode.json` |
+| Providers e chaves do opencode | `opencode_providers` → gravados no `opencode.json` do perfil (F3.4) |
 | Memória | workspace do ai-memory |
 | Combo do 9router | `opencode_model` |
 | Visibilidade entre perfis | só a pasta do perfil ativo entra no ai-jail (spec 05) |

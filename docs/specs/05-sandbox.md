@@ -37,8 +37,9 @@ O `LaunchPlan` (`hub_core::session::jail_argv`) monta:
 | `-- claude` / `-- opencode --standalone` | o preset vale com ou sem `--`. O opencode 2 é cliente de um servidor em segundo plano compartilhado, que não sobrevive ao jail: `--standalone` sobe um por sessão |
 
 O preset do opencode monta `~/.config/opencode` e `~/.local/share/opencode`, que são
-**compartilhados entre perfis** (config global com o 9router e histórico). Isolar o histórico
-por perfil (`XDG_DATA_HOME`) fica para depois.
+**compartilhados entre perfis**. Desde F3.4 o config global não carrega chaves de API: os
+providers (com as chaves) ficam no `OPENCODE_CONFIG` de cada perfil, e o global traz só MCP,
+plugins e node_modules. Isolar o histórico por perfil (`XDG_DATA_HOME`) fica para depois.
 
 ## Docker dentro da sessão
 

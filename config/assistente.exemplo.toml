@@ -51,8 +51,11 @@ git_email = "voce@exemplo.com"
 memory_workspace = "pessoal"
 opencode_model = "9router/free"
 # Provedores do opencode do PC (um plano pago, por exemplo) entram na VM com
-# `assistente agentes configurar`. Para usar um deles, troque o opencode_model acima por
-# "<provedor>/<modelo>" e libere o host da API, que o jail bloqueia por padrão:
+# `assistente agentes configurar`. Para um perfil enxergar um: liste-o em
+# opencode_providers (a chave vai para o opencode.json do perfil, não para o config global
+# da VM), troque o opencode_model acima por "<provedor>/<modelo>" e libere o host da API,
+# que o jail bloqueia por padrão:
+# opencode_providers = ["9router", "meu-provedor"]     # padrão: ["9router"]
 # opencode_small_model = "meu-provedor/modelo-pequeno"   # títulos e resumos
 # opencode_allow_hosts = ["api.meu-provedor.com"]
 # false = Claude Code usa a assinatura direto na Anthropic; true = passa pelo 9router.

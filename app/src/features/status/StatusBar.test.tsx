@@ -23,7 +23,12 @@ describe("StatusBar", () => {
   it("mostra VM, hubd e os serviços do notebook", () => {
     useAppStore.setState({
       vm: { state: "running", detail: null },
-      health: { ok: true, version: "0.1.0", uptime_seconds: 3 },
+      health: {
+        ok: true,
+        version: "0.1.0",
+        uptime_seconds: 3,
+        commit: { hubd: "abc1234", ui: null },
+      },
       memory: {
         port: 49374,
         mirror_dir: "/home/rafa/.local/share/assistente/memoria-copia",

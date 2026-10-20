@@ -24,7 +24,8 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 
 | Método | Rota | Status | Corpo / resposta |
 |---|---|---|---|
-| GET | `/api/health` | pronto | `{ok, version, uptime_seconds}` |
+| GET | `/api/health` | pronto | `{ok, version, uptime_seconds, commit: {hubd, ui}}` |
+| GET | `/ui/*` | pronto (F8.3) | build da UI (`just build-ui`), aberto sem token; rota ausente se a pasta não existe |
 | GET | `/api/profiles` | pronto | `[{id, label, color, root}]` |
 | GET | `/api/projects?profile=<id>` | pronto | `[{name, path, has_project_config}]` |
 | GET | `/api/notebook` | parcial (F4.2) | `{ssh_host, tunnel_managed, services: [{name, port, up}]}` |

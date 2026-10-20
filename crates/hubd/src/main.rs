@@ -30,6 +30,9 @@ struct Args {
     /// Não abre o túnel SSH até o notebook (desenvolvimento fora da VM)
     #[arg(long)]
     no_tunnel: bool,
+    /// Pasta com o build da UI servido em /ui/ (F8.3); padrão: a versão em uso na VM
+    #[arg(long, default_value = "~/.assistente/versoes/atual/ui")]
+    ui_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -51,7 +54,15 @@ async fn main() -> anyhow::Result<()> {
     let token = read_token(&config.hub.token_file, addr)?;
 
     let tunnel = (!args.no_tunnel).then(|| tunnel::spawn(config.notebook.clone()));
-    let state = api::AppState::new(config, home, token, tunnel, sessions::Tmux::default());
+    let ui_dir = expand_home(&args.ui_dir, &home);
+    if !ui_dir.is_dir() {
+        warn!(
+            "{} não existe; /ui/ responde 404 (just build-ui gera o conteúdo)",
+            ui_dir.display()
+        );
+    }
+    let state = api::AppState::new(config, home, token, tunnel, sessions::Tmux::default())
+        .with_ui_dir(ui_dir.is_dir().then_some(ui_dir));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("não consegui escutar em {addr}"))?;

@@ -32,7 +32,12 @@ describe("estado persistido (F8.2)", () => {
   it("não guarda conexão nem dados vivos (voltam do hubd)", () => {
     useAppStore.setState({
       activeProfile: "pessoal",
-      health: { ok: true, version: "0.1.0", uptime_seconds: 1 },
+      health: {
+        ok: true,
+        version: "0.1.0",
+        uptime_seconds: 1,
+        commit: { hubd: "abc1234", ui: null },
+      },
       toast: "algum aviso",
     });
     const state = saved().state ?? {};

@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 
 use crate::sessions::{SessionInfo, Tmux, next_seq};
 use crate::terminal;
@@ -33,6 +34,8 @@ struct Inner {
     tmux: Tmux,
     /// Só nos testes: troca o comando do agente (ai-jail + claude) por outro.
     argv_override: Option<Vec<String>>,
+    /// Pasta com o build da UI servido em `/ui/*` (F8.3).
+    ui_dir: Option<PathBuf>,
 }
 
 impl AppState {
@@ -43,6 +46,8 @@ impl AppState {
         tunnel: Option<TunnelHandle>,
         tmux: Tmux,
     ) -> Self {
+        // Padrão da VM (F8.5 instala cada versão aqui); `with_ui_dir` sobrescreve.
+        let ui_dir = home.join(".assistente/versoes/atual/ui");
         Self(Arc::new(Inner {
             config,
             home,
@@ -51,7 +56,17 @@ impl AppState {
             tunnel,
             tmux,
             argv_override: None,
+            ui_dir: ui_dir.is_dir().then_some(ui_dir),
         }))
+    }
+
+    /// Serve a UI de `dir` (`None` desliga o `/ui/`). Antes de compartilhar o estado.
+    pub fn with_ui_dir(self, dir: Option<PathBuf>) -> Self {
+        let mut inner = Arc::try_unwrap(self.0)
+            .ok()
+            .expect("estado ainda não compartilhado");
+        inner.ui_dir = dir;
+        Self(Arc::new(inner))
     }
 
     #[cfg(test)]
@@ -65,6 +80,7 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
+    let ui_dir = state.0.ui_dir.clone();
     let protected = Router::new()
         .route("/api/profiles", get(profiles))
         .route("/api/projects", get(projects))
@@ -81,11 +97,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sleep/collect", post(|| not_yet("F6.5")))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
-    Router::new()
-        .route("/api/health", get(health))
-        .merge(protected)
-        .layer(cors())
-        .with_state(state)
+    let mut public = Router::new().route("/api/health", get(health));
+    // O bundle da UI não tem segredo: `/ui/*` é aberto (spec 09, F8.3).
+    if let Some(dir) = ui_dir {
+        public = public.nest_service("/ui", ServeDir::new(dir));
+    }
+
+    public.merge(protected).layer(cors()).with_state(state)
 }
 
 /// O app Tauri chama o hubd de outra origem (tauri://localhost) e, em dev, do Vite.
@@ -147,10 +165,20 @@ async fn not_yet(feature: &'static str) -> Response {
 }
 
 #[derive(Serialize)]
+struct Commits {
+    /// Do binário do hubd (build.rs grava o HEAD do build); `"desconhecido"` fora do git.
+    hubd: &'static str,
+    /// Da UI servida: `commit.txt` ao lado do `index.html` (`just build-ui`). `null` sem UI.
+    ui: Option<String>,
+}
+
+#[derive(Serialize)]
 struct Health {
     ok: bool,
     version: &'static str,
     uptime_seconds: u64,
+    /// F8.7 compara com o commit que o app já tem para saber se precisa recarregar.
+    commit: Commits,
 }
 
 async fn health(State(state): State<AppState>) -> Json<Health> {
@@ -158,7 +186,18 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
         ok: true,
         version: env!("CARGO_PKG_VERSION"),
         uptime_seconds: state.0.started.elapsed().as_secs(),
+        commit: Commits {
+            hubd: env!("HUBD_COMMIT"),
+            ui: ui_commit(state.0.ui_dir.as_deref()),
+        },
     })
+}
+
+/// Conteúdo de `<ui_dir>/commit.txt`. `None` sem UI servida ou sem o arquivo.
+fn ui_commit(ui_dir: Option<&std::path::Path>) -> Option<String> {
+    let text = std::fs::read_to_string(ui_dir?.join("commit.txt")).ok()?;
+    let commit = text.trim();
+    (!commit.is_empty()).then(|| commit.to_owned())
 }
 
 #[derive(Serialize)]
@@ -609,6 +648,83 @@ mod tests {
         let dead = closed_port().await;
         let (_, body) = call(memory_app(dead), "/api/memory", None).await;
         assert_eq!(body["up"], false);
+    }
+
+    // ---- hubd serve a UI (F8.3) ----
+
+    /// Como o `call`, mas devolve o corpo em texto (HTML/JS não são JSON).
+    async fn call_text(app: Router, uri: &str) -> (StatusCode, String) {
+        let response = app
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    fn ui_app(dir: Option<PathBuf>) -> Router {
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(EXAMPLE, &home).unwrap();
+        router(
+            AppState::new(
+                config,
+                home,
+                Some("s3gredo".to_owned()),
+                None,
+                Tmux::default(),
+            )
+            .with_ui_dir(dir),
+        )
+    }
+
+    #[tokio::test]
+    async fn serves_the_built_ui_without_token() {
+        let dir = std::env::temp_dir().join(format!("hubd-ui-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        // Como o build do vite com base "./": o index.html referencia o asset por caminho
+        // relativo, que sob /ui/ resolve para o próprio /ui/.
+        std::fs::write(
+            dir.join("index.html"),
+            r#"<!doctype html><script src="./assets/app.js"></script>"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("assets/app.js"), "console.log('ui do hubd');").unwrap();
+        std::fs::write(dir.join("commit.txt"), "abc1234\n").unwrap();
+
+        // Aberto, mesmo com token configurado: o bundle não tem segredo.
+        let (status, body) = call_text(ui_app(Some(dir.clone())), "/ui/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("./assets/app.js"), "{body}");
+
+        // O asset que o index.html aponta também é servido.
+        let (status, body) = call_text(ui_app(Some(dir.clone())), "/ui/assets/app.js").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("ui do hubd"), "{body}");
+
+        // Escapar da pasta da UI não revela o resto do disco.
+        let (status, _) = call_text(ui_app(Some(dir.clone())), "/ui/../../Cargo.toml").await;
+        assert!(matches!(
+            status,
+            StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+        ));
+
+        // /api/health diz que commit de UI está servido (e o do próprio hubd).
+        let (status, body) = call(ui_app(Some(dir.clone())), "/api/health", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["commit"]["ui"], "abc1234");
+        assert!(!body["commit"]["hubd"].as_str().unwrap().is_empty());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn without_ui_dir_the_route_is_gone_and_commit_is_null() {
+        let (status, _) = call_text(ui_app(None), "/ui/").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (_, body) = call(ui_app(None), "/api/health", None).await;
+        assert_eq!(body["commit"]["ui"], serde_json::Value::Null);
     }
 
     // ---- Sessões e terminal com tmux real (socket isolado) ----

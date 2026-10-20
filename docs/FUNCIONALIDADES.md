@@ -110,7 +110,7 @@ Spec 09. Ordem sugerida: F8.1 e F8.2 valem sozinhas; F8.4 começa por uma prova 
   Pronto quando: `systemctl restart hubd` com abas abertas faz os terminais voltarem sozinhos. Como testar: vitest do backoff + manual.
 - [x] **F8.2 Estado da UI sobrevive a recarregar.** Perfil, projeto, aba ativa, abas fechadas e último agente no `sessionStorage` (zustand `persist`, chave `assistente-ui`); `usePolling` descarta perfil restaurado que saiu da config. Testes: `store.test.ts`.
   Pronto quando: recarregar a página volta para o mesmo lugar. Como testar: vitest do store.
-- [ ] **F8.3 hubd serve a UI.** `just build-ui`; `GET /ui/*` de `~/.assistente/versoes/atual/ui`; `commit` (UI e hubd) em `/api/health`.
+- [x] **F8.3 hubd serve a UI.** `just build-ui` (app/dist + `commit.txt`); `GET /ui/*` de `~/.assistente/versoes/atual/ui` (`--ui-dir` sobrescreve), aberto sem token; `commit` em `/api/health` (hubd via `build.rs`, UI via `commit.txt`). Testes: `serves_the_built_ui_without_token` + `without_ui_dir_the_route_is_gone_and_commit_is_null`.
   Pronto quando: o teste de integração baixa `/ui/` e o `index.html` aponta para os assets servidos. Como testar: `./dev cargo test -p hubd`.
 - [ ] **F8.4 Casca carrega a UI do hubd** *(humano)*. Capability `remote.urls`, comando `host_api_version`, UI embutida como reserva (hubd fora, UI ausente ou sem "pronta" em 10 s).
   Pronto quando: o app abre com a UI do hubd; com o hubd parado, abre a reserva com o erro. Como testar: app real com a VM.

@@ -1,6 +1,12 @@
 // Formatos da API do hubd (crates/hubd/src/api.rs). Mantenha os dois lados iguais.
 
-export type Health = { ok: boolean; version: string; uptime_seconds: number };
+export type Health = {
+  ok: boolean;
+  version: string;
+  uptime_seconds: number;
+  /** Commit do binário do hubd e da UI servida (`null` quando o hubd não serve UI). */
+  commit: { hubd: string; ui: string | null };
+};
 
 export type ProfileView = { id: string; label: string; color: string; root: string };
 

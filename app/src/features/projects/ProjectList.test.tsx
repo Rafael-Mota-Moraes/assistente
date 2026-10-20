@@ -40,7 +40,12 @@ function fakeHub(byProfile: Record<string, Project[]>) {
 function connect(hub: HubClient, extra: Partial<ReturnType<typeof useAppStore.getState>> = {}) {
   useAppStore.setState({
     hub,
-    health: { ok: true, version: "0.1.0", uptime_seconds: 1 },
+    health: {
+      ok: true,
+      version: "0.1.0",
+      uptime_seconds: 1,
+      commit: { hubd: "abc1234", ui: null },
+    },
     profiles,
     activeProfile: "pessoal",
     ...extra,

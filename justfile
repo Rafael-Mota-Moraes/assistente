@@ -51,6 +51,11 @@ build: deps
 build-hubd:
     cargo build --release -p hubd
 
+# Build da UI que o hubd serve em /ui/ (F8.3): app/dist com o commit do HEAD em commit.txt
+build-ui: deps
+    pnpm --dir app build
+    git rev-parse --short HEAD > app/dist/commit.txt
+
 # Crates do Cargo.lock publicados há pelo menos 14 dias (cadeia de suprimentos)
 idade-crates:
     node devenv/check-crate-age.mjs

@@ -150,6 +150,20 @@ sozinha resolve a maior parte; F9.2–F9.4 antes de F9.5–F9.7 (as duas mexem n
 - [ ] **F9.8 Validação na VM real** *(humano)*. Do jail: 7879 acessível, 7878 não; `projetos.toml`, `hub.token` e socket do tmux invisíveis; `--network`; agentes usam o `fora-do-jail` sozinhos.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
 
+**Fora da VM (no PC).** O `fora-do-jail` roda na VM, fora do sandbox, mas sem as credenciais do
+PC (chave SSH do GitHub, logins). Para o que só funciona no PC (ex.: `git push`), o agente pede
+e o **app** executa no host depois da sua aprovação. É a fronteira mais forte do sistema (R3):
+nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" antes do código.
+
+- [ ] **F9.9 Pedido no PC.** `fora-do-jail --pc '<comando>'` manda `target: "host"` na API do agente (F9.5); o hubd guarda o alvo no pedido e o mostra em `/api/exec`. O hubd não executa pedidos `host`: eles esperam o app, e expiram se ninguém aprovar. Caminho de trabalho = pasta do projeto (o mesmo caminho no PC, via virtiofs). Rotas novas em `not_yet("F9.9")` até prontas.
+  Pronto quando: um pedido `--pc` aparece em `/api/exec` com `target: "host"` e o hubd nunca o roda na VM. Como testar: `exec::tests` + `client_script_round_trip` com `--pc`.
+- [ ] **F9.10 App executa no PC.** Comando Tauri `host_exec`: só para pedidos `host` aprovados no `ExecApprovals`, `bash -lc` na pasta do projeto (precisa estar dentro de uma raiz de perfil, como no `open_in_cursor`), com timeout e saída truncada; o resultado volta ao hubd (`POST /api/exec/{id}/result`, com o token do hub) e de lá ao agente. App fechado = o pedido espera ou expira.
+  Pronto quando: aprovar um `git push` pedido com `--pc` empurra do PC e o agente recebe saída e código. Como testar: vitest com hub fake + teste de rota do resultado.
+- [ ] **F9.11 Cuidados do modo PC.** Card em vermelho com "vai rodar no seu PC", comando e pasta por inteiro; sem "aprovar e sempre permitir" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).
+  Pronto quando: nenhum caminho aprova pedido `host` sem clique (fora da lista exata) e todo pedido executado fica no registro. Como testar: vitest do card e da lista; revisão da spec 05.
+- [ ] **F9.12 Validação no PC real** *(humano)*. Do jail, `fora-do-jail --pc 'git push'` empurra com a chave do PC após aprovar; negar devolve 126; com o app fechado o pedido expira.
+  Pronto quando: os itens acima conferem. Como testar: sessão real.
+
 ## F10 — Editor com diff
 
 Ver e ajustar o que o agente mudou sem sair do app (o Cursor, F2.6, segue para trabalho

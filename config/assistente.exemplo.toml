@@ -58,6 +58,7 @@ opencode_model = "9router/free"
 # opencode_providers = ["9router", "meu-provedor"]     # padrão: ["9router"]
 # opencode_small_model = "meu-provedor/modelo-pequeno"   # títulos e resumos
 # opencode_allow_hosts = ["api.meu-provedor.com"]
+# Modelos do próprio OpenCode (Go/Zen)? Inclua também opencode.ai e models.opencode.ai.
 # As policies do opencode.json do PC (bloqueio de providers no tab de modelos) também são
 # espelhadas nos perfis: se o provedor novo estiver bloqueado no PC, libere-o lá primeiro.
 # false = Claude Code usa a assinatura direto na Anthropic; true = passa pelo 9router.

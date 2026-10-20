@@ -22,7 +22,7 @@ Blocos: `[hub]`, `[vm]`, `[notebook]` + `[notebook.tunnel]`, `[memory]`, `[profi
 | `opencode_model` (opcional) | `"9router/free"` | modelo padrão do opencode no perfil |
 | `opencode_small_model` (opcional) | `"meu-provedor/modelo-pequeno"` | `small_model` do opencode (títulos, resumos) |
 | `opencode_providers` (opcional) | `["9router", "meu-provedor"]` | providers que o perfil enxerga (F3.4); padrão `["9router"]` |
-| `opencode_allow_hosts` (opcional) | `["api.meu-provedor.com"]` | `--allow-host` do ai-jail, só nas sessões do opencode |
+| `opencode_allow_hosts` (opcional) | `["api.meu-provedor.com"]` | `--allow-host` do ai-jail, só nas sessões do opencode; modelos do próprio OpenCode precisam de `opencode.ai` e `models.opencode.ai` |
 | `claude_via_9router` | `false` | `true` = `ANTHROPIC_BASE_URL` aponta para o 9router |
 
 Regras validadas: pelo menos um perfil; id só com `[a-z0-9-]` (vira nome do tmux e pasta);

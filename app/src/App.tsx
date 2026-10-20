@@ -2,7 +2,8 @@ import { ProfileSwitcher } from "./features/profiles/ProfileSwitcher";
 import { ProjectList } from "./features/projects/ProjectList";
 import { SessionArea } from "./features/sessions/SessionArea";
 import { useShortcuts } from "./features/sessions/shortcuts";
-import { SleepButton } from "./features/sleep/SleepButton";
+import { GoodMorning } from "./features/sleep/GoodMorning";
+import { MorningButton, SleepButton } from "./features/sleep/SleepButton";
 import { StatusBar } from "./features/status/StatusBar";
 import { usePolling } from "./features/status/usePolling";
 import { Toast } from "./ui/Toast";
@@ -22,7 +23,10 @@ export function App() {
           <nav className="min-h-0 flex-1 overflow-y-auto">
             <ProjectList />
           </nav>
-          <SleepButton />
+          <div className="flex flex-col gap-2">
+            <SleepButton />
+            <MorningButton />
+          </div>
         </aside>
         <main className="flex min-w-0 flex-1 flex-col">
           <SessionArea />
@@ -30,6 +34,7 @@ export function App() {
       </div>
       <StatusBar />
       <Toast />
+      <GoodMorning />
     </div>
   );
 }

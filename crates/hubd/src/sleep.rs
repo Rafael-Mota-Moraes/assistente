@@ -25,7 +25,7 @@ pub enum Remote {
 
 impl Remote {
     /// Roda um script bash no remoto e devolve o stdout; falha com o stderr na mensagem.
-    async fn shell_out(&self, script: &str) -> Result<String> {
+    pub(crate) async fn shell_out(&self, script: &str) -> Result<String> {
         let output = match self {
             // `bash -s` lê o script do stdin: sem camada extra de quoting no ssh.
             Remote::Ssh { host } => {
@@ -89,7 +89,7 @@ pub struct SyncReport {
 
 /// `~/x` vira `$HOME/x` para o script bash remoto (aspas duplas expandem; `~` entre aspas
 /// não).
-fn shell_dir(remote_dir: &str) -> String {
+pub(crate) fn shell_dir(remote_dir: &str) -> String {
     match remote_dir.strip_prefix("~/") {
         Some(rest) => format!("$HOME/{rest}"),
         None if remote_dir == "~" => "$HOME".to_owned(),
@@ -98,7 +98,7 @@ fn shell_dir(remote_dir: &str) -> String {
 }
 
 /// Branch, data e caminho entram num script shell e num ref do git: nada de metacaracteres.
-fn validate(part: &str, what: &str) -> Result<()> {
+pub(crate) fn validate(part: &str, what: &str) -> Result<()> {
     let bad = part.is_empty()
         || part.contains("..")
         || part.chars().any(|c| {

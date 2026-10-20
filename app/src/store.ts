@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { HubClient } from "./bridge/hub";
 import type {
   AgentKind,
+  CollectReport,
   Health,
   MemoryStatus,
   NotebookStatus,
@@ -11,6 +12,18 @@ import type {
   SessionInfo,
   VmStatus,
 } from "./bridge/types";
+
+/** Estado do modal "Bom dia" (F6.6); `null` = fechado. */
+export type MorningState = {
+  profile: string;
+  project: string;
+  /** Noite do `dorme` (`YYYY-MM-DD`). */
+  date: string;
+  report: CollectReport | null;
+  error: string | null;
+  merged: boolean;
+  busy: boolean;
+};
 
 type State = {
   hub: HubClient | null;
@@ -35,6 +48,8 @@ type State = {
   actionError: string | null;
   /** Mensagem temporária no rodapé (ex.: "não consegui abrir o Cursor"); some sozinha. */
   toast: string | null;
+  /** Modal "Bom dia" (F6.6): revisar e mesclar o que o agente fez no notebook. */
+  morning: MorningState | null;
 };
 
 export const initialState: State = {
@@ -54,6 +69,7 @@ export const initialState: State = {
   lastAgent: null,
   actionError: null,
   toast: null,
+  morning: null,
 };
 
 /** Sessões visíveis (abas) do projeto ativo: as do perfil/projeto, menos as abas fechadas. */

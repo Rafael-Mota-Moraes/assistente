@@ -90,7 +90,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: o loop encerra depois da tarefa em curso. Como testar: teste do F6.1.
 - [x] **F6.5 Recolher de manhã.** `POST /api/sleep/collect {profile, project, date}`: fetch de `dorme/<data>` e `agente/*` para `refs/remotes/notebook/*`, devolve commits first-parent, RELATORIO.md (lido na árvore do notebook, não é commitado) e `fast_forward` (`collect_project` em `crates/hubd/src/sleep.rs`). `POST /api/sleep/merge`: só fast-forward; 409 sem mudar nada se a base andou. A UI do resumo é a F6.6; cliente em `bridge/hub.ts`. Testes: round-trip com repos locais no devenv (`collect_fetches_relatorio_and_merges_fast_forward`, `sleep_collect_and_merge_round_trip`).
   Pronto quando: a UI mostra o resumo e faz o merge com um clique (só fast-forward; senão, avisa). Como testar: repos locais no devenv.
-- [ ] **F6.6 Tela "Bom dia".** Modal com o que foi feito por item, falhas, log e o botão de merge.
+- [x] **F6.6 Tela "Bom dia".** Modal `GoodMorning.tsx` (botão "Bom dia" na lateral): noite editável (padrão ontem), commits por item, RELATORIO.md, merge fast-forward com um clique (409 vira aviso) e re-colher. Estado em `store.morning`, ações em `features/sleep/morning.ts`. O log ao vivo entra com a F6.3 (GET /api/sleep). Testes: `GoodMorning.test.tsx` (7 casos com dados fake).
   Pronto quando: dá para revisar e mesclar sem abrir o terminal. Como testar: vitest com dados fake.
 
 ## F7 — Reinstalação

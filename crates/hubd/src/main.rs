@@ -3,6 +3,7 @@
 
 mod api;
 mod sessions;
+mod sleep;
 mod terminal;
 mod tunnel;
 

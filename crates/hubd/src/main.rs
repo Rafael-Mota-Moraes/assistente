@@ -2,6 +2,7 @@
 //! Spec: docs/specs/02-hubd-e-sessoes.md
 
 mod api;
+mod exec;
 mod sessions;
 mod sleep;
 mod terminal;
@@ -62,8 +63,23 @@ async fn main() -> anyhow::Result<()> {
             ui_dir.display()
         );
     }
+    // API dos agentes (F9.5): só loopback (validado na config). Sem ela o hubd funciona, mas
+    // as sessões nascem sem poder pedir nada fora do jail.
+    let agent_addr = config.hub.agent_listen.clone();
+    let agent_listener = match tokio::net::TcpListener::bind(&agent_addr).await {
+        Ok(listener) => Some(listener),
+        Err(e) => {
+            warn!("API dos agentes desligada: não consegui escutar em {agent_addr}: {e}");
+            None
+        }
+    };
+    let exec_port = agent_listener
+        .as_ref()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port());
     let state = api::AppState::new(config, home, token, tunnel, sessions::Tmux::default())
-        .with_ui_dir(ui_dir.is_dir().then_some(ui_dir));
+        .with_ui_dir(ui_dir.is_dir().then_some(ui_dir))
+        .with_exec_port(exec_port);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("não consegui escutar em {addr}"))?;
@@ -71,9 +87,34 @@ async fn main() -> anyhow::Result<()> {
         "hubd ouvindo em http://{addr} (config: {})",
         config_path.display()
     );
+
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let stopped = |mut rx: tokio::sync::watch::Receiver<bool>| async move {
+        let _ = rx.wait_for(|stop| *stop).await;
+    };
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = stop_tx.send(true);
+    });
+    let agents = agent_listener.map(|listener| {
+        info!("API dos agentes em http://{agent_addr}");
+        let router = api::agent_router(state.clone());
+        let stop = stopped(stop_rx.clone());
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, router)
+                .with_graceful_shutdown(stop)
+                .await
+            {
+                warn!("API dos agentes parou: {e}");
+            }
+        })
+    });
     axum::serve(listener, api::router(state))
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(stopped(stop_rx))
         .await?;
+    if let Some(agents) = agents {
+        let _ = agents.await;
+    }
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 import type {
   CollectReport,
+  ExecView,
   Health,
   HubConnection,
   MemoryStatus,
@@ -106,6 +107,20 @@ export class HubClient {
   /** Merge fast-forward da branch recolhida; 409 se a base andou durante a noite. */
   async mergeSleep(request: SleepRequest): Promise<void> {
     await this.request("POST", "/api/sleep/merge", request);
+  }
+
+  /** Pedidos dos agentes para rodar fora do jail (F9.5). */
+  execRequests(): Promise<ExecView[]> {
+    return this.get("/api/exec");
+  }
+
+  /** Roda o pedido na VM; `always` grava o comando nos sempre permitidos do projeto. */
+  async approveExec(id: string, always = false): Promise<void> {
+    await this.request("POST", `/api/exec/${encodeURIComponent(id)}/approve`, { always });
+  }
+
+  async denyExec(id: string): Promise<void> {
+    await this.request("POST", `/api/exec/${encodeURIComponent(id)}/deny`);
   }
 
   /** URL do WebSocket do terminal; o token vai na query (WebSocket não manda header). */

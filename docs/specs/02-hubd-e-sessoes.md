@@ -40,6 +40,9 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 | POST | `/api/sleep/stop` | pronto (F6.4) | 204; cria `STOP` no notebook via ssh (502 sem notebook) |
 | POST | `/api/sleep/collect` | pronto (F6.5) | `{profile, project, date}` → `{base, sleep_branch, commits, relatorio, fast_forward}`; 502 sem notebook |
 | POST | `/api/sleep/merge` | pronto (F6.5) | 204 fast-forward; 409 se a base andou durante a noite |
+| GET | `/api/exec` | pronto (F9.7) | `[{id, session, profile, project, cwd, command, timeout_secs, created_at, state, auto_approved, result}]`: pendentes primeiro, depois os dos últimos 30 min |
+| POST | `/api/exec/{id}/approve` | pronto (F9.7) | `{always?}` → 204, roda na VM fora do jail; `always` grava em `allowed_commands` do projeto; 404/409 |
+| POST | `/api/exec/{id}/deny` | pronto (F9.7) | 204; 404/409 se não está pendente |
 | GET | `/api/memory` | F5.0 / F5.4 / F5.6 | saúde local (F5.0); sync do espelho (F5.4); detalhes operacionais (F5.6) |
 
 ## Lançamento de uma sessão
@@ -52,9 +55,37 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
   Terminal (`shell`, F9.1), `bash -l` direto, **sem** ai-jail (é você digitando);
 - **env**: `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`,
   `AI_MEMORY_SERVER_URL`, `ANTHROPIC_BASE_URL` (só com `claude_via_9router`),
-  `GIT_SSH_COMMAND` (só com `ssh_key`) e `ASSISTENTE_PROFILE`.
+  `GIT_SSH_COMMAND` (só com `ssh_key`) e `ASSISTENTE_PROFILE`; com a API dos agentes (F9.5),
+  `ASSISTENTE_EXEC_URL`, `ASSISTENTE_EXEC_TOKEN`, `ASSISTENTE_FORA_DO_JAIL` e, no Claude,
+  `BASH_MAX_TIMEOUT_MS`.
 
 `LaunchPlan::tmux_new_session_argv()` vira `tmux new-session -d -s … -c … -e K=V … -- <comando>`.
+
+## API dos agentes (F9.5)
+
+Segundo listener, `[hub] agent_listen` (padrão `127.0.0.1:7879`, só loopback). É a **única**
+porta do hubd que entra no ai-jail (`--forward-port`), com um roteador à parte (`agent_router`):
+nada de `/api/*`, nem saúde, UI ou aprovação. Sem o bind (porta ocupada) o hubd sobe igual e as
+sessões nascem sem a API.
+
+- **Token por sessão.** Ao criar uma sessão de agente (não a aba Terminal), o hubd sorteia 32
+  bytes (`/dev/urandom`), guarda na opção `@assistente_exec_token` do tmux e entrega ao jail
+  por `--env ASSISTENTE_EXEC_TOKEN` (com `ASSISTENTE_EXEC_URL` e `ASSISTENTE_FORA_DO_JAIL`).
+  Nunca vai para o `SessionInfo`. Sessão encerrada = token inválido.
+- **Pré-requisito:** o cliente em `~/.local/lib/assistente/fora-do-jail` (instalado pelo
+  `provisionar.sh`, entra no jail só leitura); sem ele, a sessão nasce sem a API.
+
+| Método | Rota | Corpo / resposta |
+|---|---|---|
+| POST | `/v1/exec` | `{command, cwd?, timeout_secs?}` → 202 `{id, state, auto_approved}`; 400 comando vazio/cwd fora do projeto; 401; 429 (3 pendentes por sessão, 20 no total) |
+| GET | `/v1/exec/{id}?wait=<s≤55>` | long-poll até estado final → `{…, state, result}`; pedido de outra sessão = 404 |
+
+Estados: `pending → running → done | failed`, `pending → denied | expired` (10 min sem resposta).
+A fila é só memória (`crates/hubd/src/exec.rs`): reiniciar o hubd perde os pedidos. O
+comando roda com `bash -lc` na pasta pedida (dentro do projeto), env do perfil, stdin vazio,
+num grupo de processos próprio (timeout padrão 10 min, teto 60, mata o grupo), guardando o fim
+da saída (64 KiB por stream). Casou exatamente com `allowed_commands` do projeto? Roda sem
+perguntar (`auto_approved`).
 
 ## Protocolo do terminal (F2.3)
 
@@ -77,6 +108,9 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 ## Testes
 
 - Unitários das rotas com `tower::ServiceExt::oneshot` (já existem).
+- Fora do jail (F9.5–F9.6): `agent_asks_user_approves_and_gets_the_output` e
+  `client_script_round_trip` sobem as duas APIs com tmux real e rodam o `vm/fora-do-jail` de
+  verdade (aprovado, negado, token morto, pedido perdido).
 - `crates/hubd/src/sessions.rs` e `api.rs`: tmux real num socket temporário (o devenv tem tmux),
   com `bash` no lugar do agente; o teste de ponta a ponta sobe o hubd numa porta livre, cria
   a sessão por HTTP, conecta no WebSocket, digita `echo marca-$((40+2))` e espera `marca-42`.

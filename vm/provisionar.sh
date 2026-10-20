@@ -181,6 +181,12 @@ for pid in cfg["profiles"]:
 PY
 chown -R "$USER_NAME:" "$HOME_DIR/.assistente"
 
+echo "==> fora-do-jail (cliente da API dos agentes, F9.6)"
+# Entra no ai-jail só leitura (`--map`); o hubd só dá a API às sessões se ele existir.
+install -d -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR/.local/lib/assistente"
+install -m755 -o "$USER_NAME" -g "$USER_NAME" /tmp/assistente/fora-do-jail \
+  "$HOME_DIR/.local/lib/assistente/fora-do-jail"
+
 echo "==> hubd"
 install -m755 /tmp/assistente/hubd /usr/local/bin/hubd
 sed "s/@USER@/$USER_NAME/g" /tmp/assistente/hubd.service > /etc/systemd/system/hubd.service

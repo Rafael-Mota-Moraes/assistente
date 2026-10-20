@@ -21,6 +21,24 @@ pub struct Config {
 pub struct HubConfig {
     pub listen: String,
     pub token_file: PathBuf,
+    /// API dos agentes (F9.5): o único endereço do hubd que entra no ai-jail
+    /// (`--forward-port`). Só loopback: a VM inteira não precisa enxergá-la.
+    #[serde(default = "default_agent_listen")]
+    pub agent_listen: String,
+}
+
+fn default_agent_listen() -> String {
+    "127.0.0.1:7879".into()
+}
+
+impl HubConfig {
+    /// Porta da API dos agentes (validada no parse).
+    pub fn agent_port(&self) -> u16 {
+        self.agent_listen
+            .parse::<std::net::SocketAddr>()
+            .map(|a| a.port())
+            .unwrap_or(7879)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -154,6 +172,15 @@ impl Config {
     }
 
     fn validate(&self, home: &Path) -> Result<(), ConfigError> {
+        match self.hub.agent_listen.parse::<std::net::SocketAddr>() {
+            Ok(addr) if addr.ip().is_loopback() => {}
+            _ => {
+                return Err(ConfigError::Invalid(format!(
+                    "hub.agent_listen \"{}\": use 127.0.0.1:<porta> (a API dos agentes é só local)",
+                    self.hub.agent_listen
+                )));
+            }
+        }
         if self.profiles.is_empty() {
             return Err(ConfigError::Invalid(
                 "defina ao menos um [profiles.<id>]".into(),
@@ -289,6 +316,20 @@ mod tests {
     fn profile_id_must_be_safe() {
         let text = EXAMPLE.replace("[profiles.trabalho]", "[profiles.\"Trab Alho\"]");
         assert!(Config::parse(&text, &home()).is_err());
+    }
+
+    #[test]
+    fn agent_listen_defaults_to_loopback_and_rejects_the_lan() {
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(EXAMPLE, &home).unwrap();
+        assert_eq!(config.hub.agent_port(), 7879);
+        let lan = EXAMPLE.replacen(
+            "token_file =",
+            "agent_listen = \"0.0.0.0:7879\"\ntoken_file =",
+            1,
+        );
+        let err = Config::parse(&lan, &home).unwrap_err();
+        assert!(err.to_string().contains("agent_listen"), "{err}");
     }
 
     #[test]

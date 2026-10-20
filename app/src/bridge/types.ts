@@ -73,6 +73,34 @@ export type ProjectSettings = {
   allowed_commands: string[];
 };
 
+/** Pedido de um agente para rodar um comando fora do jail (F9.5). */
+export type ExecState = "pending" | "running" | "done" | "denied" | "expired" | "failed";
+
+export type ExecResult = {
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  timed_out: boolean;
+  duration_ms: number;
+};
+
+/** GET /api/exec: pendentes primeiro, depois os recentes (30 min). */
+export type ExecView = {
+  id: string;
+  /** Sessão (aba) que pediu. */
+  session: string;
+  profile: string;
+  project: string;
+  cwd: string;
+  command: string;
+  timeout_secs: number;
+  created_at: number;
+  state: ExecState;
+  auto_approved: boolean;
+  result: ExecResult | null;
+};
+
 /** GET/PUT /api/projects/{profile}/{project}/settings. */
 export type ProjectSettingsView = {
   settings: ProjectSettings;

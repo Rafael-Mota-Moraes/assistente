@@ -57,6 +57,22 @@ pub struct LaunchPlan {
 pub struct LaunchOptions {
     /// Configurações do projeto em `~/.assistente/projetos.toml` (F9.2).
     pub settings: ProjectSettings,
+    /// Acesso à API dos agentes (F9.5); `None` = a sessão não pode pedir nada fora do jail.
+    pub exec: Option<ExecAccess>,
+}
+
+/// Como o agente pede para rodar um comando fora do jail (F9.5): porta do `agent_listen` e
+/// o token desta sessão (vai por env, nunca na linha de comando).
+#[derive(Debug, Clone)]
+pub struct ExecAccess {
+    pub port: u16,
+    pub token: String,
+}
+
+/// Onde mora o cliente `fora-do-jail` na VM (instalado por `vm/provisionar.sh`); entra no
+/// jail só leitura.
+pub fn exec_client_dir(home: &Path) -> PathBuf {
+    home.join(".local/lib/assistente")
 }
 
 /// O jail efetivo: configurações do projeto + `[jail]` do `.assistente.toml` (compatibilidade).
@@ -64,6 +80,7 @@ struct JailOptions<'a> {
     docker: bool,
     full_network: bool,
     allow_hosts: &'a [String],
+    exec_port: Option<u16>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -117,7 +134,30 @@ impl LaunchPlan {
             return Err(LaunchError::InvalidProjectName(spec.project.clone()));
         }
         let data_dir = profile_data_dir(home, &spec.profile);
-        let env = profile_env(config, profile, &data_dir);
+        let mut env = profile_env(config, profile, &data_dir);
+        let exec = options
+            .exec
+            .as_ref()
+            .filter(|_| spec.agent != AgentKind::Shell);
+        if let Some(exec) = exec {
+            env.push((
+                "ASSISTENTE_EXEC_URL".to_owned(),
+                format!("http://127.0.0.1:{}", exec.port),
+            ));
+            env.push(("ASSISTENTE_EXEC_TOKEN".to_owned(), exec.token.clone()));
+            env.push((
+                "ASSISTENTE_FORA_DO_JAIL".to_owned(),
+                exec_client_dir(home)
+                    .join("fora-do-jail")
+                    .display()
+                    .to_string(),
+            ));
+            if spec.agent == AgentKind::Claude {
+                // O pedido espera a sua aprovação: o Bash do Claude corta em 2 min por padrão
+                // e aceita até este teto quando o agente pede um timeout maior.
+                env.push(("BASH_MAX_TIMEOUT_MS".to_owned(), "1800000".to_owned()));
+            }
+        }
         let cwd = profile.root.join(&spec.project);
         let argv = if spec.agent == AgentKind::Shell {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
@@ -128,6 +168,7 @@ impl LaunchPlan {
                 docker: settings.docker || jail_config_at(&cwd).docker,
                 full_network: settings.full_network,
                 allow_hosts: &settings.allow_hosts,
+                exec_port: exec.map(|e| e.port),
             };
             jail_argv(config, home, profile, &data_dir, &env, spec.agent, &jail)
         };
@@ -212,6 +253,15 @@ fn jail_argv(
             argv.push("--allow-host".to_owned());
             argv.push(host.clone());
         }
+        // API dos agentes (F9.5): só esta porta do hubd entra; a 7878 (app) continua fora.
+        if let Some(port) = jail.exec_port {
+            argv.push("--forward-port".to_owned());
+            argv.push(port.to_string());
+        }
+    }
+    if jail.exec_port.is_some() {
+        argv.push("--map".to_owned());
+        argv.push(exec_client_dir(home).display().to_string());
     }
     // Hooks do ai-memory: binário (só leitura) e spool local (gravável, para quando o
     // notebook estiver fora).
@@ -526,7 +576,48 @@ mod tests {
     }
 
     fn with_settings(settings: ProjectSettings) -> LaunchOptions {
-        LaunchOptions { settings }
+        LaunchOptions {
+            settings,
+            exec: None,
+        }
+    }
+
+    #[test]
+    fn exec_access_forwards_only_the_agent_port_and_hides_the_token() {
+        let (config, home) = setup();
+        let options = LaunchOptions {
+            settings: ProjectSettings::default(),
+            exec: Some(ExecAccess {
+                port: 7879,
+                token: "f0f0segredo".into(),
+            }),
+        };
+        let build = |agent| {
+            LaunchPlan::build_with(&config, &home, &spec("pessoal", "x", agent), 1, &options)
+                .unwrap()
+        };
+        let claude = build(AgentKind::Claude);
+        let argv = claude.argv.join(" ");
+        assert!(argv.contains("--forward-port 7879"), "{argv}");
+        assert!(!argv.contains("7878"), "{argv}");
+        assert!(
+            argv.contains("--map /home/rafa/.local/lib/assistente"),
+            "{argv}"
+        );
+        assert!(!argv.contains("f0f0segredo"), "o token vazou: {argv}");
+        assert!(argv.contains("--env ASSISTENTE_EXEC_TOKEN "), "{argv}");
+        assert_eq!(env(&claude, "ASSISTENTE_EXEC_TOKEN"), Some("f0f0segredo"));
+        assert_eq!(
+            env(&claude, "ASSISTENTE_EXEC_URL"),
+            Some("http://127.0.0.1:7879")
+        );
+        assert_eq!(env(&claude, "BASH_MAX_TIMEOUT_MS"), Some("1800000"));
+        let opencode = build(AgentKind::Opencode);
+        assert_eq!(env(&opencode, "BASH_MAX_TIMEOUT_MS"), None);
+        assert!(opencode.argv.join(" ").contains("--forward-port 7879"));
+        // A aba Terminal é você digitando: sem token.
+        let shell = build(AgentKind::Shell);
+        assert_eq!(env(&shell, "ASSISTENTE_EXEC_TOKEN"), None);
     }
 
     #[test]

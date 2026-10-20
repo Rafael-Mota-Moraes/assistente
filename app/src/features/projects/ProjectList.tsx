@@ -4,7 +4,8 @@ import { openInCursor } from "../../bridge/host";
 import { useAppStore } from "../../store";
 
 export function ProjectList() {
-  const { hub, activeProfile, projects, activeProject, health, sessions } = useAppStore();
+  const { hub, activeProfile, projects, activeProject, health, sessions, execRequests } =
+    useAppStore();
 
   useEffect(() => {
     if (!hub || !activeProfile || !health) return;
@@ -47,6 +48,16 @@ export function ProjectList() {
                     .length
                 }
               />
+              <PendingCount
+                count={
+                  execRequests.filter(
+                    (r) =>
+                      r.state === "pending" &&
+                      r.profile === activeProfile &&
+                      r.project === project.name,
+                  ).length
+                }
+              />
               {project.has_project_config && (
                 <Moon
                   className="ml-auto size-3.5 text-violet-400"
@@ -85,6 +96,19 @@ export function ProjectList() {
         );
       })}
     </ul>
+  );
+}
+
+/** Pedidos fora do jail esperando você (F9.7). */
+function PendingCount({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <span
+      className="rounded-full bg-amber-500/25 px-1.5 text-[10px] font-semibold text-amber-200"
+      title={`${count} pedido(s) para rodar fora do jail`}
+    >
+      {count}
+    </span>
   );
 }
 

@@ -35,7 +35,7 @@ test: deps
 
 # Lint dos scripts bash
 shellcheck:
-    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
+    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh vm/fora-do-jail notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
 
 # Loop do modo dormir com agentes falsos, sem IA (F6.1)
 teste-dorme:

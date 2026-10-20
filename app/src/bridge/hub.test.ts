@@ -23,6 +23,39 @@ describe("HubClient", () => {
     await expect(hub.profiles()).rejects.toEqual(new HubError(401, "token ausente ou inválido"));
   });
 
+  it("pedidos fora do jail: lista, aprova (com 'sempre') e nega", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (url) =>
+      String(url).endsWith("/api/exec")
+        ? new Response(JSON.stringify([]), { status: 200 })
+        : new Response(null, { status: 204 }),
+    );
+    const hub = new HubClient({ url: "http://vm:7878", token: null }, fetchFn);
+    await expect(hub.execRequests()).resolves.toEqual([]);
+    await hub.approveExec("a b", true);
+    expect(fetchFn.mock.calls[1]?.[0]).toBe("http://vm:7878/api/exec/a%20b/approve");
+    expect(fetchFn.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ always: true }),
+    });
+    await hub.denyExec("x");
+    expect(fetchFn.mock.calls[2]?.[0]).toBe("http://vm:7878/api/exec/x/deny");
+    expect(fetchFn.mock.calls[2]?.[1]).toMatchObject({ method: "POST" });
+  });
+
+  it("configurações do projeto: GET e PUT no caminho escapado", async () => {
+    const view = {
+      settings: { docker: true, allow_hosts: [], full_network: false, allowed_commands: [] },
+      docker_from_project_file: false,
+    };
+    const fetchFn = fakeFetch(200, view);
+    const hub = new HubClient({ url: "", token: null }, fetchFn);
+    await hub.projectSettings("pessoal", "Meu.App");
+    expect(fetchFn.mock.calls[0]?.[0]).toBe("/api/projects/pessoal/Meu.App/settings");
+    await hub.saveProjectSettings("pessoal", "a b", view.settings);
+    expect(fetchFn.mock.calls[1]?.[0]).toBe("/api/projects/pessoal/a%20b/settings");
+    expect(fetchFn.mock.calls[1]?.[1]).toMatchObject({ method: "PUT" });
+  });
+
   it("escapa o id do perfil na query", async () => {
     const fetchFn = fakeFetch(200, []);
     await new HubClient({ url: "", token: null }, fetchFn).projects("a b");

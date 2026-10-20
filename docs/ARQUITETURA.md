@@ -56,6 +56,12 @@ local. O notebook guarda **réplica** do wiki para o modo dormir; sync bidirecio
 inicia `dorme` num tmux do notebook. De manhã, "Recolher" faz `git fetch` de `dorme/<data>` e
 `agente/*` para `refs/remotes/notebook/*` e mostra commits, RELATORIO.md e o merge.
 
+**Fora do jail (F9).** A aba Terminal abre `bash` na VM sem o ai-jail. A engrenagem do projeto
+grava em `~/.assistente/projetos.toml` (fora do repo e do jail) o que afrouxar no `LaunchPlan`.
+O agente pede um comando com `fora-do-jail`: POST na API dos agentes (`127.0.0.1:7879`, única
+porta do hubd no jail, token por sessão), o app mostra o pedido, você aprova e o hubd roda o
+comando na VM e devolve a saída ao agente (long-poll).
+
 **Auto-atualização (F8).** A aba Assistente é uma sessão de agente no próprio repo. Com
 "Aplicar", o hubd lança `vm/atualizar.sh` fora do jail: ele faz um worktree limpo do commit,
 roda `just check`, compila a UI e o hubd em `~/.assistente/versoes/<commit>` e troca o link

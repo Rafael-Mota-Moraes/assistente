@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# fora-do-jail — pede ao Assistente para rodar um comando FORA do ai-jail, na VM (F9.6).
+# Você aprova (ou nega) no app; a saída e o código de saída voltam para quem chamou.
+#
+#   fora-do-jail [--timeout SEG] [--sem-esperar] [--] '<comando>'
+#   fora-do-jail --resultado <id>
+#
+# Roda na pasta atual (precisa ser dentro do projeto), com o env do perfil. Códigos de saída:
+# o do comando; 126 negado; 124 ninguém respondeu a tempo ou o comando estourou o timeout;
+# 125 o pedido se perdeu (hubd reiniciou) ou falhou ao iniciar; 2 uso errado / fora de sessão.
+# Spec: docs/specs/05-sandbox.md ("Fora do jail")
+set -euo pipefail
+
+die() { echo "fora-do-jail: $*" >&2; exit "${CODE:-2}"; }
+uso() { sed -n '4,5p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+timeout=""
+wait=1
+id=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --timeout) [ $# -ge 2 ] || uso; timeout="$2"; shift 2 ;;
+    --sem-esperar) wait=0; shift ;;
+    --resultado) [ $# -ge 2 ] || uso; id="$2"; shift 2 ;;
+    -h|--help) uso ;;
+    --) shift; break ;;
+    -*) die "opção desconhecida: $1" ;;
+    *) break ;;
+  esac
+done
+command="$*"
+[ -n "$id" ] || [ -n "$command" ] || uso
+case "$timeout" in ''|*[!0-9]*) [ -z "$timeout" ] || die "--timeout espera segundos" ;; esac
+
+url="${ASSISTENTE_EXEC_URL:-}"
+token="${ASSISTENTE_EXEC_TOKEN:-}"
+if [ -z "$url" ] || [ -z "$token" ]; then
+  die "fora de uma sessão do Assistente (sem ASSISTENTE_EXEC_URL/ASSISTENTE_EXEC_TOKEN)"
+fi
+
+# Saída: corpo, uma linha em branco e o status HTTP na última linha. O proxy do jail não
+# conhece o hubd: tudo direto em 127.0.0.1.
+http() { # <max-time> <curl args…>
+  local max="$1"
+  shift
+  curl -sS --noproxy '*' -m "$max" -w '\n%{http_code}' \
+    -H "Authorization: Bearer $token" "$@"
+}
+
+field() { # <json> <campo>
+  python3 -c 'import json, sys; v = json.loads(sys.argv[1]).get(sys.argv[2]); print("" if v is None else v)' "$1" "$2"
+}
+
+if [ -z "$id" ]; then
+  body="$(python3 -c '
+import json, os, sys
+request = {"command": sys.argv[1], "cwd": os.getcwd()}
+if sys.argv[2]:
+    request["timeout_secs"] = int(sys.argv[2])
+print(json.dumps(request))' "$command" "$timeout")"
+  response="$(http 30 -H 'Content-Type: application/json' --data-binary "$body" "$url/v1/exec")" \
+    || CODE=125 die "o hubd não respondeu em $url"
+  status="${response##*$'\n'}"
+  json="${response%$'\n'*}"
+  case "$status" in
+    202) ;;
+    401) die "token recusado: a sessão foi encerrada?" ;;
+    429) CODE=125 die "pedidos demais esperando aprovação; espere uma resposta no app" ;;
+    *) die "pedido recusado (HTTP $status): $(field "$json" error 2>/dev/null || echo "$json")" ;;
+  esac
+  id="$(field "$json" id)"
+  if [ "$(field "$json" auto_approved)" = "True" ]; then
+    echo "fora-do-jail: pedido $id sempre permitido neste projeto; rodando…" >&2
+  else
+    echo "fora-do-jail: pedido $id aguardando aprovação no app do Assistente…" >&2
+  fi
+  if [ "$wait" -eq 0 ]; then
+    echo "$id"
+    exit 0
+  fi
+fi
+
+while :; do
+  response="$(http 60 "$url/v1/exec/$id?wait=50")" \
+    || CODE=125 die "pedido $id perdido (o hubd reiniciou?); peça de novo"
+  status="${response##*$'\n'}"
+  json="${response%$'\n'*}"
+  case "$status" in
+    200) ;;
+    404) CODE=125 die "pedido $id perdido (o hubd reiniciou?); peça de novo" ;;
+    401) die "token recusado: a sessão foi encerrada?" ;;
+    *) CODE=125 die "erro esperando o pedido $id (HTTP $status)" ;;
+  esac
+  case "$(field "$json" state)" in
+    pending|running) continue ;;
+  esac
+  # Estado final: repassa saída e código como se o comando tivesse rodado aqui.
+  rc=0
+  python3 -c '
+import json, sys
+view = json.loads(sys.argv[1])
+state, result = view["state"], view.get("result") or {}
+def note(text):
+    print(f"fora-do-jail: {text}", file=sys.stderr)
+if state == "denied":
+    note("negado pelo usuário no app. Não tente de outro jeito; pergunte o que fazer.")
+    sys.exit(126)
+if state == "expired":
+    note("ninguém respondeu a tempo no app; peça de novo se ainda precisar.")
+    sys.exit(124)
+sys.stdout.write(result.get("stdout") or "")
+sys.stdout.flush()
+sys.stderr.write(result.get("stderr") or "")
+if result.get("truncated"):
+    note("saída grande: só o fim foi guardado.")
+if state == "failed":
+    note("não consegui rodar o comando fora do jail.")
+    sys.exit(125)
+if result.get("timed_out"):
+    note("o comando estourou o timeout e foi encerrado.")
+    sys.exit(124)
+code = result.get("exit_code")
+sys.exit(code if code is not None else 125)' "$json" || rc=$?
+  exit "$rc"
+done

@@ -89,15 +89,28 @@ impl Tmux {
         Ok(self.list().await?.into_iter().find(|s| s.id == id))
     }
 
-    /// Cria a sessão desanexada e grava os metadados nela.
+    /// Cria a sessão desanexada e grava os metadados nela. `exec_token` (F9.5) fica numa
+    /// opção do tmux: some junto com a sessão e nunca vai para o `SessionInfo`.
     pub async fn create(
         &self,
         plan: &LaunchPlan,
         spec: &SessionSpec,
+        exec_token: Option<&str>,
     ) -> Result<SessionInfo, String> {
         self.run(&plan.tmux_new_session_argv()[1..]).await?;
         // `set-option -t` espera um painel: `=nome:` é "exatamente esta sessão" (`=nome` falha).
         let target = format!("={}:", plan.tmux_session);
+        if let Some(token) = exec_token {
+            self.run(&args(&[
+                "set-option",
+                "-t",
+                &target,
+                "@assistente_exec_token",
+                token,
+            ]))
+            .await
+            .map_err(|e| format!("a sessão terminou logo ao iniciar ({e})"))?;
+        }
         for (key, value) in [
             ("@assistente_profile", spec.profile.as_str()),
             ("@assistente_project", spec.project.as_str()),
@@ -119,11 +132,46 @@ impl Tmux {
             .ok_or_else(|| "a sessão terminou logo ao iniciar".to_owned())
     }
 
+    /// Sessão dona do token da API dos agentes (F9.5). Sessão encerrada = token inválido.
+    pub async fn session_for_exec_token(&self, token: &str) -> Result<Option<SessionInfo>, String> {
+        if token.is_empty() {
+            return Ok(None);
+        }
+        let format = format!("#{{session_name}}{SEP}#{{@assistente_exec_token}}");
+        let out = match self.run(&args(&["list-sessions", "-F", &format])).await {
+            Ok(out) => out,
+            Err(e) if e.contains("no server running") || e.contains("No such file") => {
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        };
+        let owner = out.lines().find_map(|line| {
+            let (id, stored) = line.split_once(SEP)?;
+            constant_time_eq(stored.as_bytes(), token.as_bytes()).then(|| id.to_owned())
+        });
+        match owner {
+            Some(id) => self.find(&id).await,
+            None => Ok(None),
+        }
+    }
+
     pub async fn kill(&self, id: &str) -> Result<(), String> {
         self.run(&args(&["kill-session", "-t", &format!("={id}")]))
             .await
             .map(|_| ())
     }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Token novo da API dos agentes: 32 bytes do kernel em hex.
+pub fn new_exec_token() -> std::io::Result<String> {
+    use std::io::Read;
+    let mut bytes = [0u8; 32];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn args(items: &[&str]) -> Vec<String> {
@@ -225,7 +273,11 @@ pub(crate) mod tests {
         let spec = spec("Meu.App", AgentKind::Opencode);
         let info = t
             .tmux
-            .create(&t.plan("pessoal--meu-app--opencode-1", "sleep 30"), &spec)
+            .create(
+                &t.plan("pessoal--meu-app--opencode-1", "sleep 30"),
+                &spec,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -258,6 +310,7 @@ pub(crate) mod tests {
             .create(
                 &t.plan("pessoal--x--claude-1", &script),
                 &spec("x", AgentKind::Claude),
+                None,
             )
             .await
             .unwrap();
@@ -273,10 +326,50 @@ pub(crate) mod tests {
             .create(
                 &t.plan("pessoal--x--claude-1", "exit 0"),
                 &spec("x", AgentKind::Claude),
+                None,
             )
             .await
             .unwrap_err();
         assert!(err.contains("terminou logo ao iniciar"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn exec_token_finds_its_session_and_dies_with_it() {
+        let t = TestTmux::new("token");
+        let token = new_exec_token().unwrap();
+        assert_eq!(token.len(), 64);
+        assert_ne!(token, new_exec_token().unwrap());
+        let info = t
+            .tmux
+            .create(
+                &t.plan("pessoal--x--claude-1", "sleep 30"),
+                &spec("x", AgentKind::Claude),
+                Some(&token),
+            )
+            .await
+            .unwrap();
+        t.tmux
+            .create(
+                &t.plan("pessoal--x--claude-2", "sleep 30"),
+                &spec("x", AgentKind::Claude),
+                None,
+            )
+            .await
+            .unwrap();
+        let found = t.tmux.session_for_exec_token(&token).await.unwrap();
+        assert_eq!(
+            found.as_ref().map(|s| s.id.as_str()),
+            Some("pessoal--x--claude-1")
+        );
+        assert_eq!(t.tmux.session_for_exec_token("errado").await.unwrap(), None);
+        // Sessão sem token não casa com token vazio.
+        assert_eq!(t.tmux.session_for_exec_token("").await.unwrap(), None);
+        // O segredo não vai para a lista que a UI recebe.
+        let listed = serde_json::to_string(&t.tmux.list().await.unwrap()).unwrap();
+        assert!(!listed.contains(&token), "{listed}");
+
+        t.tmux.kill(&info.id).await.unwrap();
+        assert_eq!(t.tmux.session_for_exec_token(&token).await.unwrap(), None);
     }
 
     #[test]

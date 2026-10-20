@@ -1,3 +1,4 @@
+import { ExecApprovals } from "./features/exec/ExecApprovals";
 import { ProfileSwitcher } from "./features/profiles/ProfileSwitcher";
 import { ProjectList } from "./features/projects/ProjectList";
 import { ProjectSettingsDialog } from "./features/projects/ProjectSettingsDialog";
@@ -37,6 +38,7 @@ export function App() {
       <Toast />
       <GoodMorning />
       <ProjectSettingsDialog />
+      <ExecApprovals />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Configura os agentes da VM: providers do opencode por perfil (F3.4), ai-memory local (F5.0).
+# Configura os agentes da VM: providers do opencode por perfil (F3.4), ai-memory local (F5.0),
+# instruções do `fora-do-jail` (F9.6).
 # Claude Code e opencode por perfil. Roda como o
 # SEU usuário dentro da VM; reexecutável. Chamado por `bin/assistente agentes configurar`, que
 # manda os providers + as policies do PC (JSON, com as chaves) pelo stdin.
@@ -86,6 +87,36 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token"
   exit 1
 }
 
+# Como pedir um comando fora do jail (F9.6). Vai para o CLAUDE.md do perfil (memória de usuário
+# do Claude com CLAUDE_CONFIG_DIR) e para as `instructions` do opencode do perfil.
+FORA_MD="$(cat <<'MD'
+# Fora do jail (Assistente)
+
+Você roda dentro do ai-jail, numa VM: Docker desligado, rede liberada só para alguns hosts e
+home privada. Quando um comando falhar por causa disso (docker ou `./dev`, instalar pacote ou
+acessar host bloqueado, `git push`/ssh, sudo), **não tente contornar o sandbox**. Peça para
+rodá-lo fora do jail:
+
+    "$ASSISTENTE_FORA_DO_JAIL" '<comando completo>'
+
+- O usuário aprova ou nega no app do Assistente. A saída e o código de saída voltam como se o
+  comando tivesse rodado aqui: na pasta atual (dentro do projeto), na VM, com a identidade git
+  do perfil.
+- Antes, diga em uma frase o que vai pedir e por quê. Um comando por pedido; nada destrutivo
+  sem combinar.
+- O pedido espera a resposta de uma pessoa: chame com timeout longo na ferramenta de shell
+  (600000 ms). Se ela cortar antes, retome com `"$ASSISTENTE_FORA_DO_JAIL" --resultado <id>`
+  (o id aparece na primeira linha do stderr).
+- Código 126 = negado: não insista, pergunte o que fazer. 124 = ninguém respondeu a tempo ou o
+  comando estourou o timeout (`--timeout SEG` muda o limite, padrão 600). 125 = pedido perdido:
+  peça de novo.
+- Sem `ASSISTENTE_FORA_DO_JAIL` no ambiente, a sessão é de antes desse recurso: peça ao
+  usuário para rodar o comando na aba Terminal do app.
+MD
+)"
+BEGIN_MARK="<!-- assistente:fora-do-jail (gerado por vm/configurar-agentes.sh) -->"
+END_MARK="<!-- /assistente:fora-do-jail -->"
+
 # perfil<TAB>raiz<TAB>workspace
 profiles="$(python3 - "$CONF" <<'PY'
 import sys, tomllib, os
@@ -103,17 +134,34 @@ while IFS=$'\t' read -r pid root workspace; do
   ai-memory install-mcp --client claude-code --server-url "$URL" --auth-token "$token" \
     --config-file "$data/claude/.claude.json" --apply >/dev/null
   chmod 600 "$data/claude/settings.json" "$data/claude/.claude.json"
+  # Bloco gerenciado no CLAUDE.md do perfil: o resto do arquivo é seu e fica intacto.
+  FORA_MD="$FORA_MD" BEGIN_MARK="$BEGIN_MARK" END_MARK="$END_MARK" \
+    python3 - "$data/claude/CLAUDE.md" <<'PY'
+import os, pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+begin, end = os.environ["BEGIN_MARK"], os.environ["END_MARK"]
+block = f"{begin}\n{os.environ['FORA_MD'].strip()}\n{end}\n"
+text = path.read_text() if path.exists() else ""
+pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end) + r"\n?", re.S)
+if pattern.search(text):
+    text = pattern.sub(lambda _: block, text)
+else:
+    text = (text.rstrip() + "\n\n" if text.strip() else "") + block
+path.write_text(text)
+PY
+  printf '%s\n' "$FORA_MD" > "$data/opencode/fora-do-jail.md"
   # O opencode mescla a config global com esta (gerada aqui; sempre regravada). Os providers
   # vêm do opencode_providers do perfil (F3.4): o 9router é montado com a chave/modelos do
   # notebook e os do PC copiados como estão. As policies do PC vão junto: o tab de modelos
   # fica igual ao do PC. O arquivo carrega chaves de API: fica 0600.
   ROUTER_KEY="$router_key" ROUTER_PORT="$router_port" ROUTER_MODELS="$router_models" \
     HOST_PROVIDERS="$host_providers" HOST_POLICIES="$host_policies" \
-    python3 - "$CONF" "$pid" "$data/opencode/opencode.json" <<'PY'
+    python3 - "$CONF" "$pid" "$data/opencode/opencode.json" "$data/opencode/fora-do-jail.md" <<'PY'
 import json, os, sys, tomllib
 pid = sys.argv[2]
 profile = tomllib.load(open(sys.argv[1], "rb"))["profiles"][pid]
-config = {"$schema": "https://opencode.ai/config.json"}
+# Como pedir comandos fora do jail (F9.6); a pasta do perfil entra no jail (`--rw-map`).
+config = {"$schema": "https://opencode.ai/config.json", "instructions": [sys.argv[4]]}
 for key, field in (("model", "opencode_model"), ("small_model", "opencode_small_model")):
     if profile.get(field):
         config[key] = profile[field]

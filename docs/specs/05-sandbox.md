@@ -36,6 +36,8 @@ O `LaunchPlan` (`hub_core::session::jail_argv`) monta:
 | `--env NOME` (uma por variável do perfil) | o valor vem do env do tmux, não aparece na linha de comando |
 | `--docker` | engrenagem do projeto (F9.2) ou `[jail] docker` do `.assistente.toml` |
 | `--allow-host <host>` (os dois agentes) | `allow_hosts` da engrenagem do projeto (F9.2) |
+| `--forward-port 7879` (`hub.agent_listen`) | API dos agentes (F9.5): o agente pede comandos fora do jail. A 7878 do app continua fora |
+| `--map ~/.local/lib/assistente` | cliente `fora-do-jail` (F9.6), só leitura |
 | `--network` | `full_network` da engrenagem: rede sem filtro. O ai-jail não aceita junto com `--forward-port`, então os relays e os `--allow-host` saem |
 | `-- claude` / `-- opencode --standalone` | o preset vale com ou sem `--`. O opencode 2 é cliente de um servidor em segundo plano compartilhado, que não sobrevive ao jail: `--standalone` sobe um por sessão |
 
@@ -84,8 +86,27 @@ nenhuma no PC: a VM continua sendo a fronteira.
   o agente não se dá permissão. **Fraqueza conhecida:** o `[jail] docker` do `.assistente.toml`
   continua valendo por compatibilidade, e esse arquivo o agente pode editar (vale na sessão
   seguinte). Projetos novos: use a engrenagem.
-- **Pedido do agente com aprovação (F9.5–F9.7).** O agente pede, você aprova no app e o hubd
-  roda o comando na VM, fora do jail.
+- **Pedido do agente com aprovação (F9.5–F9.7).** O agente roda
+  `"$ASSISTENTE_FORA_DO_JAIL" '<comando>'` (instruções no `CLAUDE.md` do perfil e nas
+  `instructions` do opencode, gravadas pelo `configurar-agentes.sh`). O pedido aparece no app,
+  você aprova e o hubd roda o comando na VM, fora do jail, na pasta atual do agente e com o env
+  do perfil. A saída e o código voltam ao agente (126 = negado). API e limites: spec 02.
+
+### Segurança do "fora do jail"
+
+- **O que o jail alcança:** só a API dos agentes (`agent_listen`), num roteador separado: pedir
+  e ler o próprio pedido. Aprovar exige o token do app, que fica em `~/.config/assistente`
+  (fora do jail).
+- **Quem pode pedir:** qualquer processo do jail com o env (um `postinstall` do npm, por
+  exemplo). A defesa é a aprovação humana com o comando inteiro na tela; limites de pendentes
+  e expiração evitam enxurrada.
+- **"Sempre permitir" é casamento exato**, e é uma fuga quando o comando roda arquivos do
+  projeto (`./dev`, `make`, `npm run`, scripts): o agente edita o arquivo e roda o que quiser.
+  A UI avisa antes de gravar.
+- **O comando aprovado roda como o seu usuário na VM:** enxerga os dados de todos os perfis
+  (como a aba Terminal). Nunca roda no PC.
+- **Rede completa** tira os `--forward-port`; se o `--network` compartilhar a rede da VM, o
+  agente alcança a 7878 (exige token), a 7879 e a LAN. A validar (F9.8).
 
 ## Permissões dos agentes (F3.3)
 
@@ -104,3 +125,7 @@ No notebook (modo dormir), o `opencode run --auto` roda dentro do ai-jail do mes
   visíveis; talvez um `ro_map` do diretório de dados do ai-memory.
 - `CLAUDE_CONFIG_DIR` fora de `~/.claude` funciona com o instalador nativo e com os hooks.
 - Landlock no kernel da imagem cloud do Ubuntu 24.04 (ABI V3+).
+- F9.8: de dentro do jail, `127.0.0.1:7879` responde e `127.0.0.1:7878`/`10.77.0.10:7878` não;
+  `~/.assistente/projetos.toml`, `hub.token` e o socket do tmux (`/tmp/tmux-<uid>`) não
+  aparecem (senão `tmux send-keys` seria uma fuga); o Claude lê o `CLAUDE.md` do
+  `CLAUDE_CONFIG_DIR` e respeita o `BASH_MAX_TIMEOUT_MS`.

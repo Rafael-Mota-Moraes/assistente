@@ -8,6 +8,9 @@
 listen = "0.0.0.0:7878"
 # Token exigido em toda rota exceto /api/health. Gerado por `bin/assistente token`.
 token_file = "~/.config/assistente/hub.token"
+# API dos agentes (F9.5): por onde um agente no ai-jail pede para rodar um comando fora dele (você
+# aprova no app). É a única porta do hubd que entra no jail; só loopback. Padrão: 127.0.0.1:7879.
+# agent_listen = "127.0.0.1:7879"
 
 [vm]
 name = "assistente"

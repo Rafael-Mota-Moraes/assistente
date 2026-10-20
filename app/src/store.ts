@@ -4,6 +4,7 @@ import type { HubClient } from "./bridge/hub";
 import type {
   AgentKind,
   CollectReport,
+  ExecView,
   Health,
   MemoryStatus,
   NotebookStatus,
@@ -52,6 +53,8 @@ type State = {
   morning: MorningState | null;
   /** Modal de configurações do projeto (engrenagem, F9.3); `null` = fechado. */
   projectSettings: { profile: string; project: string } | null;
+  /** Pedidos dos agentes para rodar fora do jail (F9.7), atualizados a cada 2 s. */
+  execRequests: ExecView[];
 };
 
 export const initialState: State = {
@@ -73,6 +76,7 @@ export const initialState: State = {
   toast: null,
   morning: null,
   projectSettings: null,
+  execRequests: [],
 };
 
 /** Sessões visíveis (abas) do projeto ativo: as do perfil/projeto, menos as abas fechadas. */

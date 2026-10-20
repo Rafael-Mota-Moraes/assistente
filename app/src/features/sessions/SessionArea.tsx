@@ -47,6 +47,7 @@ export function SessionArea() {
     activeProfile,
     activeProject,
     closedTabs,
+    execRequests,
   } = useAppStore();
   const color = profiles.find((p) => p.id === activeProfile)?.color ?? "#a78bfa";
 
@@ -130,6 +131,12 @@ export function SessionArea() {
                   >
                     {tabLabel(session)}
                   </button>
+                  {execRequests.some((r) => r.state === "pending" && r.session === session.id) && (
+                    <span
+                      className="size-2 rounded-full bg-amber-400"
+                      title="Esperando você aprovar um comando fora do jail"
+                    />
+                  )}
                   <button
                     type="button"
                     title="Encerrar a sessão (mata o agente)"

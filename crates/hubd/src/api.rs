@@ -1,16 +1,18 @@
 //! Rotas HTTP do hubd. Só `/api/health` é aberta; o resto exige `Authorization: Bearer <token>`
 //! (no WebSocket do terminal, que não manda header, vale `?token=`).
 //! Rotas ainda não implementadas respondem 501 com o ID da funcionalidade (docs/FUNCIONALIDADES.md).
+//! A API dos agentes (`agent_router`, F9.5) é outro roteador, servido só no `agent_listen`:
+//! é a única parte do hubd que o ai-jail alcança, autenticada pelo token da sessão.
 
 use axum::extract::{Path, Query, Request, State, WebSocketUpgrade};
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use hub_core::{
-    Config, LaunchOptions, LaunchPlan, Project, ProjectSettings, SessionSpec, discover_projects,
-    load_settings, settings_path,
+    AgentKind, Config, ExecAccess, LaunchOptions, LaunchPlan, Project, ProjectSettings,
+    SessionSpec, discover_projects, exec_client_dir, load_settings, settings_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -20,7 +22,8 @@ use std::time::{Duration, Instant};
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
-use crate::sessions::{SessionInfo, Tmux, next_seq};
+use crate::exec::{self, ExecError, ExecJob, ExecStore, ExecView, NewRequest};
+use crate::sessions::{SessionInfo, Tmux, new_exec_token, next_seq};
 use crate::sleep::{
     self, CollectReport, Remote, SleepLimits, SleepStatusReport, StartSleepError, StartedSleep,
     request_stop,
@@ -51,6 +54,10 @@ struct Inner {
     ui_dir: Option<PathBuf>,
     /// Serializa leitura-modificação-escrita de `~/.assistente/projetos.toml` (F9.2).
     settings_lock: tokio::sync::Mutex<()>,
+    /// Pedidos dos agentes para rodar fora do jail (F9.5).
+    exec: ExecStore,
+    /// Porta do `agent_listen` já aberta; `None` = sessões nascem sem API dos agentes.
+    exec_port: Option<u16>,
 }
 
 impl AppState {
@@ -76,7 +83,27 @@ impl AppState {
             dorme_override: None,
             ui_dir: ui_dir.is_dir().then_some(ui_dir),
             settings_lock: tokio::sync::Mutex::new(()),
+            exec: ExecStore::default(),
+            exec_port: None,
         }))
+    }
+
+    /// Liga a API dos agentes nas sessões novas (o `agent_listen` já está escutando).
+    pub fn with_exec_port(self, port: Option<u16>) -> Self {
+        let mut inner = Arc::try_unwrap(self.0)
+            .ok()
+            .expect("estado ainda não compartilhado");
+        inner.exec_port = port;
+        Self(Arc::new(inner))
+    }
+
+    #[cfg(test)]
+    fn with_exec_store(self, store: ExecStore) -> Self {
+        let mut inner = Arc::try_unwrap(self.0)
+            .ok()
+            .expect("estado ainda não compartilhado");
+        inner.exec = store;
+        Self(Arc::new(inner))
     }
 
     /// Serve a UI de `dir` (`None` desliga o `/ui/`). Antes de compartilhar o estado.
@@ -146,6 +173,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sleep/stop", post(stop_sleep))
         .route("/api/sleep/collect", post(collect_sleep))
         .route("/api/sleep/merge", post(merge_sleep))
+        .route("/api/exec", get(list_exec))
+        .route("/api/exec/{id}/approve", post(approve_exec))
+        .route("/api/exec/{id}/deny", post(deny_exec))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     let mut public = Router::new().route("/api/health", get(health));
@@ -155,6 +185,15 @@ pub fn router(state: AppState) -> Router {
     }
 
     public.merge(protected).layer(cors()).with_state(state)
+}
+
+/// API dos agentes (F9.5), servida só no `agent_listen` (loopback, encaminhado ao jail). Sem
+/// CORS nem `/api/*`: quem fala aqui é o cliente `fora-do-jail`, com o token da sessão.
+pub fn agent_router(state: AppState) -> Router {
+    Router::new()
+        .route("/v1/exec", post(agent_submit))
+        .route("/v1/exec/{id}", get(agent_result))
+        .with_state(state)
 }
 
 /// O app Tauri chama o hubd de outra origem (tauri://localhost) e, em dev, do Vite.
@@ -727,6 +766,242 @@ async fn update_settings(
     write().map_err(|e| format!("{}: {e}", path.display()))
 }
 
+// ---- Fora do jail: pedidos dos agentes (F9.5) ----
+
+const MAX_EXEC_COMMAND: usize = 20_000;
+/// O cliente refaz o long-poll; abaixo do `--max-time` dele.
+const MAX_EXEC_WAIT: Duration = Duration::from_secs(55);
+
+fn exec_error(e: ExecError) -> Response {
+    match e {
+        ExecError::NotFound => error(StatusCode::NOT_FOUND, "pedido não encontrado"),
+        ExecError::NotPending(state) => error(
+            StatusCode::CONFLICT,
+            &format!("o pedido não está mais pendente ({state:?})").to_lowercase(),
+        ),
+        ExecError::TooMany => error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "pedidos demais esperando aprovação; espere uma resposta no app",
+        ),
+    }
+}
+
+/// Sessão dona do `Authorization: Bearer <token>`; 401 sem token, errado ou de sessão morta.
+async fn agent_session(state: &AppState, headers: &HeaderMap) -> Result<SessionInfo, Response> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    match state.0.tmux.session_for_exec_token(token).await {
+        Ok(Some(session)) => Ok(session),
+        Ok(None) => Err(error(
+            StatusCode::UNAUTHORIZED,
+            "token ausente ou inválido (a sessão foi encerrada?)",
+        )),
+        Err(e) => Err(internal(&e)),
+    }
+}
+
+/// Dispara um pedido aprovado; o resultado fica no store para o long-poll.
+fn spawn_exec(state: &AppState, job: ExecJob) {
+    let store = state.0.exec.clone();
+    tokio::spawn(async move {
+        let max_output = store.limits().max_output;
+        let result = exec::run_command(&job, max_output).await;
+        match &result {
+            Ok(r) => tracing::info!(
+                "pedido {} terminou: código {:?}{} em {} ms",
+                job.id,
+                r.exit_code,
+                if r.timed_out { " (timeout)" } else { "" },
+                r.duration_ms
+            ),
+            Err(e) => tracing::warn!("pedido {} falhou: {e}", job.id),
+        }
+        store.finish(&job.id, result);
+    });
+}
+
+#[derive(Deserialize)]
+struct AgentExecRequest {
+    command: String,
+    /// `$PWD` do agente (mesmo caminho dentro e fora do jail); precisa ficar no projeto.
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct AgentExecCreated {
+    id: String,
+    state: exec::ExecState,
+    auto_approved: bool,
+}
+
+/// POST /v1/exec (API dos agentes): pede para rodar um comando fora do jail.
+async fn agent_submit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<AgentExecRequest>,
+) -> Result<(StatusCode, Json<AgentExecCreated>), Response> {
+    let session = agent_session(&state, &headers).await?;
+    let command = request.command.trim();
+    if command.is_empty() || command.len() > MAX_EXEC_COMMAND {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "comando vazio ou grande demais",
+        ));
+    }
+    let dir = sleep_project_dir(&state, &session.profile, &session.project)
+        .map_err(|(s, m)| error(s, m))?;
+    let cwd = exec::resolve_cwd(&dir, request.cwd.as_deref())
+        .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
+    // Env do perfil como na aba Terminal (sem token: o comando roda fora do jail).
+    let spec = SessionSpec {
+        profile: session.profile.clone(),
+        project: session.project.clone(),
+        agent: AgentKind::Shell,
+    };
+    let plan = LaunchPlan::build(&state.0.config, &state.0.home, &spec, 1)
+        .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    let auto_approved = load_settings(&state.0.home)
+        .map(|file| {
+            file.get(&session.profile, &session.project)
+                .allowed_commands
+                .iter()
+                .any(|allowed| allowed.trim() == command)
+        })
+        .unwrap_or(false);
+    let (view, job) = state
+        .0
+        .exec
+        .submit(NewRequest {
+            session: session.id.clone(),
+            profile: session.profile,
+            project: session.project,
+            cwd,
+            command: command.to_owned(),
+            env: plan.env,
+            timeout_secs: request.timeout_secs,
+            auto_approved,
+        })
+        .map_err(exec_error)?;
+    tracing::info!(
+        "pedido {} de {}{}: {}",
+        view.id,
+        session.id,
+        if auto_approved {
+            " (sempre permitido)"
+        } else {
+            ""
+        },
+        view.command
+    );
+    if let Some(job) = job {
+        spawn_exec(&state, job);
+    }
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AgentExecCreated {
+            id: view.id,
+            state: view.state,
+            auto_approved,
+        }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct WaitQuery {
+    #[serde(default)]
+    wait: u64,
+}
+
+/// GET /v1/exec/{id}?wait=<s> (API dos agentes): long-poll até um estado final.
+async fn agent_result(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<WaitQuery>,
+) -> Result<Json<ExecView>, Response> {
+    let session = agent_session(&state, &headers).await?;
+    let wait = Duration::from_secs(query.wait).min(MAX_EXEC_WAIT);
+    // Pedido de outra sessão: 404, como se não existisse.
+    match state.0.exec.wait(&id, wait).await {
+        Some(view) if view.session == session.id => Ok(Json(view)),
+        _ => Err(exec_error(ExecError::NotFound)),
+    }
+}
+
+/// GET /api/exec: pendentes e recentes (o app mostra para aprovar).
+async fn list_exec(State(state): State<AppState>) -> Json<Vec<ExecView>> {
+    Json(state.0.exec.list())
+}
+
+#[derive(Deserialize, Default)]
+struct ApproveRequest {
+    /// Grava o comando em `allowed_commands` do projeto antes de rodar.
+    #[serde(default)]
+    always: bool,
+}
+
+/// POST /api/exec/{id}/approve `{always?}`: roda o pedido fora do jail.
+async fn approve_exec(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Option<Json<ApproveRequest>>,
+) -> Result<StatusCode, Response> {
+    let always = body.map(|Json(b)| b.always).unwrap_or_default();
+    if always {
+        let view = state
+            .0
+            .exec
+            .get(&id)
+            .ok_or_else(|| exec_error(ExecError::NotFound))?;
+        if view.state != exec::ExecState::Pending {
+            return Err(exec_error(ExecError::NotPending(view.state)));
+        }
+        let (profile, project, command) = (view.profile, view.project, view.command);
+        let mut current = load_settings(&state.0.home)
+            .map_err(|e| internal(&e))?
+            .get(&profile, &project);
+        if !current.allowed_commands.contains(&command) {
+            current.allowed_commands.push(command.clone());
+        }
+        current.validate().map_err(|e| {
+            error(
+                StatusCode::BAD_REQUEST,
+                &format!("não dá para sempre permitir: {e}"),
+            )
+        })?;
+        update_settings(&state, |file| {
+            let mut settings = file.get(&profile, &project);
+            if !settings.allowed_commands.contains(&command) {
+                settings.allowed_commands.push(command.clone());
+            }
+            file.set(&profile, &project, settings);
+        })
+        .await
+        .map_err(|e| internal(&e))?;
+        tracing::info!("{profile}/{project}: sempre permitir {command:?}");
+    }
+    let job = state.0.exec.approve(&id).map_err(exec_error)?;
+    tracing::info!("pedido {id} aprovado: {}", job.command);
+    spawn_exec(&state, job);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/exec/{id}/deny: o agente recebe "negado pelo usuário".
+async fn deny_exec(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, Response> {
+    let view = state.0.exec.deny(&id).map_err(exec_error)?;
+    tracing::info!("pedido {id} negado: {}", view.command);
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<SessionInfo>>, Response> {
     state
         .0
@@ -755,7 +1030,25 @@ async fn create_session(
             ProjectSettings::default()
         }
     };
-    let options = LaunchOptions { settings };
+    // API dos agentes (F9.5): só com o `agent_listen` no ar e o cliente instalado (senão o
+    // `--map` do ai-jail apontaria para uma pasta que não existe). A aba Terminal não precisa.
+    let exec = match inner.exec_port {
+        Some(port)
+            if spec.agent != AgentKind::Shell
+                && exec_client_dir(&inner.home).join("fora-do-jail").exists() =>
+        {
+            match new_exec_token() {
+                Ok(token) => Some(ExecAccess { port, token }),
+                Err(e) => {
+                    tracing::warn!("sessão sem API dos agentes (token: {e})");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    let exec_token = exec.as_ref().map(|e| e.token.clone());
+    let options = LaunchOptions { settings, exec };
     let mut plan = LaunchPlan::build_with(&inner.config, &inner.home, &spec, seq, &options)
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
     // Só projetos de verdade (repo git na raiz do perfil).
@@ -774,7 +1067,7 @@ async fn create_session(
     }
     let info = inner
         .tmux
-        .create(&plan, &spec)
+        .create(&plan, &spec, exec_token.as_deref())
         .await
         .map_err(|e| internal(&e))?;
     tracing::info!("sessão criada: {}", info.id);
@@ -1555,6 +1848,15 @@ mod tests {
     }
 
     async fn http(method: &str, url: &str, body: Option<&str>) -> (u16, String) {
+        http_as(method, url, body, None).await
+    }
+
+    async fn http_as(
+        method: &str,
+        url: &str,
+        body: Option<&str>,
+        bearer: Option<&str>,
+    ) -> (u16, String) {
         // Cliente HTTP mínimo por cima do tokio (sem crate extra).
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let (host, path) = url
@@ -1563,8 +1865,11 @@ mod tests {
             .unwrap();
         let mut stream = tokio::net::TcpStream::connect(host).await.unwrap();
         let body = body.unwrap_or("");
+        let auth = bearer
+            .map(|t| format!("Authorization: Bearer {t}\r\n"))
+            .unwrap_or_default();
         let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "{method} {path} HTTP/1.1\r\nHost: {host}\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         stream.write_all(request.as_bytes()).await.unwrap();
@@ -1698,6 +2003,311 @@ mod tests {
         assert_eq!(info["agent"], "shell");
         let (_, body) = http("GET", &format!("{hub}/api/sessions"), None).await;
         assert!(body.contains(r#""agent":"shell""#), "{body}");
+    }
+
+    // ---- Fora do jail: pedidos dos agentes (F9.5) ----
+
+    struct ExecHub {
+        /// API do app (7878 na VM).
+        hub: String,
+        /// API dos agentes (`agent_listen`).
+        agents: String,
+        home: PathBuf,
+    }
+
+    /// hubd com as duas APIs, home temporário (com o cliente `fora-do-jail` "instalado") e o
+    /// repo `proj`.
+    async fn live_exec_hub(t: &TestTmux, store: ExecStore) -> ExecHub {
+        let root = t.dir.join("raiz");
+        std::fs::create_dir_all(root.join("proj/.git")).unwrap();
+        let home = t.dir.join("home");
+        let client = exec_client_dir(&home);
+        std::fs::create_dir_all(&client).unwrap();
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../vm/fora-do-jail"),
+            client.join("fora-do-jail"),
+        )
+        .unwrap();
+        let text = EXAMPLE.replace("~/Documentos/pessoal/projetos", &root.display().to_string());
+        let config = Config::parse(&text, &home).unwrap();
+        let agents = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let agents_port = agents.local_addr().unwrap().port();
+        let state = AppState::new(config, home.clone(), None, None, t.tmux.clone())
+            .with_argv_override(vec!["bash".into(), "--norc".into(), "-i".into()])
+            .with_exec_store(store)
+            .with_exec_port(Some(agents_port));
+        let main = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let main_port = main.local_addr().unwrap().port();
+        let agent_state = state.clone();
+        tokio::spawn(async move {
+            axum::serve(agents, agent_router(agent_state))
+                .await
+                .unwrap()
+        });
+        tokio::spawn(async move { axum::serve(main, router(state)).await.unwrap() });
+        ExecHub {
+            hub: format!("127.0.0.1:{main_port}"),
+            agents: format!("127.0.0.1:{agents_port}"),
+            home,
+        }
+    }
+
+    async fn new_session(hub: &str, agent: &str) -> String {
+        let spec = format!(r#"{{"profile":"pessoal","project":"proj","agent":"{agent}"}}"#);
+        let (status, body) = http("POST", &format!("{hub}/api/sessions"), Some(&spec)).await;
+        assert_eq!(status, 201, "{body}");
+        let info: serde_json::Value = serde_json::from_str(&body).unwrap();
+        info["id"].as_str().unwrap().to_owned()
+    }
+
+    async fn exec_token(t: &TestTmux, session: &str) -> String {
+        let target = format!("={session}:");
+        let out = t
+            .tmux
+            .command(&[
+                "show-options".into(),
+                "-v".into(),
+                "-t".into(),
+                target,
+                "@assistente_exec_token".into(),
+            ])
+            .output()
+            .await
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    fn json(body: &str) -> serde_json::Value {
+        serde_json::from_str(body).unwrap_or_else(|e| panic!("{e}: {body}"))
+    }
+
+    #[tokio::test]
+    async fn agent_asks_user_approves_and_gets_the_output() {
+        let t = TestTmux::new("api-exec");
+        let store = ExecStore::new(exec::ExecLimits {
+            max_pending_per_session: 2,
+            ..exec::ExecLimits::default()
+        });
+        let ExecHub { hub, agents, home } = live_exec_hub(&t, store).await;
+        let session = new_session(&hub, "claude").await;
+        let token = exec_token(&t, &session).await;
+        assert_eq!(token.len(), 64, "sessão de agente ganha token");
+        // O token não vai para a lista de sessões que a UI recebe.
+        let (_, listed) = http("GET", &format!("{hub}/api/sessions"), None).await;
+        assert!(!listed.contains(&token));
+
+        let submit = |body: &'static str, bearer: Option<String>| {
+            let url = format!("{agents}/v1/exec");
+            async move { http_as("POST", &url, Some(body), bearer.as_deref()).await }
+        };
+        let tok = || Some(token.clone());
+        assert_eq!(submit(r#"{"command":"true"}"#, None).await.0, 401);
+        assert_eq!(
+            submit(r#"{"command":"true"}"#, Some("errado".into()))
+                .await
+                .0,
+            401
+        );
+        assert_eq!(submit(r#"{"command":"  "}"#, tok()).await.0, 400);
+        assert_eq!(
+            submit(r#"{"command":"true","cwd":"/etc"}"#, tok()).await.0,
+            400
+        );
+
+        // Pedido → pendente no app → aprovado → saída volta ao agente.
+        let (status, body) = submit(
+            r#"{"command":"echo marca-$((40+2)) em $(basename $PWD) $GIT_AUTHOR_EMAIL"}"#,
+            tok(),
+        )
+        .await;
+        assert_eq!(status, 202, "{body}");
+        let id = json(&body)["id"].as_str().unwrap().to_owned();
+        assert_eq!(json(&body)["state"], "pending");
+        let (_, body) = http("GET", &format!("{hub}/api/exec"), None).await;
+        let pending = json(&body);
+        assert_eq!(pending[0]["id"], id.as_str());
+        assert_eq!(pending[0]["session"], session.as_str());
+        assert_eq!(pending[0]["state"], "pending");
+        let result_url = |wait: u32| format!("{agents}/v1/exec/{id}?wait={wait}");
+        let (_, body) = http_as("GET", &result_url(1), None, tok().as_deref()).await;
+        assert_eq!(json(&body)["state"], "pending");
+
+        let approve = format!("{hub}/api/exec/{id}/approve");
+        assert_eq!(http("POST", &approve, Some("{}")).await.0, 204);
+        assert_eq!(http("POST", &approve, Some("{}")).await.0, 409);
+        let (_, body) = http_as("GET", &result_url(10), None, tok().as_deref()).await;
+        let done = json(&body);
+        assert_eq!(done["state"], "done", "{done}");
+        assert_eq!(done["result"]["exit_code"], 0);
+        assert_eq!(
+            done["result"]["stdout"],
+            "marca-42 em proj voce@exemplo.com\n"
+        );
+
+        // Negado.
+        let (_, body) = submit(r#"{"command":"rm -rf /tmp/nada"}"#, tok()).await;
+        let denied = json(&body)["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            http("POST", &format!("{hub}/api/exec/{denied}/deny"), None)
+                .await
+                .0,
+            204
+        );
+        let (_, body) = http_as(
+            "GET",
+            &format!("{agents}/v1/exec/{denied}?wait=5"),
+            None,
+            tok().as_deref(),
+        )
+        .await;
+        assert_eq!(json(&body)["state"], "denied");
+
+        // "Sempre permitir": grava no projetos.toml e o próximo igual roda sozinho.
+        let (_, body) = submit(r#"{"command":"echo sempre"}"#, tok()).await;
+        let first = json(&body)["id"].as_str().unwrap().to_owned();
+        let always = format!("{hub}/api/exec/{first}/approve");
+        assert_eq!(
+            http("POST", &always, Some(r#"{"always":true}"#)).await.0,
+            204
+        );
+        let saved = std::fs::read_to_string(settings_path(&home)).unwrap();
+        assert!(saved.contains("echo sempre"), "{saved}");
+        let (status, body) = submit(r#"{"command":"echo sempre"}"#, tok()).await;
+        assert_eq!(status, 202);
+        assert_eq!(json(&body)["auto_approved"], true);
+        let auto = json(&body)["id"].as_str().unwrap().to_owned();
+        let (_, body) = http_as(
+            "GET",
+            &format!("{agents}/v1/exec/{auto}?wait=10"),
+            None,
+            tok().as_deref(),
+        )
+        .await;
+        assert_eq!(json(&body)["result"]["stdout"], "sempre\n");
+
+        // Outra sessão não lê o pedido desta; limite de pendentes por sessão.
+        let other = new_session(&hub, "opencode").await;
+        let other_token = exec_token(&t, &other).await;
+        let (status, _) = http_as("GET", &result_url(0), None, Some(&other_token)).await;
+        assert_eq!(status, 404);
+        let other_submit = |cmd: &'static str| {
+            let url = format!("{agents}/v1/exec");
+            let token = other_token.clone();
+            async move { http_as("POST", &url, Some(cmd), Some(&token)).await.0 }
+        };
+        assert_eq!(other_submit(r#"{"command":"a"}"#).await, 202);
+        assert_eq!(other_submit(r#"{"command":"b"}"#).await, 202);
+        assert_eq!(other_submit(r#"{"command":"c"}"#).await, 429);
+
+        // A aba Terminal não ganha token.
+        let shell = new_session(&hub, "shell").await;
+        assert_eq!(exec_token(&t, &shell).await, "");
+
+        // Cada API no seu listener.
+        assert_eq!(
+            http("GET", &format!("{agents}/api/sessions"), None).await.0,
+            404
+        );
+        assert_eq!(
+            http("GET", &format!("{agents}/api/exec"), None).await.0,
+            404
+        );
+        assert_eq!(
+            http("POST", &format!("{hub}/v1/exec"), Some("{}")).await.0,
+            404
+        );
+
+        // Sessão encerrada: o token morre junto.
+        assert_eq!(
+            http("DELETE", &format!("{hub}/api/sessions/{session}"), None)
+                .await
+                .0,
+            204
+        );
+        assert_eq!(submit(r#"{"command":"true"}"#, tok()).await.0, 401);
+    }
+
+    /// Aprova (ou nega) o primeiro pedido pendente assim que ele aparecer no app.
+    async fn answer_first_pending(hub: String, verb: &'static str) {
+        for _ in 0..100 {
+            let (_, body) = http("GET", &format!("{hub}/api/exec"), None).await;
+            if let Some(id) = json(&body)
+                .as_array()
+                .and_then(|all| all.iter().find(|v| v["state"] == "pending"))
+                .and_then(|v| v["id"].as_str())
+            {
+                let url = format!("{hub}/api/exec/{id}/{verb}");
+                assert_eq!(http("POST", &url, Some("{}")).await.0, 204);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("nenhum pedido apareceu no app");
+    }
+
+    /// O cliente que o agente usa no jail (`vm/fora-do-jail`) contra o hubd de verdade.
+    async fn run_client(
+        t: &TestTmux,
+        agents: &str,
+        token: &str,
+        args: &[&str],
+    ) -> std::process::Output {
+        tokio::process::Command::new("bash")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../vm/fora-do-jail"
+            ))
+            .args(args)
+            .current_dir(t.dir.join("raiz/proj"))
+            .env("ASSISTENTE_EXEC_URL", format!("http://{agents}"))
+            .env("ASSISTENTE_EXEC_TOKEN", token)
+            .output()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn client_script_round_trip() {
+        let t = TestTmux::new("api-cliente");
+        let ExecHub { hub, agents, .. } = live_exec_hub(&t, ExecStore::default()).await;
+        let session = new_session(&hub, "opencode").await;
+        let token = exec_token(&t, &session).await;
+
+        let approver = tokio::spawn(answer_first_pending(hub.clone(), "approve"));
+        let out = run_client(
+            &t,
+            &agents,
+            &token,
+            &["--", "echo marca-$((40+2)); echo aviso >&2; exit 7"],
+        )
+        .await;
+        approver.await.unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "marca-42\n",
+            "{stderr}"
+        );
+        assert!(stderr.contains("aguardando aprovação"), "{stderr}");
+        assert!(stderr.contains("aviso"), "{stderr}");
+        assert_eq!(out.status.code(), Some(7), "{stderr}");
+
+        let denier = tokio::spawn(answer_first_pending(hub.clone(), "deny"));
+        let out = run_client(&t, &agents, &token, &["rm", "-rf", "build"]).await;
+        denier.await.unwrap();
+        assert_eq!(out.status.code(), Some(126));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("negado"));
+
+        // Fora de uma sessão (sem env) e com token morto.
+        let out = run_client(&t, &agents, "", &["true"]).await;
+        assert_eq!(out.status.code(), Some(2));
+        let out = run_client(&t, &agents, "token-errado", &["true"]).await;
+        assert_eq!(out.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("token recusado"));
+        // Pedido que sumiu (hubd reiniciou): avisa para pedir de novo.
+        let out = run_client(&t, &agents, &token, &["--resultado", "nao-existe"]).await;
+        assert_eq!(out.status.code(), Some(125));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("peça de novo"));
     }
 
     #[tokio::test]

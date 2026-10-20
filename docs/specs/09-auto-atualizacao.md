@@ -84,7 +84,9 @@ mudou. Fica no painel e também na UI embutida, para quando a UI nova não carre
   agente escreveu; aqui o clique em Aplicar faz esse papel. Nada é aplicado sozinho.
 - **O agente não consegue se aplicar.** Dentro do ai-jail ele não vê o token
   (`~/.config/assistente` não é montado) nem alcança a porta do hubd (a rede só libera as do
-  túnel, por `--forward-port`). Validar as duas coisas na F8.5.
+  túnel, por `--forward-port`). Validar as duas coisas na F8.5. A única porta do hubd que entra
+  no jail é a API dos agentes (`agent_listen`, F9.5): um roteador à parte que só aceita pedidos
+  de comando e não tem nenhuma rota `/api/*`, nem as de aplicar ou aprovar.
 - **O build roda fora do jail**, com Docker e acesso aos dados de todos os perfis da VM. A
   confiança é a mesma de hoje (o código aprovado roda como hubd). Para reduzir o risco, o
   build sai de um commit num worktree limpo (nada do `target/` do agente) e só depois do

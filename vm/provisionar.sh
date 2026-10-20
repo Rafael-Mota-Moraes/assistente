@@ -64,6 +64,26 @@ else
   rm -rf "$tmp"
 fi
 
+echo "==> apparmor (bwrap)"
+# Ubuntu 24.04+: o kernel nega user namespace de processo unconfined
+# (kernel.apparmor_restrict_unprivileged_userns=1). O bwrap cai no perfil
+# unprivileged_userns ("deny capability") e morre com "loopback: Failed RTM_NEWADDR:
+# Operation not permitted" — as sessões do Assistente terminam logo ao iniciar. A política
+# só carrega no boot, então a falha aparece após o primeiro reinício. Correção documentada
+# pelo upstream do ai-jail (issue #34): perfil unconfined só para o bwrap; o resto da
+# política do Ubuntu continua valendo.
+if command -v apparmor_parser >/dev/null; then
+  cat > /etc/apparmor.d/bwrap <<'PROF'
+abi <abi/4.0>,
+include <tunables/global>
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+PROF
+  apparmor_parser -r /etc/apparmor.d/bwrap
+fi
+
 echo "==> agentes (instalados no usuário)"
 if as_user "command -v claude >/dev/null && claude --version 2>/dev/null | grep -q \"$CLAUDE_VERSION\""; then
   :
@@ -123,6 +143,11 @@ rm -f /etc/systemd/system/assistente-ai-memory-wiki.mount
 cat > "/etc/systemd/system/$WIKI_UNIT" <<EOF
 [Unit]
 Description=ai-memory wiki (espelho do host via bind)
+# O incus-agent monta o virtiofs do espelho durante o start dele: sem esta ordem o bind
+# roda antes (t=1,6s vs t=2,0s no boot) e captura a pasta vazia por baixo do ponto de
+# montagem; o ai-memory passa a crashar com "Permission denied" em wiki/.git.
+After=incus-agent.service
+Requires=incus-agent.service
 
 [Mount]
 What=$MIRROR/wiki

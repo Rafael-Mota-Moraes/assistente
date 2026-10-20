@@ -93,3 +93,14 @@ Pegadinhas encontradas (já tratadas nos scripts):
   (as specs foram escritas olhando a 2.0). O script é reexecutável: se a versão já está no PATH,
   pula o download; senão instala (ai-jail com sha256 do release, opencode com sha512 do npm,
   ai-memory via `install.sh` da release, Claude via `install.sh` com número de versão).
+- Ubuntu 24.04 na VM restringe user namespace não privilegiada via AppArmor
+  (`kernel.apparmor_restrict_unprivileged_userns=1`): o bwrap cai no perfil
+  `unprivileged_userns` ("deny capability") e as sessões morrem com "bwrap: loopback:
+  Failed RTM_NEWADDR: Operation not permitted". A política só carrega no boot — funciona
+  até o primeiro reinício. O `provisionar.sh` instala `/etc/apparmor.d/bwrap` (perfil
+  `flags=(unconfined)` com `userns,`, correção documentada pelo upstream do ai-jail,
+  issue #34); o resto da política continua valendo.
+- O bind da wiki do ai-memory (`provisionar.sh`) precisa de `After=/Requires=incus-agent.service`:
+  o agent monta o virtiofs do espelho ~0,4s depois do systemd tentar o bind no boot. Sem a
+  ordem, o bind captura a pasta vazia por baixo do ponto de montagem e o ai-memory crasha
+  com "Permission denied" em `wiki/.git` (a pasta raiz do espelho fica com dono root).

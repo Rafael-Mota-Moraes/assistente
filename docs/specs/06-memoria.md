@@ -17,7 +17,8 @@ token, workspaces e embeddings locais (all-MiniLM-L6-v2, sem GPU). Porta padrão
 ```
 host PC:   memory.mirror_dir/wiki  ← wiki git (virtiofs rw na VM)
 VM:        memory.data_dir  ← SQLite/modelos (disco local; virtiofs quebra WAL/shm)
-           data_dir/wiki bind → mirror_dir/wiki (systemd assistente-ai-memory-wiki.mount)
+           data_dir/wiki bind → mirror_dir/wiki (systemd assistente-ai-memory-wiki.mount,
+           ordenada After=incus-agent.service: é o agent que monta o virtiofs do espelho)
            ai-memory serve  127.0.0.1:49374   ← servidor principal (F5.0)
            claude/opencode → 127.0.0.1:49374  (local, sem túnel)
 notebook:  réplica do wiki + ai-memory opcional só para o modo dormir (F5.4 / F6)

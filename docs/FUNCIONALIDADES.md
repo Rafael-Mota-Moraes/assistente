@@ -180,6 +180,33 @@ em `not_yet("F10.x")`.
 - [ ] **F10.4 Diff da manhã.** Na tela "Bom dia" (F6.6), cada commit da noite abre no mesmo visualizador de diff (`GET …/git/diff` com `from`/`to` de commits).
   Pronto quando: dá para revisar o trabalho noturno arquivo a arquivo antes de mesclar. Como testar: vitest com dados fake.
 
+## F11 — Kanban dos agentes
+
+Quadro por projeto (backlog · fazendo · feito): você escreve as tarefas no app e as sessões
+de agente e o modo dormir (R6) **puxam a próxima sozinhos**, em vez de procurar o que fazer
+à mão. Fonte da verdade: `.assistente/kanban.json` versionado no repo do projeto — o hubd lê
+e grava (e comita sozinho, para a árvore não amanhecer suja e travar o dormir, F6.3), e o
+clone do notebook leva o quadro junto, então o que os agentes marcaram à noite volta no
+merge da manhã (F6.5) e os commits dos movimentos aparecem na revisão de diffs (F10.4). O
+`docs/FUNCIONALIDADES.md` continua sendo o backlog deste próprio assistente; o quadro é por
+projeto. Rotas novas em `not_yet("F11.x")`. Ordem: F11.1 antes dos demais (todos falam com o
+hubd); F11.2 antes de F11.4.
+
+- [ ] **F11.1 Quadro no hubd.** `GET /api/projects/{perfil}/{projeto}/kanban` (tarefas por coluna: título, descrição, prioridade, sessão que segura), `POST` (criar), `PATCH …/kanban/{id}` (título/descrição/prioridade/coluna) e `DELETE …/kanban/{id}`. Toda escrita grava o JSON e comita (mensagem própria, tipo `kanban: move T3 para fazendo`). Tarefa em "fazendo" fica presa à sessão: morreu a sessão (a lista do tmux é a fonte, F2.2), a tarefa volta para o topo do backlog sem perder o texto.
+  Pronto quando: criar, mover e excluir pela API deixa um commit no histórico do repo; sessão morta devolve a tarefa ao backlog.
+  Como testar: testes de rota com repo git temporário (`init_repo`, como na F10.1).
+- [ ] **F11.2 Puxa a próxima (API do agente).** `POST /v1/kanban/pull` e `POST /v1/kanban/done` no listener do agente (F9.5, porta 7879, token por sessão): `pull` move a primeira tarefa do backlog (ordem por prioridade, depois criação) para "fazendo" com a marca da sessão, atomicamente — duas sessões simultâneas nunca levam a mesma; `done` move para "feito" com referência ao commit. Quadro sem tarefa = resposta "vazia": o agente fica parado, não inventa trabalho. Cliente `fora-do-jail kanban` (F9.6) e bloco nas instruções do perfil (`configurar-agentes.sh`, F5.2): "termine a tarefa atual antes de puxar a próxima".
+  Pronto quando: duas sessões simultâneas num quadro com 2 tarefas levam tarefas distintas, e uma terceira chamada responde "vazia".
+  Como testar: testes do listener com duas sessões fake e um quadro de 2 tarefas.
+- [ ] **F11.3 Quadro na UI.** Botão "Quadro" na área de sessões (ao lado de Claude/OpenCode/Terminal/Editor, F10.2): três colunas, card arrastável (mudar de coluna = `PATCH`), criar/editar/apagar num modal (padrão ProjectSettingsDialog), contador de pendências no item do projeto da lateral e nome da aba responsável no card. Poll curto (padrão do ExecApprovals, F9.7).
+  Pronto quando: uma sessão de agente puxa uma tarefa e o card aparece em "fazendo" com o nome da aba, sem recarregar a UI.
+  Como testar: vitest com hub fake + caso em `SessionArea.test.tsx`.
+- [ ] **F11.4 Dormir lê o quadro.** Cada iteração do `dorme` (F6.3) começa com `pull`: o prompt da iteração traz título e descrição da tarefa (o resto do briefing continua); ao terminar, o agente roda `kanban done`. Se a iteração não gerou commit, a tarefa volta para o backlog e o log explica. Quadro vazio = o `dorme` dorme sem iterar. No "Bom dia" (F6.6), a contagem aparece por tarefa: qual tarefa gerou quais commits.
+  Pronto quando: uma noite com 2 tarefas no quadro = 2 iterações, 2 commits e as duas em "feito" no quadro visto pelo app.
+  Como testar: `notebook/teste-dorme.sh` com quadro fake de 2 tarefas + o guard de WIP (F6.3).
+- [ ] **F11.5 Validação na VM real** *(humano)*. Quadro com 3 tarefas e 2 sessões abertas: cada sessão puxa uma distinta; mover um card pelo app; fechar uma das abas e ver a tarefa voltar ao backlog; `dorme` de noite alimentado pelo quadro, com revisão no "Bom dia".
+  Pronto quando: os itens acima conferem. Como testar: sessão real.
+
 ## Depois
 
 - Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.

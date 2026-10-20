@@ -30,6 +30,7 @@ Cada requisito aponta para a funcionalidade (docs/FUNCIONALIDADES.md) e a spec q
 | R9 | Fácil de reinstalar ao formatar | Do PC zerado ao app funcionando com `git clone` + `./instalar.sh backup.tar.gz` + logins | F1.1, F7.1–F7.3 | [01](specs/01-vm-e-instalacao.md) |
 | R10 | O Assistente se atualiza sem fechar | Numa aba fixa, um agente edita o próprio repo; um clique aplica o commit (UI e hubd) sem fechar o app nem derrubar sessões, com volta para a versão anterior | F8.1–F8.7 | [09](specs/09-auto-atualizacao.md) |
 | R11 | Editor com diff do git | Abrir e editar arquivos do projeto no app e ver, arquivo a arquivo, o diff do que o agente mudou (inclusive o trabalho da noite) | F10.1–F10.4 | [03](specs/03-interface.md) |
+| R12 | Kanban puxado pelos agentes | Um quadro por projeto, versionado no repo: você cadastra tarefas no app e as sessões de agente e o modo dormir puxam a próxima automaticamente (sem duas pegarem a mesma), movendo os cards no quadro conforme trabalham | F11.1–F11.5 | [02](specs/02-hubd-e-sessoes.md) |
 
 ## Fora do escopo (por enquanto)
 

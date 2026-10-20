@@ -26,7 +26,8 @@ O `LaunchPlan` (`hub_core::session::jail_argv`) monta:
 |---|---|
 | `--rw-map ~/.assistente/perfis/<perfil>` | dados do perfil (opencode, chave SSH); só o perfil ativo |
 | `--claude-dir …/<perfil>/claude` (só claude) | `CLAUDE_CONFIG_DIR` do perfil: login, settings, hooks e MCP próprios |
-| `--forward-port 20128 --forward-port 49374` | o túnel do notebook em 127.0.0.1; sem isso o proxy responde 405 |
+| `--forward-port 20128` | o túnel do notebook (9router) em 127.0.0.1; sem isso o proxy responde 405 |
+| `--forward-port 49374` (`memory.port`) | o sandbox tem loopback próprio: sem o relay, hooks/MCP não alcançam o ai-memory local da VM (F5.0) e a captura cai no spool para sempre |
 | `--allow-host <host>` (só opencode) | `opencode_allow_hosts` do perfil: API de provedores fora do 9router. Soma à lista do preset (validado: o `registry.npmjs.org` continua liberado) |
 | `--map ~/.local/lib/ai-memory` | binário que os hooks chamam |
 | `--rw-map ~/.local/share/ai-memory` | spool local dos hooks (notebook fora do ar) |

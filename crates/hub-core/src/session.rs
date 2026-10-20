@@ -151,6 +151,10 @@ fn jail_argv(
         argv.push("--forward-port".to_owned());
         argv.push(port.to_string());
     }
+    // O ai-memory é local na VM (F5.0), mas o sandbox tem loopback próprio: sem o relay os
+    // hooks/MCP do agente não alcançam 127.0.0.1:porta e a captura cai no spool para sempre.
+    argv.push("--forward-port".to_owned());
+    argv.push(config.memory.port.to_string());
     // Provedores do opencode fora do 9router (copiados do PC): o proxy do jail só libera os
     // hosts do preset. Soma à lista do preset; o Claude não ganha rede extra.
     if agent == AgentKind::Opencode {
@@ -295,7 +299,9 @@ mod tests {
         assert!(argv.starts_with("ai-jail --rw-map /home/rafa/.assistente/perfis/pessoal "));
         assert!(argv.contains("--claude-dir /home/rafa/.assistente/perfis/pessoal/claude"));
         assert!(argv.contains("--forward-port 20128"));
-        assert!(!argv.contains("--forward-port 49374"));
+        // ai-memory é local na VM (F5.0): o túnel ignora a entrada legacy, mas o relay para o
+        // sandbox continua necessário (loopback do jail é isolado) — exatamente uma vez.
+        assert_eq!(argv.matches("--forward-port 49374").count(), 1);
         assert!(argv.contains("--map /home/rafa/.local/lib/ai-memory"));
         assert!(argv.contains("--rw-map /home/rafa/.local/share/ai-memory"));
         assert!(argv.contains("--map /home/rafa/Documentos/pessoal/projetos/.ai-memory.toml"));

@@ -27,8 +27,14 @@ const session = (project: string, profile = "pessoal"): SessionInfo => ({
 });
 
 const profiles: ProfileView[] = [
-  { id: "pessoal", label: "Pessoal", color: "#8b5cf6", root: "/raiz/pessoal" },
-  { id: "trabalho", label: "Trabalho", color: "#0ea5e9", root: "/raiz/trabalho" },
+  { id: "pessoal", label: "Pessoal", color: "#8b5cf6", root: "/raiz/pessoal", claude_login: true },
+  {
+    id: "trabalho",
+    label: "Trabalho",
+    color: "#0ea5e9",
+    root: "/raiz/trabalho",
+    claude_login: true,
+  },
 ];
 
 /** HubClient de mentira: devolve os projetos do perfil pedido e registra as chamadas. */

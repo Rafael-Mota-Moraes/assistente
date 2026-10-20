@@ -2,7 +2,7 @@ import { Bot, RotateCcw, SquareChevronRight, TerminalSquare, X } from "lucide-re
 import type { ReactNode } from "react";
 import type { AgentKind, SessionInfo } from "../../bridge/types";
 import { useAppStore, visibleProjectSessions } from "../../store";
-import { endSession, openSession } from "./actions";
+import { claudeLoginCommand, endSession, openSession } from "./actions";
 import { reopenTab } from "./shortcuts";
 import { TerminalView } from "./TerminalView";
 
@@ -49,7 +49,9 @@ export function SessionArea() {
     closedTabs,
     execRequests,
   } = useAppStore();
-  const color = profiles.find((p) => p.id === activeProfile)?.color ?? "#a78bfa";
+  const profile = profiles.find((p) => p.id === activeProfile);
+  const color = profile?.color ?? "#a78bfa";
+  const claudeWithoutLogin = profile?.claude_login === false;
 
   if (hubError) {
     return (
@@ -86,7 +88,11 @@ export function SessionArea() {
               key={id}
               type="button"
               onClick={() => openSession(id)}
-              title={title}
+              title={
+                id === "claude" && claudeWithoutLogin
+                  ? `Sem login neste perfil: rode ${claudeLoginCommand(profile.id)} no PC`
+                  : title
+              }
               className={`flex items-center gap-1.5 rounded-lg border bg-white/5 px-3 py-1.5 text-sm transition-colors hover:bg-white/10 ${
                 id === "shell" ? "border-amber-500/40 text-amber-200" : "border-line text-slate-200"
               }`}
@@ -96,6 +102,16 @@ export function SessionArea() {
           ))}
         </div>
       </header>
+      {claudeWithoutLogin && !actionError && (
+        <p className="border-b border-line bg-amber-950/40 px-5 py-2 text-xs text-amber-200">
+          O Claude ainda não tem login no perfil {profile.label} (o login é separado por perfil). No
+          PC, rode{" "}
+          <code className="rounded bg-black/30 px-1 font-mono">
+            {claudeLoginCommand(profile.id)}
+          </code>{" "}
+          e depois clique em Claude.
+        </p>
+      )}
       {actionError && (
         <p className="border-b border-line bg-rose-950/40 px-5 py-2 font-mono text-xs text-rose-300">
           {actionError}

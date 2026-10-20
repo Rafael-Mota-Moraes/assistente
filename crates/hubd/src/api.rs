@@ -12,7 +12,8 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use hub_core::{
     AgentKind, Config, ExecAccess, LaunchOptions, LaunchPlan, Project, ProjectSettings,
-    SessionSpec, discover_projects, exec_client_dir, load_settings, settings_path,
+    SessionSpec, claude_logged_in, discover_projects, exec_client_dir, load_settings,
+    settings_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -288,6 +289,9 @@ struct ProfileView {
     label: String,
     color: String,
     root: PathBuf,
+    /// `false` = o Claude deste perfil nunca fez login: a UI avisa em vez de abrir uma aba
+    /// que morre na hora.
+    claude_login: bool,
 }
 
 async fn profiles(State(state): State<AppState>) -> Json<Vec<ProfileView>> {
@@ -302,6 +306,7 @@ async fn profiles(State(state): State<AppState>) -> Json<Vec<ProfileView>> {
                 label: p.label.clone(),
                 color: p.color.clone(),
                 root: p.root.clone(),
+                claude_login: claude_logged_in(&state.0.config, &state.0.home, id),
             })
             .collect(),
     )
@@ -1155,6 +1160,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body[0]["id"], "pessoal");
         assert_eq!(body[1]["id"], "trabalho");
+        // Home de exemplo sem `.credentials.json`: nenhum perfil com login do Claude.
+        assert_eq!(body[0]["claude_login"], false);
     }
 
     #[tokio::test]

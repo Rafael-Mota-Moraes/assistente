@@ -5,11 +5,25 @@ function fail(error: unknown) {
   useAppStore.setState({ actionError: error instanceof Error ? error.message : String(error) });
 }
 
+/** Comando do PC que faz o login do Claude no perfil (o login é por perfil). */
+export function claudeLoginCommand(profile: string): string {
+  return `bin/assistente login claude ${profile}`;
+}
+
 /** Abre uma sessão nova do agente no projeto ativo e já foca a aba dela. O Terminal não vira
  * `lastAgent`: o Ctrl+Shift+T continua abrindo o último agente. */
 export async function openSession(agent: AgentKind) {
-  const { hub, activeProfile, activeProject, sessions } = useAppStore.getState();
+  const { hub, activeProfile, activeProject, sessions, profiles } = useAppStore.getState();
   if (!hub || !activeProfile || !activeProject) return;
+  // Sem login o Claude abre e morre na hora dentro do jail: a aba sumiria sem explicação.
+  const profile = profiles.find((p) => p.id === activeProfile);
+  if (agent === "claude" && profile?.claude_login === false) {
+    fail(
+      `O Claude ainda não tem login no perfil ${profile.label}. No PC, rode: ` +
+        `${claudeLoginCommand(profile.id)} — depois clique em Claude de novo.`,
+    );
+    return;
+  }
   try {
     const session = await hub.createSession({
       profile: activeProfile,

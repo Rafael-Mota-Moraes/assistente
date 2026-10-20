@@ -69,6 +69,19 @@ pub struct ExecAccess {
     pub token: String,
 }
 
+/// O Claude do perfil tem login? O `assistente login claude <perfil>` grava o
+/// `.credentials.json` no `CLAUDE_CONFIG_DIR` do perfil; sem ele o Claude abre e morre na hora
+/// dentro do jail. Perfil com `claude_via_9router` não usa login da Anthropic.
+pub fn claude_logged_in(config: &Config, home: &Path, profile_id: &str) -> bool {
+    let Some(profile) = config.profile(profile_id) else {
+        return false;
+    };
+    profile.claude_via_9router
+        || profile_data_dir(home, profile_id)
+            .join("claude/.credentials.json")
+            .is_file()
+}
+
 /// Onde mora o cliente `fora-do-jail` na VM (instalado por `vm/provisionar.sh`); entra no
 /// jail só leitura.
 pub fn exec_client_dir(home: &Path) -> PathBuf {
@@ -524,6 +537,22 @@ mod tests {
         assert_eq!(env(&plan, "LANG"), Some("C.UTF-8"));
         assert_eq!(AgentKind::from_id("shell"), Some(AgentKind::Shell));
         assert_eq!(AgentKind::from_id("bash"), None);
+    }
+
+    #[test]
+    fn claude_login_is_per_profile() {
+        let home = scratch("login-claude");
+        let text = EXAMPLE.replacen("claude_via_9router = false", "claude_via_9router = true", 1);
+        let config = Config::parse(&text, &home).unwrap();
+        // pessoal passa pelo 9router: não precisa de login.
+        assert!(claude_logged_in(&config, &home, "pessoal"));
+        assert!(!claude_logged_in(&config, &home, "trabalho"));
+        let claude = profile_data_dir(&home, "trabalho").join("claude");
+        fs::create_dir_all(&claude).unwrap();
+        fs::write(claude.join(".credentials.json"), "{}").unwrap();
+        assert!(claude_logged_in(&config, &home, "trabalho"));
+        assert!(!claude_logged_in(&config, &home, "nope"));
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

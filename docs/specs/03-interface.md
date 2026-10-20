@@ -65,6 +65,7 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
 | hubd fora do ar | Área central "Sem conexão com o hubd" com o erro e como resolver |
 | Notebook/túnel caído | 9router vermelho; memória local verde após F5.0 (hoje ai-memory pode vermelho se ainda via túnel) |
 | Memória (F5.6) | Clique no ponto **ai-memory** abre painel: paths (`data_dir` / `mirror_dir`), erro do probe, último commit do wiki, sync (F5.4), link para web UI |
+| Claude sem login no perfil (F2.7) | Faixa âmbar com `bin/assistente login claude <perfil>`; o botão Claude não abre a aba (que morreria na hora) e repete o aviso. OpenCode e Terminal seguem normais |
 | Pedido fora do jail (F9.7) | Cartão âmbar no canto: comando inteiro, projeto e aba, pasta; Aprovar / Negar / "Aprovar e sempre permitir neste projeto" (confirma com aviso). Bolinha âmbar na aba e contador no projeto. Recentes recolhidos com o resultado. Poll de 2 s |
 | Modo dormir ativo | Botão vira "Dormindo… (tarefa N, log)" com parar; de manhã, modal "Bom dia" (F6.6, botão na lateral) |
 

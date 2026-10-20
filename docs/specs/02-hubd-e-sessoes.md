@@ -26,7 +26,7 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 |---|---|---|---|
 | GET | `/api/health` | pronto | `{ok, version, uptime_seconds, commit: {hubd, ui}}` |
 | GET | `/ui/*` | pronto (F8.3) | build da UI (`just build-ui`), aberto sem token; rota ausente se a pasta não existe |
-| GET | `/api/profiles` | pronto | `[{id, label, color, root}]` |
+| GET | `/api/profiles` | pronto | `[{id, label, color, root, claude_login}]`; `claude_login` = há `.credentials.json` no `CLAUDE_CONFIG_DIR` do perfil (ou `claude_via_9router`) |
 | GET | `/api/projects?profile=<id>` | pronto | `[{name, path, has_project_config}]` |
 | GET | `/api/projects/{profile}/{project}/settings` | pronto (F9.2) | `{settings: {docker, allow_hosts, full_network, allowed_commands}, docker_from_project_file}` |
 | PUT | `/api/projects/{profile}/{project}/settings` | pronto (F9.2) | `settings` → mesma resposta; 400 host/comando inválido; vale para sessões novas |

@@ -44,6 +44,8 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: um clique abre o agente no projeto, no perfil certo. Como testar: conferir `echo $CLAUDE_CONFIG_DIR` na sessão.
 - [x] **F2.6 Abrir no Cursor.** Erro do comando de host vira toast no rodapé (`ui/Toast.tsx`, some em 6 s). Testes: `Toast.test.tsx` + caso no `ProjectList.test.tsx`.
   Pronto quando: o erro aparece na UI quando o Cursor não está instalado. Como testar: renomear o binário e clicar.
+- [x] **F2.7 Aviso de login do Claude por perfil.** O login é por perfil (`CLAUDE_CONFIG_DIR`): sem ele a sessão do Claude abria e morria na hora, sem explicação. `GET /api/profiles` traz `claude_login` (`hub_core::claude_logged_in`: `.credentials.json` do perfil ou `claude_via_9router`); a UI mostra a faixa com `bin/assistente login claude <perfil>` e não cria a sessão. Testes: `claude_login_is_per_profile`, `other_routes_need_the_token`, caso no `SessionArea.test.tsx`.
+  Pronto quando: clicar em Claude num perfil sem login mostra o comando em vez de uma aba que some. Como testar: vitest + perfil sem `.credentials.json`.
 
 ## F3 — Sandbox
 

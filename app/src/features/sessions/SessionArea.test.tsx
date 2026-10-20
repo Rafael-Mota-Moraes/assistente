@@ -51,6 +51,26 @@ describe("SessionArea", () => {
     expect(tabLabel(created)).toBe("Terminal 1");
   });
 
+  it("perfil sem login do Claude: avisa com o comando e não abre a aba", async () => {
+    const createSession = vi.fn();
+    useAppStore.setState({
+      hub: { createSession } as unknown as HubClient,
+      profiles: [
+        { id: "trabalho", label: "Trabalho", color: "#0ea5e9", root: "/t", claude_login: false },
+      ],
+      activeProfile: "trabalho",
+      activeProject: "beewell",
+    });
+    render(<SessionArea />);
+    expect(screen.getByText("bin/assistente login claude trabalho")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Claude/ }));
+    expect(createSession).not.toHaveBeenCalled();
+    expect(useAppStore.getState().actionError).toMatch(/login claude trabalho/);
+    // OpenCode e Terminal continuam abrindo.
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ agent: "opencode" }));
+  });
+
   it("mostra só as sessões do projeto ativo e abre a última", () => {
     useAppStore.setState({
       activeProfile: "pessoal",

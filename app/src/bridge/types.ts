@@ -8,7 +8,14 @@ export type Health = {
   commit: { hubd: string; ui: string | null };
 };
 
-export type ProfileView = { id: string; label: string; color: string; root: string };
+export type ProfileView = {
+  id: string;
+  label: string;
+  color: string;
+  root: string;
+  /** `false` = o Claude deste perfil nunca fez login (`assistente login claude <perfil>`). */
+  claude_login: boolean;
+};
 
 export type Project = { name: string; path: string; has_project_config: boolean };
 

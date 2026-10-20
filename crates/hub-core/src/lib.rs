@@ -13,6 +13,6 @@ pub use config::{Config, ConfigError, Profile, expand_home};
 pub use project::{Project, discover_projects};
 pub use project_settings::{ProjectSettings, SettingsFile, load_settings, settings_path};
 pub use session::{
-    AgentKind, ExecAccess, LaunchOptions, LaunchPlan, SessionSpec, exec_client_dir,
-    profile_data_dir,
+    AgentKind, ExecAccess, LaunchOptions, LaunchPlan, SessionSpec, claude_logged_in,
+    exec_client_dir, profile_data_dir,
 };

@@ -50,8 +50,8 @@ const session = (id: string, project = "game"): SessionInfo => ({
 });
 
 const profiles: ProfileView[] = [
-  { id: "pessoal", label: "Pessoal", color: "#8b5cf6", root: "/p" },
-  { id: "trabalho", label: "Trabalho", color: "#0ea5e9", root: "/t" },
+  { id: "pessoal", label: "Pessoal", color: "#8b5cf6", root: "/p", claude_login: true },
+  { id: "trabalho", label: "Trabalho", color: "#0ea5e9", root: "/t", claude_login: true },
 ];
 
 function withTabs() {

@@ -1,4 +1,5 @@
 import { ExecApprovals } from "./features/exec/ExecApprovals";
+import { MemoryPanel } from "./features/memory/MemoryPanel";
 import { ProfileSwitcher } from "./features/profiles/ProfileSwitcher";
 import { ProjectList } from "./features/projects/ProjectList";
 import { ProjectSettingsDialog } from "./features/projects/ProjectSettingsDialog";
@@ -39,6 +40,7 @@ export function App() {
       <GoodMorning />
       <ProjectSettingsDialog />
       <ExecApprovals />
+      <MemoryPanel />
     </div>
   );
 }

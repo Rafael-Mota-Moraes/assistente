@@ -29,3 +29,6 @@ tauri-plugin-websocket = "=2.5.0"
 # Só nos testes do hubd (cliente WebSocket); mesma versão que o axum usa.
 tokio-tungstenite = "=0.29.0"
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink"] }
+hyper = { version = "=1.11.1", features = ["client", "http1"] }
+hyper-util = { version = "=0.1.21", features = ["tokio"] }
+http-body-util = "=0.1.5"

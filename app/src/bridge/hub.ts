@@ -37,6 +37,11 @@ export class HubClient {
     private readonly fetchFn: typeof fetch = (...args) => fetch(...args),
   ) {}
 
+  /** URL base do hubd (sem barra final), para montar links (ex.: web UI do ai-memory). */
+  baseUrl(): string {
+    return this.connection.url.replace(/\/$/, "");
+  }
+
   health(): Promise<Health> {
     return this.get("/api/health");
   }

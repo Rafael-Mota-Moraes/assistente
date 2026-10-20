@@ -10,11 +10,14 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use http_body_util::{BodyExt, Full};
 use hub_core::{
     AgentKind, Config, ExecAccess, LaunchOptions, LaunchPlan, Project, ProjectSettings,
     SessionSpec, claude_logged_in, discover_projects, exec_client_dir, load_settings,
     settings_path,
 };
+use hyper::client::conn::http1;
+use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -179,7 +182,46 @@ pub fn router(state: AppState) -> Router {
         .route("/api/exec/{id}/deny", post(deny_exec))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
-    let mut public = Router::new().route("/api/health", get(health));
+    let mut public = Router::new()
+        .route("/api/health", get(health))
+        // Proxy para a web UI do ai-memory local (F5.5): /web e /api/v1 são encaminhados
+        // ao servidor ai-memory na VM, preservando cookies (mesma origem).
+        .route(
+            "/web",
+            get(proxy_ai_memory)
+                .post(proxy_ai_memory)
+                .put(proxy_ai_memory)
+                .delete(proxy_ai_memory)
+                .patch(proxy_ai_memory)
+                .head(proxy_ai_memory),
+        )
+        .route(
+            "/web/{*path}",
+            get(proxy_ai_memory)
+                .post(proxy_ai_memory)
+                .put(proxy_ai_memory)
+                .delete(proxy_ai_memory)
+                .patch(proxy_ai_memory)
+                .head(proxy_ai_memory),
+        )
+        .route(
+            "/api/v1",
+            get(proxy_ai_memory)
+                .post(proxy_ai_memory)
+                .put(proxy_ai_memory)
+                .delete(proxy_ai_memory)
+                .patch(proxy_ai_memory)
+                .head(proxy_ai_memory),
+        )
+        .route(
+            "/api/v1/{*path}",
+            get(proxy_ai_memory)
+                .post(proxy_ai_memory)
+                .put(proxy_ai_memory)
+                .delete(proxy_ai_memory)
+                .patch(proxy_ai_memory)
+                .head(proxy_ai_memory),
+        );
     // O bundle da UI não tem segredo: `/ui/*` é aberto (spec 09, F8.3).
     if let Some(dir) = ui_dir {
         public = public.nest_service("/ui", ServeDir::new(dir));
@@ -467,6 +509,82 @@ async fn memory(State(state): State<AppState>) -> Json<MemoryStatus> {
         last_error,
         checked_at,
     })
+}
+
+/// Proxy reverso para o servidor ai-memory local na VM (F5.5). Encaminha a requisição
+/// (método, cabeçalhos, corpo, query) ao `127.0.0.1:{port}` e devolve a resposta
+/// integral, preservando cookies (mesma origem).
+async fn proxy_ai_memory(State(state): State<AppState>, req: Request) -> Response {
+    let port = state.0.config.memory.port;
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
+    let target = format!("http://127.0.0.1:{}{}", port, path_and_query);
+
+    let stream = match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+        Ok(s) => s,
+        Err(e) => {
+            return error(
+                StatusCode::BAD_GATEWAY,
+                &format!("ai-memory inacessível: {e}"),
+            );
+        }
+    };
+    let io = TokioIo::new(stream);
+    let (mut sender, conn) = match http1::handshake(io).await {
+        Ok(x) => x,
+        Err(e) => {
+            return error(
+                StatusCode::BAD_GATEWAY,
+                &format!("handshake ai-memory: {e}"),
+            );
+        }
+    };
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let method = req.method().clone();
+    let mut builder = Request::builder().method(method).uri(&target);
+    for (k, v) in req.headers() {
+        if k == axum::http::header::HOST {
+            continue;
+        }
+        builder = builder.header(k, v);
+    }
+    builder = builder.header(axum::http::header::HOST, format!("127.0.0.1:{}", port));
+
+    let body_bytes = match req.into_body().collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => return error(StatusCode::BAD_REQUEST, &format!("corpo: {e}")),
+    };
+
+    let upstream_req = match builder.body(Full::new(body_bytes)) {
+        Ok(r) => r,
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, &format!("request: {e}")),
+    };
+
+    let upstream_res = match sender.send_request(upstream_req).await {
+        Ok(r) => r,
+        Err(e) => return error(StatusCode::BAD_GATEWAY, &format!("ai-memory: {e}")),
+    };
+
+    let status = upstream_res.status();
+    let headers = upstream_res.headers().clone();
+    let body = upstream_res.into_body();
+    let bytes = match body.collect().await {
+        Ok(c) => c.to_bytes(),
+        Err(e) => return error(StatusCode::BAD_GATEWAY, &format!("corpo ai-memory: {e}")),
+    };
+
+    let mut res = Response::builder().status(status);
+    for (k, v) in headers.iter() {
+        res = res.header(k, v);
+    }
+    res.body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "resposta inválida"))
 }
 
 fn internal(message: &str) -> Response {

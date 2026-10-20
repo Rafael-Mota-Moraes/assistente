@@ -109,7 +109,18 @@ export function StatusBar() {
         />
       )}
       {memory && (
-        <StatusDot tone={memory.up ? "ok" : "off"} label="ai-memory" title={memoryTitle(memory)} />
+        <button
+          type="button"
+          onClick={() => useAppStore.setState({ memoryPanelOpen: true })}
+          className="flex items-center"
+          title={memoryTitle(memory)}
+        >
+          <StatusDot
+            tone={memory.up ? "ok" : "off"}
+            label="ai-memory"
+            title={memoryTitle(memory)}
+          />
+        </button>
       )}
       {notebook?.services
         .filter((service) => service.name !== "ai_memory")

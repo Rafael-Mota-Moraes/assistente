@@ -30,7 +30,7 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
 
 ```
 ┌──────────────┬───────────────────────────────────────────────────────┐
-│ ● Assistente │ game                         [Claude] [OpenCode]      │
+│ ● Assistente │ game              [Claude] [OpenCode] [Terminal]      │
 │ [Pessoal|Trab]├──────────────────────────────────────────────────────┤
 │              │ claude-1 │ opencode-1 │ +                              │
 │ ▸ game    🌙 │ ┌──────────────────────────────────────────────────┐  │
@@ -47,6 +47,9 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
 - **Tema**: escuro, fundo com dois brilhos radiais (violeta/azul), painéis translúcidos.
   A cor do perfil ativo tinge o seletor (e, na F2.4, a borda da aba ativa), para nunca
   confundir pessoal com trabalho.
+- **Terminal** (F9.1, âmbar): abre uma aba com `bash` na pasta do projeto, na VM e **fora do
+  jail**, com o env do perfil. Para o que o agente não consegue rodar (Docker, rede, `git push`)
+  sem procurar a pasta num terminal do PC. A aba também fica âmbar.
 - 🌙 ao lado do projeto = tem `.assistente.toml` (pronto para o modo dormir).
 - Passar o mouse num projeto mostra "abrir no Cursor".
 

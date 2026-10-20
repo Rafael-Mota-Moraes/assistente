@@ -30,7 +30,7 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 | GET | `/api/projects?profile=<id>` | pronto | `[{name, path, has_project_config}]` |
 | GET | `/api/notebook` | parcial (F4.2) | `{ssh_host, tunnel_managed, services: [{name, port, up}]}` |
 | GET | `/api/sessions` | pronto | `[{id, profile, project, agent, created_at, attached}]` |
-| POST | `/api/sessions` | pronto | `{profile, project, agent: "claude"|"opencode"}` → sessão |
+| POST | `/api/sessions` | pronto | `{profile, project, agent: "claude"|"opencode"|"shell"}` → sessão (`shell` = aba Terminal, F9.1) |
 | DELETE | `/api/sessions/{id}` | pronto | mata a sessão tmux |
 | GET (WS) | `/api/sessions/{id}/terminal` | pronto | ver protocolo abaixo |
 | GET | `/api/sleep` | pronto (F6.3) | `?profile&project` → `{sleeping, log_tail}` (tmux + tail do log no notebook) |
@@ -46,7 +46,8 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 
 - **nome tmux**: `<perfil>--<projeto>--<agente>-<n>` (minúsculo, sem `.`/`:`);
 - **cwd**: `<raiz do perfil>/<projeto>` (nome sem `/`, sem começar com `.`);
-- **comando**: `ai-jail --rw-map ~/.assistente/perfis/<perfil> -- claude|opencode`;
+- **comando**: `ai-jail --rw-map ~/.assistente/perfis/<perfil> -- claude|opencode`; na aba
+  Terminal (`shell`, F9.1), `bash -l` direto, **sem** ai-jail (é você digitando);
 - **env**: `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`,
   `AI_MEMORY_SERVER_URL`, `ANTHROPIC_BASE_URL` (só com `claude_via_9router`),
   `GIT_SSH_COMMAND` (só com `ssh_key`) e `ASSISTENTE_PROFILE`.

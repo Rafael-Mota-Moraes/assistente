@@ -125,6 +125,29 @@ Spec 09. Ordem sugerida: F8.1 e F8.2 valem sozinhas; F8.4 começa por uma prova 
 - [ ] **F8.7 Recarregar ao aplicar.** O app nota o commit novo da UI no `/api/health` e recarrega; commit que toca `app/src-tauri` mostra "reinstale o app".
   Pronto quando: aplicar uma mudança de texto na UI aparece sem fechar o app e com os terminais vivos. Como testar: manual na VM.
 
+## F9 — Fora do jail
+
+Spec 05 ("Fora do jail"). O agente roda no ai-jail (Docker desligado, rede filtrada, home
+privada): o que ele não consegue rodar ia para um terminal do PC aberto na mão. Ordem: F9.1
+sozinha resolve a maior parte; F9.2–F9.4 antes de F9.5–F9.7 (as duas mexem no `LaunchPlan`).
+
+- [x] **F9.1 Aba Terminal.** Botão "Terminal" ao lado de Claude/OpenCode: `AgentKind::Shell` (`"shell"`) roda `bash -l` direto no tmux, na pasta do projeto, com o env do perfil e **fora do jail** (Docker, rede, `git push`). Aba e botão em âmbar; não vira `lastAgent` (o Ctrl+Shift+T continua abrindo agente). Testes: `shell_session_runs_bash_outside_the_jail`, `parse_line_knows_the_terminal_tab_and_skips_foreign_sessions`, `terminal_tab_is_a_shell_session` (tmux real) e caso no `SessionArea.test.tsx`.
+  Pronto quando: um clique abre um bash no projeto sem procurar a pasta. Como testar: vitest + rota com tmux real; na VM, `docker ps` na aba.
+- [ ] **F9.2 Configurações do projeto no hubd.** `~/.assistente/projetos.toml` (na VM, fora de qualquer mount do jail: o agente não se dá permissão): `docker`, `allow_hosts`, `full_network`, `allowed_commands` por perfil/projeto. `GET/PUT /api/projects/{profile}/{project}/settings`; aplicadas no `LaunchPlan` (rede completa = `--network` sem `--forward-port`). `[jail] docker` do `.assistente.toml` continua valendo.
+  Pronto quando: ligar Docker pela API faz a próxima sessão nascer com `--docker`. Como testar: testes de `LaunchPlan` + rotas com home temporário.
+- [ ] **F9.3 Engrenagem do projeto na UI.** Ícone na lista de projetos abre o modal de configurações (avisos de Docker e rede completa, hosts, comandos sempre permitidos, "vale para sessões novas").
+  Pronto quando: dá para afrouxar o jail de um projeto sem editar arquivo. Como testar: vitest com dados fake.
+- [ ] **F9.4 Backup inclui `projetos.toml`.** `bin/assistente backup`/`restaurar`/`vm logins` levam e trazem o arquivo (extensão da F7.1).
+  Pronto quando: o tar tem `vm-projetos.toml` e a restauração o devolve à VM. Como testar: `bin/teste-backup.sh`.
+- [ ] **F9.5 API do agente.** Listener separado `[hub] agent_listen` (127.0.0.1:7879, só `/v1/exec*`; a 7878 continua fora do jail), token por sessão no tmux (`@assistente_exec_token`), fila em memória, execução na VM fora do jail com timeout e saída truncada; aprovação em `/api/exec`.
+  Pronto quando: um pedido aprovado devolve saída e código; negado devolve 126. Como testar: ponta a ponta com tmux real.
+- [ ] **F9.6 Cliente `fora-do-jail`.** Script no jail (`~/.local/lib/assistente`) e instruções aos agentes via `configurar-agentes.sh` (CLAUDE.md do perfil, `instructions` do opencode).
+  Pronto quando: o script faz o pedido, espera e repassa saída e código. Como testar: script contra o listener ao vivo.
+- [ ] **F9.7 Aprovar na UI.** Painel global com Aprovar / Negar / Aprovar e sempre permitir neste projeto (com aviso de fuga por arquivos do projeto); badge de pendentes.
+  Pronto quando: aprovar pelo app destrava o agente. Como testar: vitest com dados fake.
+- [ ] **F9.8 Validação na VM real** *(humano)*. Do jail: 7879 acessível, 7878 não; `projetos.toml`, `hub.token` e socket do tmux invisíveis; `--network`; agentes usam o `fora-do-jail` sozinhos.
+  Pronto quando: os itens acima conferem. Como testar: sessão real.
+
 ## Depois
 
 - Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.

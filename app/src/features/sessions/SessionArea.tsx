@@ -1,4 +1,4 @@
-import { Bot, RotateCcw, TerminalSquare, X } from "lucide-react";
+import { Bot, RotateCcw, SquareChevronRight, TerminalSquare, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { AgentKind, SessionInfo } from "../../bridge/types";
 import { useAppStore, visibleProjectSessions } from "../../store";
@@ -6,12 +6,30 @@ import { endSession, openSession } from "./actions";
 import { reopenTab } from "./shortcuts";
 import { TerminalView } from "./TerminalView";
 
-const agents: { id: AgentKind; label: string; icon: typeof Bot }[] = [
-  { id: "claude", label: "Claude", icon: Bot },
-  { id: "opencode", label: "OpenCode", icon: TerminalSquare },
+const agents: { id: AgentKind; label: string; icon: typeof Bot; title: string }[] = [
+  { id: "claude", label: "Claude", icon: Bot, title: "Nova sessão do Claude (no ai-jail da VM)" },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    icon: TerminalSquare,
+    title: "Nova sessão do OpenCode (no ai-jail da VM)",
+  },
+  {
+    id: "shell",
+    label: "Terminal",
+    icon: SquareChevronRight,
+    title: "Bash na pasta do projeto, na VM e fora do jail (Docker, rede, git push)",
+  },
 ];
 
-const agentLabel: Record<AgentKind, string> = { claude: "Claude", opencode: "OpenCode" };
+const agentLabel: Record<AgentKind, string> = {
+  claude: "Claude",
+  opencode: "OpenCode",
+  shell: "Terminal",
+};
+
+/** Âmbar lembra que o Terminal roda fora do jail. */
+const outsideJail = "#f59e0b";
 
 /** "pessoal--game--claude-2" → "Claude 2" */
 export function tabLabel(session: SessionInfo): string {
@@ -62,13 +80,15 @@ export function SessionArea() {
       <header className="flex items-center gap-3 border-b border-line px-5 py-3">
         <h2 className="text-lg font-semibold text-white">{activeProject}</h2>
         <div className="ml-auto flex gap-2">
-          {agents.map(({ id, label, icon: Icon }) => (
+          {agents.map(({ id, label, icon: Icon, title }) => (
             <button
               key={id}
               type="button"
               onClick={() => openSession(id)}
-              title={`Nova sessão do ${label} (no ai-jail da VM)`}
-              className="flex items-center gap-1.5 rounded-lg border border-line bg-white/5 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-white/10"
+              title={title}
+              className={`flex items-center gap-1.5 rounded-lg border bg-white/5 px-3 py-1.5 text-sm transition-colors hover:bg-white/10 ${
+                id === "shell" ? "border-amber-500/40 text-amber-200" : "border-line text-slate-200"
+              }`}
             >
               <Icon className="size-4" /> {label}
             </button>
@@ -82,14 +102,15 @@ export function SessionArea() {
       )}
       {projectSessions.length === 0 ? (
         <Empty title="Nenhuma sessão aberta">
-          Clique em Claude ou OpenCode para abrir um agente neste projeto. A sessão continua viva na
-          VM mesmo se você fechar o app.
+          Clique em Claude ou OpenCode para abrir um agente neste projeto, ou em Terminal para um
+          bash fora do jail. A sessão continua viva na VM mesmo se você fechar o app.
         </Empty>
       ) : (
         <>
           <div className="flex items-center gap-1 border-b border-line px-3 pt-2" role="tablist">
             {visible.map((session) => {
               const active = session.id === current?.id;
+              const tint = session.agent === "shell" ? outsideJail : color;
               return (
                 <div
                   key={session.id}
@@ -98,13 +119,14 @@ export function SessionArea() {
                       ? "bg-[#0b0e1a] text-white"
                       : "border-transparent text-slate-400 hover:text-slate-200"
                   }`}
-                  style={active ? { borderColor: `${color}88` } : undefined}
+                  style={active ? { borderColor: `${tint}88` } : undefined}
                 >
                   <button
                     type="button"
                     role="tab"
                     aria-selected={active}
                     onClick={() => useAppStore.setState({ activeSession: session.id })}
+                    className={session.agent === "shell" ? "text-amber-200" : undefined}
                   >
                     {tabLabel(session)}
                   </button>

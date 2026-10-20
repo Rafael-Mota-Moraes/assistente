@@ -1480,6 +1480,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_tab_is_a_shell_session() {
+        let t = TestTmux::new("api-shell");
+        let hub = live_hub(&t, None).await;
+        let spec = r#"{"profile":"pessoal","project":"proj","agent":"shell"}"#;
+        let (status, body) = http("POST", &format!("{hub}/api/sessions"), Some(spec)).await;
+        assert_eq!(status, 201, "{body}");
+        let info: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(info["id"], "pessoal--proj--shell-1");
+        assert_eq!(info["agent"], "shell");
+        let (_, body) = http("GET", &format!("{hub}/api/sessions"), None).await;
+        assert!(body.contains(r#""agent":"shell""#), "{body}");
+    }
+
+    #[tokio::test]
     async fn create_rejects_missing_project_and_terminal_needs_token() {
         let t = TestTmux::new("api-erros");
         let hub = live_hub(&t, Some("s3gredo")).await;

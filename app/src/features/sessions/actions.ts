@@ -5,7 +5,8 @@ function fail(error: unknown) {
   useAppStore.setState({ actionError: error instanceof Error ? error.message : String(error) });
 }
 
-/** Abre uma sessão nova do agente no projeto ativo e já foca a aba dela. */
+/** Abre uma sessão nova do agente no projeto ativo e já foca a aba dela. O Terminal não vira
+ * `lastAgent`: o Ctrl+Shift+T continua abrindo o último agente. */
 export async function openSession(agent: AgentKind) {
   const { hub, activeProfile, activeProject, sessions } = useAppStore.getState();
   if (!hub || !activeProfile || !activeProject) return;
@@ -18,7 +19,7 @@ export async function openSession(agent: AgentKind) {
     useAppStore.setState({
       sessions: [...sessions.filter((s) => s.id !== session.id), session],
       activeSession: session.id,
-      lastAgent: agent,
+      ...(agent === "shell" ? {} : { lastAgent: agent }),
       actionError: null,
     });
   } catch (error) {

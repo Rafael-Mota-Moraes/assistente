@@ -101,7 +101,7 @@ impl Tmux {
         for (key, value) in [
             ("@assistente_profile", spec.profile.as_str()),
             ("@assistente_project", spec.project.as_str()),
-            ("@assistente_agent", spec.agent.command()),
+            ("@assistente_agent", spec.agent.id()),
             // As abas do app substituem a barra do tmux; mouse liga rolagem e clique nos TUIs.
             ("status", "off"),
             ("mouse", "on"),
@@ -135,11 +135,8 @@ fn parse_line(line: &str) -> Option<SessionInfo> {
     let id = parts.next()?.to_owned();
     let profile = parts.next()?.to_owned();
     let project = parts.next()?.to_owned();
-    let agent = match parts.next()? {
-        "claude" => AgentKind::Claude,
-        "opencode" => AgentKind::Opencode,
-        _ => return None, // sessão que não é do Assistente
-    };
+    // Sessão que não é do Assistente: sem agente conhecido.
+    let agent = AgentKind::from_id(parts.next()?)?;
     Some(SessionInfo {
         id,
         profile,
@@ -297,6 +294,15 @@ pub(crate) mod tests {
         let existing = [mk("pessoal--x--claude-1"), mk("pessoal--x--claude-3")];
         assert_eq!(next_seq(&existing, &s), 2);
         assert_eq!(next_seq(&existing, &spec("x", AgentKind::Opencode)), 1);
+        assert_eq!(next_seq(&existing, &spec("x", AgentKind::Shell)), 1);
+    }
+
+    #[test]
+    fn parse_line_knows_the_terminal_tab_and_skips_foreign_sessions() {
+        let info = parse_line("pessoal--x--shell-1|~|pessoal|~|x|~|shell|~|10|~|1").unwrap();
+        assert_eq!(info.agent, AgentKind::Shell);
+        assert_eq!(info.attached, 1);
+        assert!(parse_line("minha|~||~||~||~|10|~|0").is_none());
     }
 
     pub async fn wait_for_file(path: &Path) -> String {

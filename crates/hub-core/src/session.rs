@@ -1,4 +1,5 @@
-//! Como uma sessão de agente é lançada na VM: tmux → ai-jail → claude | opencode.
+//! Como uma sessão de agente é lançada na VM: tmux → ai-jail → claude | opencode. A aba
+//! Terminal (`AgentKind::Shell`) é a exceção: bash direto no tmux, fora do jail (F9.1).
 //! Spec: docs/specs/02-hubd-e-sessoes.md e docs/specs/05-sandbox.md
 
 use crate::config::{Config, Profile, is_valid_id};
@@ -11,14 +12,24 @@ use std::path::{Path, PathBuf};
 pub enum AgentKind {
     Claude,
     Opencode,
+    /// Aba Terminal: bash na VM, fora do jail, com o env do perfil (F9.1).
+    Shell,
 }
 
 impl AgentKind {
-    pub fn command(self) -> &'static str {
+    /// Nome no tmux (`…--claude-1`) e na opção `@assistente_agent`.
+    pub fn id(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::Opencode => "opencode",
+            Self::Shell => "shell",
         }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        [Self::Claude, Self::Opencode, Self::Shell]
+            .into_iter()
+            .find(|a| a.id() == id)
     }
 }
 
@@ -83,11 +94,12 @@ impl LaunchPlan {
         let data_dir = profile_data_dir(home, &spec.profile);
         let env = profile_env(config, profile, &data_dir);
         let cwd = profile.root.join(&spec.project);
-        let jail = jail_config_at(&cwd);
-        Ok(Self {
-            tmux_session: tmux_session_name(&spec.profile, &spec.project, spec.agent, seq),
-            cwd,
-            argv: jail_argv(
+        let argv = if spec.agent == AgentKind::Shell {
+            // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
+            vec!["bash".to_owned(), "-l".to_owned()]
+        } else {
+            let jail = jail_config_at(&cwd);
+            jail_argv(
                 config,
                 home,
                 profile,
@@ -95,7 +107,12 @@ impl LaunchPlan {
                 &env,
                 spec.agent,
                 jail.docker,
-            ),
+            )
+        };
+        Ok(Self {
+            tmux_session: tmux_session_name(&spec.profile, &spec.project, spec.agent, seq),
+            cwd,
+            argv,
             env,
         })
     }
@@ -185,7 +202,7 @@ fn jail_argv(
         argv.push(key.clone());
     }
     argv.push("--".to_owned());
-    argv.push(agent.command().to_owned());
+    argv.push(agent.id().to_owned());
     // O opencode 2 roda como cliente de um servidor em segundo plano compartilhado, que não
     // sobrevive ao jail: com `--standalone` cada sessão sobe o seu.
     if agent == AgentKind::Opencode {
@@ -250,7 +267,7 @@ fn tmux_session_name(profile: &str, project: &str, agent: AgentKind, seq: u32) -
         })
         .collect();
     debug_assert!(is_valid_id(profile));
-    format!("{profile}--{project}--{}-{seq}", agent.command())
+    format!("{profile}--{project}--{}-{seq}", agent.id())
 }
 
 #[cfg(test)]
@@ -401,6 +418,29 @@ mod tests {
             env(&plan, "ANTHROPIC_BASE_URL"),
             Some("http://127.0.0.1:20128")
         );
+    }
+
+    #[test]
+    fn shell_session_runs_bash_outside_the_jail() {
+        let (config, home) = setup();
+        let plan = LaunchPlan::build(
+            &config,
+            &home,
+            &spec("pessoal", "game", AgentKind::Shell),
+            1,
+        )
+        .unwrap();
+        assert_eq!(plan.tmux_session, "pessoal--game--shell-1");
+        assert_eq!(plan.argv, ["bash", "-l"]);
+        assert_eq!(
+            plan.cwd,
+            PathBuf::from("/home/rafa/Documentos/pessoal/projetos/game")
+        );
+        // Mesmo env das sessões de agente: identidade git, config do perfil.
+        assert_eq!(env(&plan, "GIT_AUTHOR_EMAIL"), Some("voce@exemplo.com"));
+        assert_eq!(env(&plan, "LANG"), Some("C.UTF-8"));
+        assert_eq!(AgentKind::from_id("shell"), Some(AgentKind::Shell));
+        assert_eq!(AgentKind::from_id("bash"), None);
     }
 
     #[test]

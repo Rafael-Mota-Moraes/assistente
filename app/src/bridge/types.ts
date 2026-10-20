@@ -51,7 +51,8 @@ export type VmState = "running" | "stopped" | "missing" | "no-incus" | "unknown"
 
 export type VmStatus = { state: VmState; detail: string | null };
 
-export type AgentKind = "claude" | "opencode";
+/** `shell` = aba Terminal: bash na VM, fora do jail (F9.1). */
+export type AgentKind = "claude" | "opencode" | "shell";
 
 export type SessionInfo = {
   id: string;

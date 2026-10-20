@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { HubClient } from "../../bridge/hub";
 import type { SessionInfo } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { SessionArea, tabLabel } from "./SessionArea";
@@ -27,6 +28,27 @@ const session = (id: string, project: string, agent: SessionInfo["agent"]): Sess
 describe("SessionArea", () => {
   it("nomeia a aba pelo agente e número", () => {
     expect(tabLabel(session("pessoal--game--opencode-3", "game", "opencode"))).toBe("OpenCode 3");
+  });
+
+  it("botão Terminal abre um bash fora do jail sem trocar o último agente", async () => {
+    const created = session("pessoal--game--shell-1", "game", "shell");
+    const createSession = vi.fn().mockResolvedValue(created);
+    useAppStore.setState({
+      hub: { createSession } as unknown as HubClient,
+      activeProfile: "pessoal",
+      activeProject: "game",
+      lastAgent: "opencode",
+    });
+    render(<SessionArea />);
+    fireEvent.click(screen.getByRole("button", { name: /Terminal/ }));
+    expect(createSession).toHaveBeenCalledWith({
+      profile: "pessoal",
+      project: "game",
+      agent: "shell",
+    });
+    expect(await screen.findByRole("tab", { name: "Terminal 1" })).toBeInTheDocument();
+    expect(useAppStore.getState().lastAgent).toBe("opencode");
+    expect(tabLabel(created)).toBe("Terminal 1");
   });
 
   it("mostra só as sessões do projeto ativo e abre a última", () => {

@@ -67,6 +67,18 @@ O conteúdo fora do jail varia com o último agente (`command = ["claude"]` ou `
 e não importa: o `LaunchPlan` passa tudo por flag. Segundo o README do ai-jail, o `.ai-jail`
 do projeto não é confiável e só pode restringir o sandbox, nunca afrouxar.
 
+## Fora do jail (F9)
+
+O que o jail bloqueia (Docker, hosts fora da lista, `git push` por ssh, `sudo`) tem três saídas,
+nenhuma no PC: a VM continua sendo a fronteira.
+
+- **Aba Terminal (F9.1).** `bash -l` no tmux, sem ai-jail, na pasta do projeto e com o env do
+  perfil (identidade git, `GIT_SSH_COMMAND`). Equivale a você digitando na VM.
+- **Configurações do projeto (F9.2–F9.3).** Afrouxam o jail por projeto; ficam fora do
+  projeto para o agente não se dar permissão.
+- **Pedido do agente com aprovação (F9.5–F9.7).** O agente pede, você aprova no app e o hubd
+  roda o comando na VM, fora do jail.
+
 ## Permissões dos agentes (F3.3)
 
 `ai-jail --bootstrap` gera, por perfil (com `CLAUDE_CONFIG_DIR`/`OPENCODE_CONFIG` do perfil):

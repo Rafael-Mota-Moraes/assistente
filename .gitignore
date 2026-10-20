@@ -21,6 +21,9 @@ dist/
 .vscode/
 *.swp
 
+# Claude Code: permissões/settings locais da máquina (o time pode versionar .claude/settings.json)
+/.claude/settings.local.json
+
 # Modo dormir: sinal de parada para revisão humana
 /RELATORIO.md
 

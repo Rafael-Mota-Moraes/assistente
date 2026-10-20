@@ -1,5 +1,5 @@
 import { ExecApprovals } from "./features/exec/ExecApprovals";
-import { MemoryPanel } from "./features/memory/MemoryPanel";
+import { MemoryButton } from "./features/memory/MemoryButton";
 import { ProfileSwitcher } from "./features/profiles/ProfileSwitcher";
 import { ProjectList } from "./features/projects/ProjectList";
 import { ProjectSettingsDialog } from "./features/projects/ProjectSettingsDialog";
@@ -27,6 +27,7 @@ export function App() {
             <ProjectList />
           </nav>
           <div className="flex flex-col gap-2">
+            <MemoryButton />
             <SleepButton />
             <MorningButton />
           </div>
@@ -40,7 +41,6 @@ export function App() {
       <GoodMorning />
       <ProjectSettingsDialog />
       <ExecApprovals />
-      <MemoryPanel />
     </div>
   );
 }

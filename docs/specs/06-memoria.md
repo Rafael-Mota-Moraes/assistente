@@ -49,8 +49,8 @@ OPENCODE_CONFIG=…/opencode.json ai-memory install-mcp   --client opencode --ap
 OPENCODE_CONFIG=…/opencode.json ai-memory install-hooks --agent  opencode --apply
 ```
 
-`bin/assistente agentes configurar` hoje ainda copia token do notebook (legado); F5.0 passa a
-gerar/usar token do servidor local.
+`bin/assistente agentes configurar` usa o token do servidor local
+(`<memory.data_dir>/auth-tokens/default`, criado pelo `ai-memory init` no provisionamento).
 
 ## Workspaces (pessoal × trabalho)
 
@@ -98,6 +98,9 @@ hooks/MCP por perfil, `.ai-memory.toml` na raiz. Prova end-to-end com túnel ao 
 
 - F5.0: systemd do ai-memory na VM, wiki em `mirror_dir`, token local, retirar `:49374` do túnel.
 - F5.4: sync git do wiki PC ↔ notebook (não “fetch do notebook como principal”).
-- F5.5: painel / web UI apontando para o servidor **local**.
+- F5.5 (feito): web UI pelo hubd. `/memoria/entrar?token=<token do hub>` entrega o cookie
+  `hub_memoria` (sorteado a cada início do hubd) e redireciona para `/web`; o proxy só aceita
+  esse cookie ou o Bearer do hub e troca o `Authorization` pelo token do ai-memory. Janela
+  própria no app, não iframe: o WebKitGTK não envia cookie de terceiros dentro de iframe.
 - F5.6: visão operacional (paths, wiki git, erros, sync) — spec 03.
 - Spool offline: detalhes na doc upstream do ai-memory 3.x.

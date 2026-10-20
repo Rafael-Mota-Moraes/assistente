@@ -53,8 +53,6 @@ type State = {
   morning: MorningState | null;
   /** Modal de configurações do projeto (engrenagem, F9.3); `null` = fechado. */
   projectSettings: { profile: string; project: string } | null;
-  /** Painel da web UI do ai-memory (F5.5); `true` = aberto. */
-  memoryPanelOpen: boolean;
   /** Pedidos dos agentes para rodar fora do jail (F9.7), atualizados a cada 2 s. */
   execRequests: ExecView[];
 };
@@ -78,7 +76,6 @@ export const initialState: State = {
   toast: null,
   morning: null,
   projectSettings: null,
-  memoryPanelOpen: false,
   execRequests: [],
 };
 

@@ -36,6 +36,15 @@ export function openInCursor(path: string): Promise<void> {
   return invoke("open_in_cursor", { path });
 }
 
+/** Abre a web UI do ai-memory numa janela própria do app (F5.5). */
+export function openMemoryWindow(url: string): Promise<void> {
+  if (!isTauri()) {
+    window.open(url, "_blank", "noopener");
+    return Promise.resolve();
+  }
+  return invoke("open_memory_window", { url });
+}
+
 /** Abre uma URL no navegador padrão (links clicáveis do terminal). */
 export function openUrl(url: string): Promise<void> {
   if (!isTauri()) {

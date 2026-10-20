@@ -37,9 +37,13 @@ export class HubClient {
     private readonly fetchFn: typeof fetch = (...args) => fetch(...args),
   ) {}
 
-  /** URL base do hubd (sem barra final), para montar links (ex.: web UI do ai-memory). */
-  baseUrl(): string {
-    return this.connection.url.replace(/\/$/, "");
+  /** Entrada da web UI do ai-memory (F5.5): o hubd troca o token pelo cookie da janela. */
+  memoryLoginUrl(): string {
+    const base = this.connection.url.replace(/\/$/, "");
+    const query = this.connection.token
+      ? `?token=${encodeURIComponent(this.connection.token)}`
+      : "";
+    return `${base}/memoria/entrar${query}`;
   }
 
   health(): Promise<Health> {

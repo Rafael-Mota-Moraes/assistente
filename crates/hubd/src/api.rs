@@ -1,5 +1,6 @@
 //! Rotas HTTP do hubd. Só `/api/health` é aberta; o resto exige `Authorization: Bearer <token>`
-//! (no WebSocket do terminal, que não manda header, vale `?token=`).
+//! (no WebSocket do terminal, que não manda header, vale `?token=`). A web UI do ai-memory
+//! (`/web`, `/api/v1`, F5.5) aceita também o cookie que `/memoria/entrar?token=` entrega.
 //! Rotas ainda não implementadas respondem 501 com o ID da funcionalidade (docs/FUNCIONALIDADES.md).
 //! A API dos agentes (`agent_router`, F9.5) é outro roteador, servido só no `agent_listen`:
 //! é a única parte do hubd que o ai-jail alcança, autenticada pelo token da sessão.
@@ -8,7 +9,7 @@ use axum::extract::{Path, Query, Request, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{any, delete, get, post};
 use axum::{Json, Router};
 use http_body_util::{BodyExt, Full};
 use hub_core::{
@@ -62,6 +63,8 @@ struct Inner {
     exec: ExecStore,
     /// Porta do `agent_listen` já aberta; `None` = sessões nascem sem API dos agentes.
     exec_port: Option<u16>,
+    /// Valor do cookie da web UI do ai-memory (F5.5), sorteado a cada início do hubd.
+    memory_session: String,
 }
 
 impl AppState {
@@ -89,6 +92,7 @@ impl AppState {
             settings_lock: tokio::sync::Mutex::new(()),
             exec: ExecStore::default(),
             exec_port: None,
+            memory_session: new_exec_token().unwrap_or_default(),
         }))
     }
 
@@ -184,44 +188,13 @@ pub fn router(state: AppState) -> Router {
 
     let mut public = Router::new()
         .route("/api/health", get(health))
-        // Proxy para a web UI do ai-memory local (F5.5): /web e /api/v1 são encaminhados
-        // ao servidor ai-memory na VM, preservando cookies (mesma origem).
-        .route(
-            "/web",
-            get(proxy_ai_memory)
-                .post(proxy_ai_memory)
-                .put(proxy_ai_memory)
-                .delete(proxy_ai_memory)
-                .patch(proxy_ai_memory)
-                .head(proxy_ai_memory),
-        )
-        .route(
-            "/web/{*path}",
-            get(proxy_ai_memory)
-                .post(proxy_ai_memory)
-                .put(proxy_ai_memory)
-                .delete(proxy_ai_memory)
-                .patch(proxy_ai_memory)
-                .head(proxy_ai_memory),
-        )
-        .route(
-            "/api/v1",
-            get(proxy_ai_memory)
-                .post(proxy_ai_memory)
-                .put(proxy_ai_memory)
-                .delete(proxy_ai_memory)
-                .patch(proxy_ai_memory)
-                .head(proxy_ai_memory),
-        )
-        .route(
-            "/api/v1/{*path}",
-            get(proxy_ai_memory)
-                .post(proxy_ai_memory)
-                .put(proxy_ai_memory)
-                .delete(proxy_ai_memory)
-                .patch(proxy_ai_memory)
-                .head(proxy_ai_memory),
-        );
+        // Web UI do ai-memory local (F5.5): o app abre `/memoria/entrar?token=` numa janela,
+        // ganha o cookie e o proxy encaminha `/web` e `/api/v1` com o token do ai-memory.
+        .route("/memoria/entrar", get(memory_login))
+        .route("/web", any(proxy_ai_memory))
+        .route("/web/{*path}", any(proxy_ai_memory))
+        .route("/api/v1", any(proxy_ai_memory))
+        .route("/api/v1/{*path}", any(proxy_ai_memory));
     // O bundle da UI não tem segredo: `/ui/*` é aberto (spec 09, F8.3).
     if let Some(dir) = ui_dir {
         public = public.nest_service("/ui", ServeDir::new(dir));
@@ -511,17 +484,84 @@ async fn memory(State(state): State<AppState>) -> Json<MemoryStatus> {
     })
 }
 
+/// Cookie da web UI do ai-memory (F5.5). O valor é `Inner::memory_session`, não o token do hub.
+const MEMORY_COOKIE: &str = "hub_memoria";
+
+#[derive(Deserialize)]
+struct MemoryLogin {
+    token: Option<String>,
+}
+
+/// Porta de entrada da web UI do ai-memory (F5.5): troca o token do hub (na query, porque a
+/// janela do app só abre uma URL) pelo cookie da sessão e redireciona para `/web`.
+async fn memory_login(State(state): State<AppState>, Query(login): Query<MemoryLogin>) -> Response {
+    let mut response = (StatusCode::SEE_OTHER, [(header::LOCATION, "/web")]).into_response();
+    let Some(expected) = &state.0.token else {
+        return response;
+    };
+    let valid = login
+        .token
+        .is_some_and(|given| constant_time_eq(given.as_bytes(), expected.as_bytes()));
+    if !valid || state.0.memory_session.is_empty() {
+        return error(StatusCode::UNAUTHORIZED, "token ausente ou inválido");
+    }
+    let cookie = format!(
+        "{MEMORY_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict",
+        state.0.memory_session
+    );
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        response.headers_mut().insert(header::SET_COOKIE, value);
+    }
+    response
+}
+
+/// Quem chega ao proxy: o app com o token do hub ou a janela com o cookie de `/memoria/entrar`.
+fn memory_access_allowed(state: &AppState, headers: &HeaderMap) -> bool {
+    let Some(expected) = &state.0.token else {
+        return true;
+    };
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .is_some_and(|given| constant_time_eq(given.as_bytes(), expected.as_bytes()));
+    let session = &state.0.memory_session;
+    let cookie = headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(|pair| pair.trim().strip_prefix(&format!("{MEMORY_COOKIE}=")))
+        .any(|given| !session.is_empty() && constant_time_eq(given.as_bytes(), session.as_bytes()));
+    bearer || cookie
+}
+
+/// Token do servidor ai-memory da VM, criado pelo `ai-memory init` (vm/provisionar.sh).
+fn ai_memory_token(state: &AppState) -> Option<String> {
+    let path = state.0.config.memory.data_dir.join("auth-tokens/default");
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty())
+}
+
 /// Proxy reverso para o servidor ai-memory local na VM (F5.5). Encaminha a requisição
-/// (método, cabeçalhos, corpo, query) ao `127.0.0.1:{port}` e devolve a resposta
-/// integral, preservando cookies (mesma origem).
+/// (método, cabeçalhos, corpo, query) ao `127.0.0.1:{port}` trocando o `Authorization` pelo
+/// token do ai-memory, então a web UI abre sem pedir login.
 async fn proxy_ai_memory(State(state): State<AppState>, req: Request) -> Response {
+    if !memory_access_allowed(&state, req.headers()) {
+        return error(
+            StatusCode::UNAUTHORIZED,
+            "abra a memória pelo app (botão Memória na lateral)",
+        );
+    }
     let port = state.0.config.memory.port;
-    let path_and_query = req
+    // Origin-form (`/web?x=1`): o endereço já está no `Host`, não na linha do pedido.
+    let target = req
         .uri()
         .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or("/");
-    let target = format!("http://127.0.0.1:{}{}", port, path_and_query);
+        .map(|pq| pq.as_str().to_owned())
+        .unwrap_or_else(|| "/".to_owned());
 
     let stream = match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
         Ok(s) => s,
@@ -549,12 +589,15 @@ async fn proxy_ai_memory(State(state): State<AppState>, req: Request) -> Respons
     let method = req.method().clone();
     let mut builder = Request::builder().method(method).uri(&target);
     for (k, v) in req.headers() {
-        if k == axum::http::header::HOST {
+        if k == header::HOST || k == header::AUTHORIZATION {
             continue;
         }
         builder = builder.header(k, v);
     }
-    builder = builder.header(axum::http::header::HOST, format!("127.0.0.1:{}", port));
+    builder = builder.header(header::HOST, format!("127.0.0.1:{}", port));
+    if let Some(token) = ai_memory_token(&state) {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
 
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
@@ -1909,6 +1952,122 @@ mod tests {
         let dead = closed_port().await;
         let (_, body) = call(memory_app(dead), "/api/memory", None).await;
         assert_eq!(body["up"], false);
+    }
+
+    // ---- web UI do ai-memory (F5.5) ----
+
+    /// ai-memory falso: responde 200 com o cabeçalho do pedido recebido no corpo.
+    async fn echo_http_server() -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut head = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match socket.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    head.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(&head).await;
+            }
+        });
+        port
+    }
+
+    /// hubd com token `segredo`, ai-memory na `port` e o token do ai-memory em `data_dir`.
+    fn web_app(port: u16, name: &str) -> Router {
+        let data_dir = crate::sleep::tests::scratch(name);
+        std::fs::create_dir_all(data_dir.join("auth-tokens")).unwrap();
+        std::fs::write(data_dir.join("auth-tokens/default"), "token-memoria\n").unwrap();
+        let text = EXAMPLE
+            .replace("port = 49374", &format!("port = {port}"))
+            .replace(
+                "data_dir = \"~/.local/share/assistente/ai-memory\"",
+                &format!("data_dir = \"{}\"", data_dir.display()),
+            );
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(&text, &home).unwrap();
+        router(AppState::new(
+            config,
+            home,
+            Some("segredo".into()),
+            None,
+            Tmux::default(),
+        ))
+    }
+
+    async fn get_web(app: Router, uri: &str, headers: &[(header::HeaderName, String)]) -> Response {
+        let mut request = Request::get(uri);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        app.oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn body_text(response: Response) -> String {
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        String::from_utf8_lossy(&body).into_owned()
+    }
+
+    #[tokio::test]
+    async fn memory_web_requires_hub_token_or_cookie() {
+        let app = web_app(echo_http_server().await, "web-sem-token");
+        let response = get_web(app.clone(), "/web", &[]).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let response = get_web(app.clone(), "/memoria/entrar?token=errado", &[]).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let forged = [(header::COOKIE, format!("{MEMORY_COOKIE}=chute"))];
+        let response = get_web(app, "/api/v1/projects", &forged).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn memory_login_cookie_reaches_ai_memory_with_its_token() {
+        let app = web_app(echo_http_server().await, "web-cookie");
+        let response = get_web(app.clone(), "/memoria/entrar?token=segredo", &[]).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[header::LOCATION], "/web");
+        let set_cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(set_cookie.contains("HttpOnly"), "{set_cookie}");
+        let cookie = set_cookie.split(';').next().unwrap().to_owned();
+        assert!(
+            !cookie.contains("segredo"),
+            "o cookie não é o token do hub: {cookie}"
+        );
+
+        let response = get_web(app, "/web/projects?x=1", &[(header::COOKIE, cookie)]).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let upstream = body_text(response).await;
+        assert!(upstream.starts_with("GET /web/projects?x=1 "), "{upstream}");
+        assert!(
+            upstream.contains("authorization: Bearer token-memoria"),
+            "{upstream}"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_proxy_swaps_hub_token_for_ai_memory_token() {
+        let app = web_app(echo_http_server().await, "web-bearer");
+        let hub = [(header::AUTHORIZATION, "Bearer segredo".to_owned())];
+        let upstream = body_text(get_web(app, "/api/v1/projects", &hub).await).await;
+        assert!(
+            upstream.contains("authorization: Bearer token-memoria"),
+            "{upstream}"
+        );
+        assert!(
+            !upstream.contains("segredo"),
+            "token do hub vazou: {upstream}"
+        );
     }
 
     // ---- hubd serve a UI (F8.3) ----

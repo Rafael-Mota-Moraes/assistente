@@ -16,6 +16,7 @@ o que exige o host (`src/bridge/host.ts` ↔ `app/src-tauri/src/main.rs`):
 | `/api/memory` | Saúde do ai-memory **local** na VM (`GET /healthz` em `[memory].port`, F5.0) |
 | `open_in_cursor` | abre `cursor <caminho>` se o caminho estiver dentro de uma raiz de perfil |
 | `open_url` | abre `xdg-open <url>` no navegador padrão; só `http://`/`https://` (links do terminal, F2.4) |
+| `open_memory_window` | janela `memoria` com a web UI do ai-memory via `/memoria/entrar` do hubd (botão "Memória" na lateral, F5.5); fora das capabilities, sem acesso aos comandos |
 
 **Mixed content (validado em 2026-10-19):** no Linux a página do app vem de `tauri://localhost`,
 que o WebKit trata como origem segura, e `fetch` para `http://10.77.0.10` é bloqueado em

@@ -1,5 +1,6 @@
 //! Casca desktop do Assistente: a UI fala direto com o hubd (HTTP/WS). Aqui só ficam as
-//! coisas que precisam do HOST: ler a config local, ver o estado da VM e abrir o Cursor.
+//! coisas que precisam do HOST: ler a config local, ver o estado da VM, abrir o Cursor e a
+//! janela da memória.
 //! Spec: docs/specs/03-interface.md
 
 // Sem janela de console extra no Windows em release.
@@ -9,6 +10,7 @@ use hub_core::Config;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tauri::Manager;
 
 fn home() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
@@ -198,6 +200,27 @@ fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("não consegui abrir o navegador: {e}"))
 }
 
+/// Abre a web UI do ai-memory numa janela própria (F5.5), não num iframe: em iframe o cookie do
+/// hubd seria de terceiros e o WebKitGTK não o envia. A janela `memoria` fica fora de
+/// capabilities/default.json, então a página remota não alcança os comandos do app.
+#[tauri::command]
+async fn open_memory_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let url: tauri::Url = url.parse().map_err(|e| format!("URL inválida: {e}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("URL não permitida: {url}"));
+    }
+    if let Some(window) = app.get_webview_window("memoria") {
+        window.navigate(url).map_err(|e| e.to_string())?;
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+    tauri::WebviewWindowBuilder::new(&app, "memoria", tauri::WebviewUrl::External(url))
+        .title("Memória — Assistente")
+        .inner_size(1200.0, 820.0)
+        .build()
+        .map(|_| ())
+        .map_err(|e| format!("não consegui abrir a janela da memória: {e}"))
+}
+
 fn main() {
     tauri::Builder::default()
         // HTTP pelo lado Rust: o WebKit bloqueia fetch de tauri://localhost para http://<ip da VM>
@@ -213,7 +236,8 @@ fn main() {
             vm_start,
             vm_stop,
             open_in_cursor,
-            open_url
+            open_url,
+            open_memory_window
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Assistente");

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type { HubClient } from "./bridge/hub";
 import type {
   AgentKind,
@@ -68,4 +69,18 @@ export function visibleProjectSessions(
   );
 }
 
-export const useAppStore = create<State>(() => initialState);
+/** F8.2: recarregar a página (ou o hubd aplicar uma UI nova, F8.7) volta para o mesmo
+ * lugar. Só o lugar na navegação persiste; conexão e dados vivos vêm do hubd de novo. */
+export const useAppStore = create<State>()(
+  persist(() => initialState, {
+    name: "assistente-ui",
+    storage: createJSONStorage(() => sessionStorage),
+    partialize: (state) => ({
+      activeProfile: state.activeProfile,
+      activeProject: state.activeProject,
+      activeSession: state.activeSession,
+      closedTabs: state.closedTabs,
+      lastAgent: state.lastAgent,
+    }),
+  }),
+);

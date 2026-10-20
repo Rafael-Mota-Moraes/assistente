@@ -4,7 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "../../bridge/host";
-import { connectTerminal } from "../../bridge/terminal";
+import { connectPersistent } from "../../bridge/terminal";
 import { useAppStore } from "../../store";
 import {
   clearStaleTextarea,
@@ -34,10 +34,12 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
   const host = useRef<HTMLDivElement>(null);
   const hub = useAppStore((s) => s.hub);
   const [ended, setEnded] = useState<string | null>(null);
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
 
   useEffect(() => {
     if (!host.current || !hub) return;
     setEnded(null);
+    setReconnecting(null);
     const term = new Terminal({
       theme,
       fontFamily: '"JetBrains Mono", "Fira Code", ui-monospace, monospace',
@@ -58,21 +60,23 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     const releaseTextarea = term.textarea ? clearStaleTextarea(host.current, term.textarea) : null;
 
     let disposed = false;
-    let connection: Awaited<ReturnType<typeof connectTerminal>> | null = null;
-    connectTerminal(hub.terminalUrl(sessionId), {
+    // F8.1: caiu sem `exit` → reconecta sozinho com backoff; a faixa amarela avisa.
+    const link = connectPersistent(hub.terminalUrl(sessionId), {
       onData: (bytes) => term.write(bytes),
-      onClose: (reason, detail) => {
-        if (!disposed)
-          setEnded(reason === "exit" ? "Sessão encerrada." : `Desconectado: ${detail ?? ""}`);
-      },
-    })
-      .then((c) => {
-        if (disposed) return c.close();
-        connection = c;
-        c.resize(term.cols, term.rows);
+      onOpen: () => {
+        if (disposed) return;
+        setReconnecting(null);
         term.focus();
-      })
-      .catch((e: Error) => setEnded(e.message));
+      },
+      onReconnecting: (attempt, delayMs) => {
+        if (!disposed)
+          setReconnecting(`Reconectando… tentativa ${attempt}, em ${Math.round(delayMs / 1000)} s`);
+      },
+      onExit: () => {
+        if (!disposed) setEnded("Sessão encerrada.");
+      },
+    });
+    link.resize(term.cols, term.rows);
 
     // Arrastar com o mouse seleciona no tmux (mouse on), que ao soltar manda o texto por OSC 52.
     // Shift+arrastar seleciona no xterm.js, e Ctrl+Shift+C copia essa seleção.
@@ -107,9 +111,9 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
 
     const acceptInput = dedupeComposedInput();
     const input = term.onData((data) => {
-      if (acceptInput(data)) connection?.write(data);
+      if (acceptInput(data)) link.write(data);
     });
-    const resize = term.onResize(({ cols, rows }) => connection?.resize(cols, rows));
+    const resize = term.onResize(({ cols, rows }) => link.resize(cols, rows));
     const observer = new ResizeObserver(() => fit.fit());
     observer.observe(host.current);
 
@@ -120,7 +124,7 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
       osc52.dispose();
       input.dispose();
       resize.dispose();
-      connection?.close();
+      link.close();
       term.dispose();
     };
   }, [hub, sessionId]);
@@ -128,6 +132,11 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
   return (
     <div className="relative min-h-0 flex-1 bg-[#0b0e1a] p-2">
       <div ref={host} className="h-full w-full" />
+      {reconnecting && !ended && (
+        <div className="absolute inset-x-0 top-4 mx-auto w-fit rounded-lg bg-amber-950/80 px-4 py-2 text-sm text-amber-200">
+          {reconnecting}
+        </div>
+      )}
       {ended && (
         <div className="absolute inset-x-0 bottom-4 mx-auto w-fit rounded-lg bg-black/70 px-4 py-2 text-sm text-slate-300">
           {ended}

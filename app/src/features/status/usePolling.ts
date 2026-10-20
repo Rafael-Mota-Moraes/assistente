@@ -27,6 +27,8 @@ export function usePolling() {
           hub.sessions(),
         ]);
         const { activeProfile, closedTabs } = useAppStore.getState();
+        // Perfil restaurado do sessionStorage (F8.2) pode ter saído da config: valida.
+        const profileKnown = activeProfile !== null && profiles.some((p) => p.id === activeProfile);
         set({
           health,
           vm,
@@ -35,7 +37,8 @@ export function usePolling() {
           profiles,
           sessions,
           hubError: null,
-          activeProfile: activeProfile ?? profiles[0]?.id ?? null,
+          activeProfile: profileKnown ? activeProfile : (profiles[0]?.id ?? null),
+          ...(profileKnown ? {} : { activeProject: null, projects: [] }),
           // Aba fechada de sessão que morreu (no hubd ou por outro app) sai da lista.
           closedTabs: closedTabs.filter((id) => sessions.some((s) => s.id === id)),
         });

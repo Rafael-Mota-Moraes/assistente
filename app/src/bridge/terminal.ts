@@ -84,3 +84,109 @@ function connectBrowser(url: string, events: TerminalEvents): Promise<TerminalCo
     };
   });
 }
+
+/** F8.1: espera da tentativa n — 1 s, 2 s, 4 s… até o teto de 30 s. */
+export function backoffDelayMs(attempt: number, base = 1000, cap = 30_000): number {
+  return Math.min(cap, base * 2 ** (attempt - 1));
+}
+
+export type PersistentEvents = {
+  onData: (bytes: Uint8Array) => void;
+  /** Conexão estabelecida (a primeira ou depois de retries). */
+  onOpen: () => void;
+  /** A conexão caiu e uma nova tentativa está agendada. */
+  onReconnecting: (attempt: number, delayMs: number) => void;
+  /** O agente saiu (`exit` do hubd): não reconecta. */
+  onExit: () => void;
+};
+
+type PersistentDeps = {
+  /** Injetável para teste; padrão: `connectTerminal`. */
+  connect?: typeof connectTerminal;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+/**
+ * Terminal que reconecta sozinho (F8.1): o WS caiu sem `exit` (hubd reiniciou, rede
+ * piscou) → nova tentativa com backoff de 1 s até 30 s; o backoff zera a cada conexão
+ * aceita. Escrita enquanto desconectado é descartada (a faixa na UI avisa); o último
+ * resize é reaplicado ao reconectar.
+ */
+export function connectPersistent(
+  url: string,
+  events: PersistentEvents,
+  deps: PersistentDeps = {},
+): TerminalConnection {
+  const connect = deps.connect ?? connectTerminal;
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+  let stopped = false;
+  let inner: TerminalConnection | null = null;
+  let pendingResize: [number, number] | null = null;
+  let wakeUp: (() => void) | null = null;
+  let wakeClosed: (() => void) | null = null;
+  const stopSignal = new Promise<void>((resolve) => {
+    wakeUp = resolve;
+  });
+
+  async function loop() {
+    let attempt = 0;
+    while (!stopped) {
+      if (attempt > 0) {
+        const delay = backoffDelayMs(attempt);
+        events.onReconnecting(attempt, delay);
+        await Promise.race([sleep(delay), stopSignal]);
+        if (stopped) return;
+      }
+      let exitRequested = false;
+      const closed = new Promise<void>((resolve) => {
+        wakeClosed = resolve;
+        connect(url, {
+          onData: events.onData,
+          onClose: (reason) => {
+            exitRequested = reason === "exit";
+            resolve();
+          },
+        })
+          .then((connection) => {
+            if (stopped) {
+              connection.close();
+              resolve();
+              return;
+            }
+            inner = connection;
+            attempt = 0;
+            if (pendingResize) connection.resize(pendingResize[0], pendingResize[1]);
+            events.onOpen();
+          })
+          .catch(() => resolve());
+      });
+      await closed;
+      wakeClosed = null;
+      inner = null;
+      if (stopped) return;
+      if (exitRequested) {
+        events.onExit();
+        return;
+      }
+      attempt += 1;
+    }
+  }
+
+  void loop().catch((error) => console.error("terminal persistente:", error));
+
+  return {
+    write: (data) => inner?.write(data),
+    resize: (cols, rows) => {
+      pendingResize = [cols, rows];
+      inner?.resize(cols, rows);
+    },
+    close: () => {
+      stopped = true;
+      wakeUp?.();
+      wakeClosed?.();
+      inner?.close();
+    },
+  };
+}

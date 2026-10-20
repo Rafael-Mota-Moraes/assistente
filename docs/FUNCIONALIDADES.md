@@ -106,9 +106,9 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
 
 Spec 09. Ordem sugerida: F8.1 e F8.2 valem sozinhas; F8.4 começa por uma prova mínima (é o maior risco).
 
-- [ ] **F8.1 Terminais reconectam sozinhos.** WS caiu sem `exit` → nova tentativa com backoff (até 30 s entre tentativas) e faixa "reconectando" no terminal.
+- [x] **F8.1 Terminais reconectam sozinhos.** `connectPersistent` em `bridge/terminal.ts`: WS caiu sem `exit` → nova tentativa com backoff (1 s → 30 s, zera a cada conexão aceita) e faixa "reconectando" no terminal; último resize é reaplicado. Testes: `bridge/terminal.test.ts` (backoff, escalada, `exit` sem reconectar, `close()` no meio do backoff).
   Pronto quando: `systemctl restart hubd` com abas abertas faz os terminais voltarem sozinhos. Como testar: vitest do backoff + manual.
-- [ ] **F8.2 Estado da UI sobrevive a recarregar.** Perfil, projeto e aba ativa no `sessionStorage`.
+- [x] **F8.2 Estado da UI sobrevive a recarregar.** Perfil, projeto, aba ativa, abas fechadas e último agente no `sessionStorage` (zustand `persist`, chave `assistente-ui`); `usePolling` descarta perfil restaurado que saiu da config. Testes: `store.test.ts`.
   Pronto quando: recarregar a página volta para o mesmo lugar. Como testar: vitest do store.
 - [ ] **F8.3 hubd serve a UI.** `just build-ui`; `GET /ui/*` de `~/.assistente/versoes/atual/ui`; `commit` (UI e hubd) em `/api/health`.
   Pronto quando: o teste de integração baixa `/ui/` e o `index.html` aponta para os assets servidos. Como testar: `./dev cargo test -p hubd`.

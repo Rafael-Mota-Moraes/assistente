@@ -18,6 +18,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
 use crate::sessions::{SessionInfo, Tmux, next_seq};
+use crate::sleep::{Remote, request_stop};
 use crate::terminal;
 use crate::tunnel::{TunnelHandle, TunnelStatus};
 
@@ -93,7 +94,7 @@ pub fn router(state: AppState) -> Router {
             "/api/sleep",
             get(|| not_yet("F6.3")).post(|| not_yet("F6.3")),
         )
-        .route("/api/sleep/stop", post(|| not_yet("F6.4")))
+        .route("/api/sleep/stop", post(stop_sleep))
         .route("/api/sleep/collect", post(|| not_yet("F6.5")))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
@@ -386,6 +387,25 @@ fn internal(message: &str) -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, message)
 }
 
+/// POST /api/sleep/stop (F6.4): cria o arquivo STOP no notebook. O `dorme` confere no topo
+/// de cada iteração: a tarefa em curso termina e o loop para. Sem nada rodando, é inofensivo
+/// (o `dorme` apaga o STOP ao iniciar).
+async fn stop_sleep(State(state): State<AppState>) -> Result<StatusCode, Response> {
+    let notebook = &state.0.config.notebook;
+    let stop_file = notebook.workdir.join("STOP").display().to_string();
+    let remote = Remote::Ssh {
+        host: notebook.ssh_host.clone(),
+    };
+    request_stop(&remote, &stop_file).await.map_err(|e| {
+        error(
+            StatusCode::BAD_GATEWAY,
+            &format!("o STOP não chegou ao notebook: {e}"),
+        )
+    })?;
+    tracing::info!("parada do modo dormir pedida: {stop_file}");
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<SessionInfo>>, Response> {
     state
         .0
@@ -561,6 +581,24 @@ mod tests {
         let (status, body) = call(app(None), "/api/sleep", None).await;
         assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
         assert_eq!(body["feature"], "F6.3");
+    }
+
+    #[tokio::test]
+    async fn sleep_stop_fails_loudly_without_a_notebook() {
+        // No devenv não há ssh/notebook de verdade: a rota tenta e devolve 502 com o motivo,
+        // nunca um 501 (o sucesso via ssh é validado na VM real, F6.3).
+        let response = app(None)
+            .oneshot(
+                Request::post("/api/sleep/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("STOP não chegou ao notebook"), "{text}");
     }
 
     // ---- Saúde do notebook por HTTP (F4.3) ----

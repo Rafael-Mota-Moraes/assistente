@@ -86,7 +86,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: o notebook tem exatamente o HEAD do PC sem mexer nas branches dele. Como testar: dois repos locais no devenv.
 - [ ] **F6.3 Iniciar e acompanhar.** `POST /api/sleep {profile, project}` exige árvore limpa (ou oferece commit WIP), exporta briefing, gera prompt (`hub_core::sleep::render_prompt`) e inicia `dorme` num tmux do notebook. `GET` mostra o log ao vivo.
   Pronto quando: o PC pode ser desligado e o loop continua. Como testar: manual *(humano)*.
-- [ ] **F6.4 Parar.** `POST /api/sleep/stop` cria o arquivo STOP; a iteração atual termina.
+- [x] **F6.4 Parar.** `POST /api/sleep/stop` cria `<workdir>/STOP` no notebook (`request_stop` em `crates/hubd/src/sleep.rs`, ssh via `bash -s`); 204, ou 502 com o motivo sem notebook. O loop encerra depois da tarefa em curso (caso STOP do `teste-dorme.sh`); `dorme` apaga o STOP ao iniciar. Testes: `request_stop_creates_the_file_and_the_parent_dir` + `sleep_stop_fails_loudly_without_a_notebook`.
   Pronto quando: o loop encerra depois da tarefa em curso. Como testar: teste do F6.1.
 - [ ] **F6.5 Recolher de manhã.** `POST /api/sleep/collect`: fetch de `dorme/<data>` e `agente/*` para `refs/remotes/notebook/*`; devolve commits, RELATORIO.md e se dá fast-forward.
   Pronto quando: a UI mostra o resumo e faz o merge com um clique (só fast-forward; senão, avisa). Como testar: repos locais no devenv.

@@ -34,7 +34,8 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 | DELETE | `/api/sessions/{id}` | pronto | mata a sessão tmux |
 | GET (WS) | `/api/sessions/{id}/terminal` | pronto | ver protocolo abaixo |
 | GET/POST | `/api/sleep` | F6.3 | spec 08 |
-| POST | `/api/sleep/stop`, `/api/sleep/collect` | F6.4/F6.5 | spec 08 |
+| POST | `/api/sleep/stop` | pronto (F6.4) | 204; cria `STOP` no notebook via ssh (502 sem notebook) |
+| POST | `/api/sleep/collect` | F6.5 | spec 08 |
 | GET | `/api/memory` | F5.0 / F5.4 / F5.6 | saúde local (F5.0); sync do espelho (F5.4); detalhes operacionais (F5.6) |
 
 ## Lançamento de uma sessão

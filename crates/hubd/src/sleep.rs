@@ -183,6 +183,20 @@ pub async fn sync_project(
     })
 }
 
+/// F6.4: cria o arquivo STOP no notebook. O `dorme` confere no topo de cada iteração: a
+/// tarefa em curso termina e o loop para. `dorme` apaga o STOP ao iniciar, então pedir
+/// parada sem nada rodando é inofensivo.
+pub async fn request_stop(remote: &Remote, stop_file: &str) -> Result<()> {
+    validate(stop_file, "caminho do STOP")?;
+    let path = shell_dir(stop_file);
+    remote
+        .shell(&format!(
+            "mkdir -p \"$(dirname \"{path}\")\"\ntouch \"{path}\"\n"
+        ))
+        .await
+        .context("criando o arquivo STOP no notebook")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +318,30 @@ mod tests {
         );
         std::fs::remove_dir_all(&pc).unwrap();
         std::fs::remove_dir_all(&nb).unwrap();
+    }
+
+    #[test]
+    fn shell_dir_expands_only_the_leading_tilde() {
+        assert_eq!(shell_dir("~/assistente/STOP"), "$HOME/assistente/STOP");
+        assert_eq!(shell_dir("~"), "$HOME");
+        assert_eq!(shell_dir("/abs/path"), "/abs/path");
+    }
+
+    #[tokio::test]
+    async fn request_stop_creates_the_file_and_the_parent_dir() {
+        let dir = scratch("stop");
+        let stop = dir.join("logs/STOP");
+        request_stop(&Remote::Local, stop.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(stop.is_file());
+        // Metacaracteres não chegam ao script remoto.
+        assert!(
+            request_stop(&Remote::Local, "/tmp/x$(reboot)")
+                .await
+                .is_err()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test]

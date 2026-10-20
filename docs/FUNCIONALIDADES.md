@@ -51,7 +51,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: de uma sessão pessoal, `ls ~/.assistente/perfis/trabalho` falha. Como testar: o próprio comando.
 - [ ] **F3.3 Permissões padrão.** `ai-jail --bootstrap` por perfil (Claude: allow/deny/ask; opencode: bash/edit/write).
   Pronto quando: `git push --force` é negado e `git push` pergunta. Como testar: pedir ao agente.
-- [x] **F3.4 Providers do opencode por perfil.** `opencode_providers` no perfil (padrão `["9router"]`): o `agentes configurar` grava os providers (com as chaves) no `opencode.json` do perfil; o config global da VM fica sem chaves de API (só MCP/plugins). O notebook só é exigido se algum perfil listar `9router` (specs 04, 05).
+- [x] **F3.4 Providers do opencode por perfil.** `opencode_providers` no perfil (padrão `["9router"]`): o `agentes configurar` grava os providers (com as chaves) no `opencode.json` do perfil; o config global da VM fica sem chaves de API (só MCP/plugins). O notebook só é exigido se algum perfil listar `9router`. As `policies` do `opencode.json` do PC vão junto (no perfil e no global da VM): o tab de modelos fica igual ao do PC (specs 04, 05).
   Pronto quando: sessão de um perfil só enxerga os próprios providers. Como testar: após `agentes configurar`, `grep apiKey` no config global da VM não acha nada.
 
 ## F4 — Notebook e 9router

@@ -2,13 +2,23 @@
 # Configura os agentes da VM: providers do opencode por perfil (F3.4), ai-memory local (F5.0).
 # Claude Code e opencode por perfil. Roda como o
 # SEU usuário dentro da VM; reexecutável. Chamado por `bin/assistente agentes configurar`, que
-# manda os providers do PC (JSON, com as chaves) pelo stdin.
+# manda os providers + as policies do PC (JSON, com as chaves) pelo stdin.
 # Specs: docs/specs/04-perfis-e-projetos.md, docs/specs/06-memoria.md (F5.2, F5.3)
 set -euo pipefail
 
-host_providers="{}"
-[ -t 0 ] || host_providers="$(cat)"
-[ -n "$host_providers" ] || host_providers="{}"
+payload="{}"
+[ -t 0 ] || payload="$(cat)"
+[ -n "$payload" ] || payload="{}"
+host_providers="$(python3 - "$payload" <<'PY'
+import json, sys
+print(json.dumps(json.loads(sys.argv[1]).get("provider") or {}))
+PY
+)"
+host_policies="$(python3 - "$payload" <<'PY'
+import json, sys
+print(json.dumps(json.loads(sys.argv[1]).get("policies") or []))
+PY
+)"
 
 URL="http://127.0.0.1:49374"
 CONF="$HOME/.config/assistente/assistente.toml"
@@ -95,9 +105,10 @@ while IFS=$'\t' read -r pid root workspace; do
   chmod 600 "$data/claude/settings.json" "$data/claude/.claude.json"
   # O opencode mescla a config global com esta (gerada aqui; sempre regravada). Os providers
   # vêm do opencode_providers do perfil (F3.4): o 9router é montado com a chave/modelos do
-  # notebook e os do PC copiados como estão. O arquivo carrega chaves de API: fica 0600.
+  # notebook e os do PC copiados como estão. As policies do PC vão junto: o tab de modelos
+  # fica igual ao do PC. O arquivo carrega chaves de API: fica 0600.
   ROUTER_KEY="$router_key" ROUTER_PORT="$router_port" ROUTER_MODELS="$router_models" \
-    HOST_PROVIDERS="$host_providers" \
+    HOST_PROVIDERS="$host_providers" HOST_POLICIES="$host_policies" \
     python3 - "$CONF" "$pid" "$data/opencode/opencode.json" <<'PY'
 import json, os, sys, tomllib
 pid = sys.argv[2]
@@ -126,13 +137,23 @@ for name in profile.get("opencode_providers", ["9router"]):
     else:
         known = ", ".join(sorted(["9router", *host]))
         sys.exit(f'perfil {pid}: opencode_providers tem "{name}" (disponíveis: {known})')
+policies = json.loads(os.environ.get("HOST_POLICIES") or "[]")
 if providers:
     config["provider"] = providers
+if policies:
+    config["policies"] = policies
 with open(sys.argv[3], "w") as f:
     json.dump(config, f, indent=2)
     f.write("\n")
 models = " · ".join(config[k] for k in ("model", "small_model") if k in config)
-print("    opencode: %s%s" % (", ".join(providers) or "sem providers", f" (modelo {models})" if models else ""))
+print(
+    "    opencode: %s%s%s"
+    % (
+        ", ".join(providers) or "sem providers",
+        f" (modelo {models})" if models else "",
+        f" · policies: {len(policies)}" if policies else "",
+    )
+)
 PY
   chmod 600 "$data/opencode/opencode.json"
   # Marcador do workspace na raiz do perfil (F5.3): pessoal e trabalho não se misturam.
@@ -145,6 +166,19 @@ done <<< "$profiles"
 echo "==> opencode (global: plugin de hooks + MCP)"
 ai-memory install-hooks --agent open-code --server-url "$URL" --auth-token "$token" --apply >/dev/null
 ai-memory install-mcp --client opencode --server-url "$URL" --auth-token "$token" --apply >/dev/null
+# As policies do PC também entram no global da VM: o tab fica igual ao do PC até fora do
+# perfil (o global continua sem chaves de API). Depois do ai-memory, que regrava o arquivo.
+HOST_POLICIES="$host_policies" python3 - "$OC" <<'PY'
+import json, os, sys
+policies = json.loads(os.environ.get("HOST_POLICIES") or "[]")
+if not policies:
+    sys.exit(0)
+config = json.load(open(sys.argv[1]))
+config["policies"] = policies
+with open(sys.argv[1], "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+PY
 chmod 600 "$OC"
 rm -f "$OC".bak-*
 

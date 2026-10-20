@@ -90,6 +90,7 @@ pub struct Profile {
     /// Providers que o opencode deste perfil enxerga: `"9router"` (notebook) e/ou nomes de
     /// providers do `opencode.json` do PC. F3.4: o `agentes configurar` grava cada um (com a
     /// chave) no `opencode.json` do perfil; o config global da VM não carrega chaves de API.
+    /// As `policies` do PC (bloqueio de providers do tab) são espelhadas junto.
     #[serde(default = "default_opencode_providers")]
     pub opencode_providers: Vec<String>,
     /// Hosts que o proxy do ai-jail libera para o opencode (provedores fora do 9router).

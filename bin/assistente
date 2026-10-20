@@ -213,21 +213,27 @@ cmd_notebook() {
 
 cmd_agentes() {
   [ "${1:-}" = "configurar" ] || die "uso: assistente agentes configurar"
-  local name providers
+  local name payload
   name="$(cfg vm.name)"
-  # Provedores do opencode deste PC (um plano pago, por exemplo). Vão com as chaves pelo stdin,
-  # para nada ficar gravado no /tmp da VM.
-  providers="$(python3 - "$HOME/.config/opencode/opencode.json" <<'PY'
+  # Providers + policies do opencode deste PC (um plano pago, por exemplo). Vão com as chaves
+  # pelo stdin, para nada ficar gravado no /tmp da VM.
+  payload="$(python3 - "$HOME/.config/opencode/opencode.json" <<'PY'
 import json, os, sys
 path = sys.argv[1]
-providers = json.load(open(path)).get("provider", {}) if os.path.exists(path) else {}
-print(json.dumps(providers))
-print("Provedores do opencode do PC: %s" % (", ".join(providers) or "nenhum"), file=sys.stderr)
+config = json.load(open(path)) if os.path.exists(path) else {}
+providers = config.get("provider", {})
+policies = config.get("policies", [])
+print(json.dumps({"provider": providers, "policies": policies}))
+print(
+    "Provedores do opencode do PC: %s · policies: %d"
+    % (", ".join(providers) or "nenhum", len(policies)),
+    file=sys.stderr,
+)
 PY
 )"
   incus exec "$name" -- mkdir -p /tmp/assistente
   incus file push -q "$ROOT/vm/configurar-agentes.sh" "$name/tmp/assistente/configurar-agentes.sh"
-  incus exec "$name" -- sudo -u "$(id -un)" -i bash /tmp/assistente/configurar-agentes.sh <<< "$providers"
+  incus exec "$name" -- sudo -u "$(id -un)" -i bash /tmp/assistente/configurar-agentes.sh <<< "$payload"
 }
 
 # Depois de mudar o código: hubd na VM (as sessões tmux sobrevivem) e o app desktop.

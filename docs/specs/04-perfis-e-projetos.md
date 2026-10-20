@@ -31,10 +31,13 @@ são só nomes (sem `https://`, porta ou caminho).
 
 ### Provedores do opencode do PC
 
-`assistente agentes configurar` copia os `provider` do `~/.config/opencode/opencode.json` do
-host (com as chaves, pelo stdin) para o `opencode.json` **de cada perfil** que os lista em
-`opencode_providers` (F3.4) — o config global da VM fica sem chaves de API (só MCP, plugins e
-node_modules). Para um perfil usar um provider: liste-o em `opencode_providers`, aponte
+`assistente agentes configurar` copia os `provider` **e as `policies`** do
+`~/.config/opencode/opencode.json` do host (com as chaves, pelo stdin) para o `opencode.json`
+**de cada perfil** que os lista em `opencode_providers` (F3.4) — o config global da VM fica
+sem chaves de API (só MCP, plugins e node_modules), mas recebe as policies também: o tab de
+modelos fica igual ao do PC dentro e fora do perfil. Bloqueou um provider no PC? O perfil só
+enxerga o que o PC permite; quando o 9router voltar, inclua-o nas policies do PC antes de
+listá-lo de novo. Para um perfil usar um provider: liste-o em `opencode_providers`, aponte
 `opencode_model = "<provedor>/<modelo>"` e libere o host da API em `opencode_allow_hosts` (o
 proxy do jail bloqueia o resto). O notebook só é necessário quando algum perfil lista
 `"9router"`. Trocou a chave ou o plano no PC? Rode `assistente agentes configurar` de novo.
@@ -48,7 +51,7 @@ proxy do jail bloqueia o resto). O notebook só é necessário quando algum perf
 | Chave SSH | `GIT_SSH_COMMAND` |
 | Login, histórico e settings do Claude | `CLAUDE_CONFIG_DIR=~/.assistente/perfis/<id>/claude` |
 | Config e login do opencode | `OPENCODE_CONFIG=~/.assistente/perfis/<id>/opencode/opencode.json` |
-| Providers e chaves do opencode | `opencode_providers` → gravados no `opencode.json` do perfil (F3.4) |
+| Providers e chaves do opencode | `opencode_providers` → gravados no `opencode.json` do perfil (F3.4); policies do PC espelhadas (tab igual ao do PC) |
 | Memória | workspace do ai-memory |
 | Combo do 9router | `opencode_model` |
 | Visibilidade entre perfis | só a pasta do perfil ativo entra no ai-jail (spec 05) |

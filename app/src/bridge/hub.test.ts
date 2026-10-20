@@ -45,6 +45,28 @@ describe("HubClient", () => {
     await expect(hub.deleteSession("pessoal--x--claude-1")).resolves.toBeUndefined();
   });
 
+  it("recolher e mesclar o modo dormir fazem POST com o pedido", async () => {
+    const fetchFn = fakeFetch(200, {
+      base: "main",
+      sleep_branch: "dorme/2026-10-20",
+      commits: [{ hash: "abc1234", subject: "merge: f9.9 (modo-dormir)" }],
+      relatorio: null,
+      fast_forward: true,
+    });
+    const hub = new HubClient({ url: "http://vm:7878", token: null }, fetchFn);
+    const request = { profile: "pessoal", project: "game", date: "2026-10-20" };
+
+    const report = await hub.collectSleep(request);
+    expect(fetchFn.mock.calls[0]?.[0]).toBe("http://vm:7878/api/sleep/collect");
+    expect(report.commits).toHaveLength(1);
+    expect(report.fast_forward).toBe(true);
+
+    await expect(hub.mergeSleep(request)).resolves.toBeUndefined();
+    expect(fetchFn.mock.calls[1]?.[0]).toBe("http://vm:7878/api/sleep/merge");
+    await expect(hub.stopSleep()).resolves.toBeUndefined();
+    expect(fetchFn.mock.calls[2]?.[0]).toBe("http://vm:7878/api/sleep/stop");
+  });
+
   it("monta a URL do terminal em ws:// com o token na query", () => {
     const hub = new HubClient({ url: "http://10.77.0.10:7878", token: "a b" });
     expect(hub.terminalUrl("pessoal--x--claude-1")).toBe(

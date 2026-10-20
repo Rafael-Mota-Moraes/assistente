@@ -63,3 +63,16 @@ export type SessionInfo = {
 };
 
 export type SessionSpec = { profile: string; project: string; agent: AgentKind };
+
+export type CollectedCommit = { hash: string; subject: string };
+
+/** Resumo da manhã (POST /api/sleep/collect, F6.5). */
+export type CollectReport = {
+  base: string;
+  sleep_branch: string;
+  commits: CollectedCommit[];
+  relatorio: string | null;
+  fast_forward: boolean;
+};
+
+export type SleepRequest = { profile: string; project: string; date: string };

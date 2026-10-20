@@ -1,4 +1,5 @@
 import type {
+  CollectReport,
   Health,
   HubConnection,
   MemoryStatus,
@@ -7,6 +8,7 @@ import type {
   Project,
   SessionInfo,
   SessionSpec,
+  SleepRequest,
 } from "./types";
 
 export class HubError extends Error {
@@ -55,6 +57,21 @@ export class HubClient {
 
   async deleteSession(id: string): Promise<void> {
     await this.request("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
+  }
+
+  /** Pede parada do modo dormir (cria o STOP no notebook; a iteração atual termina). */
+  async stopSleep(): Promise<void> {
+    await this.request("POST", "/api/sleep/stop");
+  }
+
+  /** Manhã (F6.5): busca dorme/<data> e agente/* do notebook e resume o que chegou. */
+  collectSleep(request: SleepRequest): Promise<CollectReport> {
+    return this.request("POST", "/api/sleep/collect", request);
+  }
+
+  /** Merge fast-forward da branch recolhida; 409 se a base andou durante a noite. */
+  async mergeSleep(request: SleepRequest): Promise<void> {
+    await this.request("POST", "/api/sleep/merge", request);
   }
 
   /** URL do WebSocket do terminal; o token vai na query (WebSocket não manda header). */

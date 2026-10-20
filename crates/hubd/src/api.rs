@@ -18,7 +18,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
 use crate::sessions::{SessionInfo, Tmux, next_seq};
-use crate::sleep::{Remote, request_stop};
+use crate::sleep::{self, CollectReport, Remote, request_stop};
 use crate::terminal;
 use crate::tunnel::{TunnelHandle, TunnelStatus};
 
@@ -35,6 +35,8 @@ struct Inner {
     tmux: Tmux,
     /// Só nos testes: troca o comando do agente (ai-jail + claude) por outro.
     argv_override: Option<Vec<String>>,
+    /// Só nos testes: troca o notebook (ssh) pelo host local.
+    sleep_remote_override: Option<Remote>,
     /// Pasta com o build da UI servido em `/ui/*` (F8.3).
     ui_dir: Option<PathBuf>,
 }
@@ -57,6 +59,7 @@ impl AppState {
             tunnel,
             tmux,
             argv_override: None,
+            sleep_remote_override: None,
             ui_dir: ui_dir.is_dir().then_some(ui_dir),
         }))
     }
@@ -78,6 +81,26 @@ impl AppState {
         inner.argv_override = Some(argv);
         Self(Arc::new(inner))
     }
+
+    #[cfg(test)]
+    fn with_sleep_remote(self, remote: Remote) -> Self {
+        let mut inner = Arc::try_unwrap(self.0)
+            .ok()
+            .expect("estado ainda não compartilhado");
+        inner.sleep_remote_override = Some(remote);
+        Self(Arc::new(inner))
+    }
+
+    /// Como falar com o notebook: ssh pelo alias da config (produção) ou o host local
+    /// (testes).
+    fn sleep_remote(&self) -> Remote {
+        self.0
+            .sleep_remote_override
+            .clone()
+            .unwrap_or_else(|| Remote::Ssh {
+                host: self.0.config.notebook.ssh_host.clone(),
+            })
+    }
 }
 
 pub fn router(state: AppState) -> Router {
@@ -95,7 +118,8 @@ pub fn router(state: AppState) -> Router {
             get(|| not_yet("F6.3")).post(|| not_yet("F6.3")),
         )
         .route("/api/sleep/stop", post(stop_sleep))
-        .route("/api/sleep/collect", post(|| not_yet("F6.5")))
+        .route("/api/sleep/collect", post(collect_sleep))
+        .route("/api/sleep/merge", post(merge_sleep))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     let mut public = Router::new().route("/api/health", get(health));
@@ -391,19 +415,101 @@ fn internal(message: &str) -> Response {
 /// de cada iteração: a tarefa em curso termina e o loop para. Sem nada rodando, é inofensivo
 /// (o `dorme` apaga o STOP ao iniciar).
 async fn stop_sleep(State(state): State<AppState>) -> Result<StatusCode, Response> {
-    let notebook = &state.0.config.notebook;
-    let stop_file = notebook.workdir.join("STOP").display().to_string();
-    let remote = Remote::Ssh {
-        host: notebook.ssh_host.clone(),
-    };
-    request_stop(&remote, &stop_file).await.map_err(|e| {
-        error(
-            StatusCode::BAD_GATEWAY,
-            &format!("o STOP não chegou ao notebook: {e}"),
-        )
-    })?;
+    let stop_file = state
+        .0
+        .config
+        .notebook
+        .workdir
+        .join("STOP")
+        .display()
+        .to_string();
+    request_stop(&state.sleep_remote(), &stop_file)
+        .await
+        .map_err(|e| {
+            error(
+                StatusCode::BAD_GATEWAY,
+                &format!("o STOP não chegou ao notebook: {e}"),
+            )
+        })?;
     tracing::info!("parada do modo dormir pedida: {stop_file}");
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct SleepRequest {
+    profile: String,
+    project: String,
+    /// `YYYY-MM-DD` da noite de sono (a mesma usada ao iniciar, F6.3).
+    date: String,
+}
+
+/// `<raiz do perfil>/<projeto>` no PC (montado na VM no mesmo caminho), com as mesmas
+/// garantias do create_session: nome de projeto sem caminho e `.git` presente.
+/// O `Err` é pequeno de propósito (clippy::result_large_err): vira `Response` no chamador.
+fn sleep_project_dir(
+    state: &AppState,
+    request: &SleepRequest,
+) -> Result<PathBuf, (StatusCode, &'static str)> {
+    let Some(profile) = state.0.config.profile(&request.profile) else {
+        return Err((StatusCode::NOT_FOUND, "perfil desconhecido"));
+    };
+    if request.project.is_empty()
+        || request.project.starts_with('.')
+        || request.project.contains(['/', '\\'])
+    {
+        return Err((StatusCode::BAD_REQUEST, "nome de projeto inválido"));
+    }
+    let dir = profile.root.join(&request.project);
+    if !dir.join(".git").exists() || !dir.starts_with(&profile.root) {
+        return Err((StatusCode::NOT_FOUND, "projeto não encontrado neste perfil"));
+    }
+    Ok(dir)
+}
+
+/// `<workdir>/projetos/<perfil>/<projeto>`: onde o sync (F6.2) cria o clone no notebook.
+fn sleep_remote_dir(state: &AppState, request: &SleepRequest) -> String {
+    state
+        .0
+        .config
+        .notebook
+        .workdir
+        .join("projetos")
+        .join(&request.profile)
+        .join(&request.project)
+        .display()
+        .to_string()
+}
+
+/// POST /api/sleep/collect (F6.5): busca `dorme/<data>` e `agente/*` do notebook para
+/// `refs/remotes/notebook/*` e devolve o resumo da manhã.
+async fn collect_sleep(
+    State(state): State<AppState>,
+    Json(request): Json<SleepRequest>,
+) -> Result<Json<CollectReport>, Response> {
+    let dir = sleep_project_dir(&state, &request).map_err(|(status, msg)| error(status, msg))?;
+    let remote_dir = sleep_remote_dir(&state, &request);
+    sleep::collect_project(&dir, &state.sleep_remote(), &remote_dir, &request.date)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            error(
+                StatusCode::BAD_GATEWAY,
+                &format!("não consegui recolher do notebook: {e}"),
+            )
+        })
+}
+
+/// POST /api/sleep/merge (F6.5): fast-forward da base até a branch recolhida. 409 quando
+/// a base andou durante a noite (o merge é à mão; nada muda).
+async fn merge_sleep(
+    State(state): State<AppState>,
+    Json(request): Json<SleepRequest>,
+) -> Result<StatusCode, Response> {
+    let dir = sleep_project_dir(&state, &request).map_err(|(status, msg)| error(status, msg))?;
+    sleep::merge_sleep_branch(&dir, &request.date)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|e| error(StatusCode::CONFLICT, &format!("merge recusado: {e}")))
 }
 
 async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<SessionInfo>>, Response> {
@@ -599,6 +705,137 @@ mod tests {
         let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("STOP não chegou ao notebook"), "{text}");
+    }
+
+    // ---- Recolher de manhã (F6.5): collect + merge com repos locais ----
+
+    use crate::sleep::tests::{commit, git_sync, init_repo, scratch};
+
+    async fn call_post(app: Router, uri: &str, body: &str) -> (StatusCode, serde_json::Value) {
+        let response = app
+            .oneshot(
+                Request::post(uri)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_owned()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    /// hubd com a raiz do perfil pessoal e o workdir do notebook apontando para dirs locais,
+    /// e o "notebook" = o próprio host (Remote::Local).
+    fn sleep_app(root: &std::path::Path, workdir: &std::path::Path) -> Router {
+        let text = EXAMPLE
+            .replace("~/Documentos/pessoal/projetos", &root.display().to_string())
+            .replace("~/assistente", &workdir.display().to_string());
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(&text, &home).unwrap();
+        router(
+            AppState::new(config, home, None, None, Tmux::default())
+                .with_sleep_remote(Remote::Local),
+        )
+    }
+
+    #[tokio::test]
+    async fn sleep_collect_and_merge_round_trip() {
+        let dir = scratch("collect-route");
+        let root = dir.join("raiz");
+        let pc = root.join("proj");
+        init_repo(&pc);
+        let workdir = dir.join("nb");
+        let remote_dir = workdir.join("projetos/pessoal/proj");
+
+        // Noite: sync (F6.2) + trabalho do agente no "notebook".
+        crate::sleep::sync_project(
+            &pc,
+            &Remote::Local,
+            remote_dir.to_str().unwrap(),
+            "2026-10-20",
+        )
+        .await
+        .unwrap();
+        git_sync(
+            &remote_dir,
+            &["config", "user.email", "nb@assistente.local"],
+        );
+        git_sync(&remote_dir, &["config", "user.name", "Notebook"]);
+        git_sync(&remote_dir, &["switch", "-q", "-c", "agente/f9.9"]);
+        commit(&remote_dir, "feat.txt", "feat: tarefa da noite");
+        git_sync(&remote_dir, &["switch", "-q", "dorme/2026-10-20"]);
+        git_sync(
+            &remote_dir,
+            &[
+                "merge",
+                "-q",
+                "--no-ff",
+                "agente/f9.9",
+                "-m",
+                "merge: f9.9 (modo-dormir)",
+            ],
+        );
+        std::fs::write(remote_dir.join("RELATORIO.md"), "fila esgotada\n").unwrap();
+
+        let request = r#"{"profile":"pessoal","project":"proj","date":"2026-10-20"}"#;
+        let (status, report) =
+            call_post(sleep_app(&root, &workdir), "/api/sleep/collect", request).await;
+        assert_eq!(status, StatusCode::OK, "{report}");
+        assert_eq!(report["base"], "main");
+        assert_eq!(report["sleep_branch"], "dorme/2026-10-20");
+        assert_eq!(report["fast_forward"], true);
+        assert_eq!(report["commits"][0]["subject"], "merge: f9.9 (modo-dormir)");
+        assert_eq!(report["relatorio"], "fila esgotada");
+
+        let (status, _) = call_post(sleep_app(&root, &workdir), "/api/sleep/merge", request).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            git_sync(&pc, &["rev-parse", "HEAD"]),
+            git_sync(&remote_dir, &["rev-parse", "HEAD"])
+        );
+        assert_eq!(
+            std::fs::read_to_string(pc.join("feat.txt")).unwrap(),
+            "feat: tarefa da noite"
+        );
+
+        // A base andou durante a noite: collect avisa (fast_forward false) e o merge
+        // recusa com 409 sem mudar nada.
+        commit(&pc, "c3.txt", "c3");
+        commit(&remote_dir, "c4.txt", "c4");
+        let (status, report) =
+            call_post(sleep_app(&root, &workdir), "/api/sleep/collect", request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(report["fast_forward"], false);
+        let (status, body) =
+            call_post(sleep_app(&root, &workdir), "/api/sleep/merge", request).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].as_str().unwrap().contains("merge"), "{body}");
+        assert_eq!(git_sync(&pc, &["log", "-1", "--format=%s"]), "c3");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sleep_routes_reject_bad_profile_and_project() {
+        let dir = scratch("sleep-erros");
+        let root = dir.join("raiz");
+        init_repo(&root.join("proj"));
+        let workdir = dir.join("nb");
+        let app = || sleep_app(&root, &workdir);
+        let request = r#"{"profile":"nope","project":"proj","date":"2026-10-20"}"#;
+        let (status, _) = call_post(app(), "/api/sleep/collect", request).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let request = r#"{"profile":"pessoal","project":"../fora","date":"2026-10-20"}"#;
+        let (status, _) = call_post(app(), "/api/sleep/collect", request).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let request = r#"{"profile":"pessoal","project":"nao-existe","date":"2026-10-20"}"#;
+        let (status, _) = call_post(app(), "/api/sleep/merge", request).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     // ---- Saúde do notebook por HTTP (F4.3) ----

@@ -88,7 +88,7 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: o PC pode ser desligado e o loop continua. Como testar: manual *(humano)*.
 - [x] **F6.4 Parar.** `POST /api/sleep/stop` cria `<workdir>/STOP` no notebook (`request_stop` em `crates/hubd/src/sleep.rs`, ssh via `bash -s`); 204, ou 502 com o motivo sem notebook. O loop encerra depois da tarefa em curso (caso STOP do `teste-dorme.sh`); `dorme` apaga o STOP ao iniciar. Testes: `request_stop_creates_the_file_and_the_parent_dir` + `sleep_stop_fails_loudly_without_a_notebook`.
   Pronto quando: o loop encerra depois da tarefa em curso. Como testar: teste do F6.1.
-- [ ] **F6.5 Recolher de manhã.** `POST /api/sleep/collect`: fetch de `dorme/<data>` e `agente/*` para `refs/remotes/notebook/*`; devolve commits, RELATORIO.md e se dá fast-forward.
+- [x] **F6.5 Recolher de manhã.** `POST /api/sleep/collect {profile, project, date}`: fetch de `dorme/<data>` e `agente/*` para `refs/remotes/notebook/*`, devolve commits first-parent, RELATORIO.md (lido na árvore do notebook, não é commitado) e `fast_forward` (`collect_project` em `crates/hubd/src/sleep.rs`). `POST /api/sleep/merge`: só fast-forward; 409 sem mudar nada se a base andou. A UI do resumo é a F6.6; cliente em `bridge/hub.ts`. Testes: round-trip com repos locais no devenv (`collect_fetches_relatorio_and_merges_fast_forward`, `sleep_collect_and_merge_round_trip`).
   Pronto quando: a UI mostra o resumo e faz o merge com um clique (só fast-forward; senão, avisa). Como testar: repos locais no devenv.
 - [ ] **F6.6 Tela "Bom dia".** Modal com o que foi feito por item, falhas, log e o botão de merge.
   Pronto quando: dá para revisar e mesclar sem abrir o terminal. Como testar: vitest com dados fake.

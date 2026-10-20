@@ -134,6 +134,8 @@ while IFS=$'\t' read -r pid root workspace; do
   ai-memory install-mcp --client claude-code --server-url "$URL" --auth-token "$token" \
     --config-file "$data/claude/.claude.json" --apply >/dev/null
   chmod 600 "$data/claude/settings.json" "$data/claude/.claude.json"
+  # Permissões padrão por perfil (F3.3): allow/deny/ask do Claude.
+  ai-jail --claude-dir "$data/claude" --bootstrap >/dev/null
   # Bloco gerenciado no CLAUDE.md do perfil: o resto do arquivo é seu e fica intacto.
   FORA_MD="$FORA_MD" BEGIN_MARK="$BEGIN_MARK" END_MARK="$END_MARK" \
     python3 - "$data/claude/CLAUDE.md" <<'PY'
@@ -161,7 +163,8 @@ import json, os, sys, tomllib
 pid = sys.argv[2]
 profile = tomllib.load(open(sys.argv[1], "rb"))["profiles"][pid]
 # Como pedir comandos fora do jail (F9.6); a pasta do perfil entra no jail (`--rw-map`).
-config = {"$schema": "https://opencode.ai/config.json", "instructions": [sys.argv[4]]}
+config = {"$schema": "https://opencode.ai/config.json", "instructions": [sys.argv[4]],
+          "permission": {"bash": "allow", "edit": "allow", "write": "allow"}}
 for key, field in (("model", "opencode_model"), ("small_model", "opencode_small_model")):
     if profile.get(field):
         config[key] = profile[field]
@@ -227,6 +230,8 @@ with open(sys.argv[1], "w") as f:
     json.dump(config, f, indent=2)
     f.write("\n")
 PY
+# Permissões padrão no opencode global (F3.3): bash/edit/write.
+ai-jail --bootstrap >/dev/null
 chmod 600 "$OC"
 rm -f "$OC".bak-*
 

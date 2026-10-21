@@ -1,10 +1,19 @@
 {
-  "next": 2,
+  "next": 3,
   "cards": [
     {
       "id": "T1",
       "title": "F9.9 Pedido no PC",
       "description": "`fora-do-jail --pc '<comando>'` manda `target: \"host\"` na API do agente (F9.5); o hubd guarda o alvo no pedido e o mostra em `/api/exec`. O hubd não executa pedidos `host`: eles esperam o app, e expiram se ninguém aprovar. Caminho de trabalho = pasta do projeto (o mesmo caminho no PC, via virtiofs). Rotas novas em `not_yet(\"F9.9\")` até prontas.\nPronto quando: um pedido `--pc` aparece em `/api/exec` com `target: \"host\"` e o hubd nunca o roda na VM. Como testar: `exec::tests` + `client_script_round_trip` com `--pc`.",
+      "priority": "normal",
+      "kind": "manual",
+      "column": "backlog",
+      "created_at": 1792614071
+    },
+    {
+      "id": "T2",
+      "title": "F9.10 App executa no PC",
+      "description": "Comando Tauri `host_exec`: só para pedidos `host` aprovados no `ExecApprovals`, `bash -lc` na pasta do projeto (precisa estar dentro de uma raiz de perfil, como no `open_in_cursor`), com timeout e saída truncada; o resultado volta ao hubd (`POST /api/exec/{id}/result`, com o token do hub) e de lá ao agente. App fechado = o pedido espera ou expira.\nPronto quando: aprovar um `git push` pedido com `--pc` empurra do PC e o agente recebe saída e código. Como testar: vitest com hub fake + teste de rota do resultado.",
       "priority": "normal",
       "kind": "manual",
       "column": "backlog",

@@ -118,14 +118,26 @@ fn query_vm_status(name: &str) -> VmStatus {
 }
 
 /// Estado da VM pelo `incus list` (a VM é criada por `bin/assistente vm criar`).
+/// Async + spawn_blocking: o `incus` pode demorar e não pode travar a thread da janela.
 #[tauri::command]
-fn vm_status() -> VmStatus {
-    query_vm_status(&vm_name())
+async fn vm_status() -> VmStatus {
+    tauri::async_runtime::spawn_blocking(|| query_vm_status(&vm_name()))
+        .await
+        .unwrap_or_else(|e| VmStatus {
+            state: VmState::Unknown,
+            detail: Some(e.to_string()),
+        })
 }
 
 /// Liga a VM (`incus start`), idempotente se já estiver de pé.
 #[tauri::command]
-fn vm_start() -> Result<(), String> {
+async fn vm_start() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(start_vm)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn start_vm() -> Result<(), String> {
     let name = vm_name();
     match query_vm_status(&name).state {
         VmState::Running => return Ok(()),
@@ -147,7 +159,13 @@ fn vm_start() -> Result<(), String> {
 
 /// Desliga a VM (`incus stop`), idempotente se já estiver parada ou ausente.
 #[tauri::command]
-fn vm_stop() -> Result<(), String> {
+async fn vm_stop() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(stop_vm)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn stop_vm() -> Result<(), String> {
     let name = vm_name();
     match query_vm_status(&name).state {
         VmState::Stopped | VmState::Missing => return Ok(()),
@@ -213,7 +231,7 @@ fn memory_url(url: &str) -> Result<tauri::Url, String> {
 }
 
 /// Retângulo em pixels lógicos (o mesmo que px de CSS), vindo da UI.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 struct PanelRect {
     x: f64,
     y: f64,
@@ -222,10 +240,20 @@ struct PanelRect {
 }
 
 impl PanelRect {
-    fn bounds(self) -> tauri::Rect {
+    /// Converte px lógicos da UI (getBoundingClientRect, CSS) em px FÍSICOS da janela para
+    /// o `add_child`. Físico de propósito: no X11 o wry reescala coordenadas lógicas com o
+    /// DPI que a tela reporta (scale_factor_from_x11), que pode ser outro que o da janela;
+    /// coordenada física passa direto, sem reescala (tauri#15656). No Linux isso é só para
+    /// outras plataformas: o wry ignora os bounds do add_child na GtkBox e o posicionamento
+    /// real fica com `gtk_panel::anchor` (abaixo).
+    fn bounds(&self, scale: f64) -> tauri::Rect {
+        let x = (self.x * scale).round() as i32;
+        let y = (self.y * scale).round() as i32;
+        let width = ((self.width * scale).round() as u32).max(1);
+        let height = ((self.height * scale).round() as u32).max(1);
         tauri::Rect {
-            position: tauri::LogicalPosition::new(self.x, self.y).into(),
-            size: tauri::LogicalSize::new(self.width, self.height).into(),
+            position: tauri::PhysicalPosition::new(x, y).into(),
+            size: tauri::PhysicalSize::new(width, height).into(),
         }
     }
 }
@@ -244,33 +272,146 @@ async fn open_memory_panel(
     let window = app
         .get_window("main")
         .ok_or_else(|| "janela principal não encontrada".to_owned())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
     if let Some(webview) = app.get_webview(MEMORY_WEBVIEW) {
         webview.navigate(url).map_err(|e| e.to_string())?;
         webview
-            .set_bounds(rect.bounds())
+            .set_bounds(rect.bounds(scale))
             .map_err(|e| e.to_string())?;
+        anchor_memory_panel(&app, rect)?;
         return webview.show().map_err(|e| e.to_string());
     }
-    let bounds = rect.bounds();
-    window
+    let bounds = rect.bounds(scale);
+    let webview = window
         .add_child(
             tauri::webview::WebviewBuilder::new(MEMORY_WEBVIEW, tauri::WebviewUrl::External(url)),
             bounds.position,
             bounds.size,
         )
-        .map(|_| ())
-        .map_err(|e| format!("não consegui alocar o painel da memória: {e}"))
+        .map_err(|e| format!("não consegui alocar o painel da memória: {e}"))?;
+    webview
+        .set_bounds(rect.bounds(scale))
+        .map_err(|e| e.to_string())?;
+    // No Linux o wry ignora os bounds acima (veja gtk_panel): quem posiciona o painel
+    // sobre a área de conteúdo, na frente da webview principal, é o anchor da React.
+    anchor_memory_panel(&app, rect)?;
+    Ok(())
 }
 
 /// Acompanha o retângulo do âncora (janela redimensionada, layout mudou).
 #[tauri::command]
 async fn update_memory_panel_bounds(app: tauri::AppHandle, rect: PanelRect) -> Result<(), String> {
+    if app.get_webview(MEMORY_WEBVIEW).is_some() {
+        anchor_memory_panel(&app, rect)?;
+    }
+    Ok(())
+}
+
+/// Ancora a webview da memória no retângulo da React.
+#[cfg(target_os = "linux")]
+fn anchor_memory_panel(app: &tauri::AppHandle, rect: PanelRect) -> Result<(), String> {
+    let webview = app
+        .get_webview(MEMORY_WEBVIEW)
+        .ok_or_else(|| "webview da memória não encontrada".to_owned())?;
+    webview
+        .with_webview(move |platform| {
+            if let Err(e) = gtk_panel::anchor(&platform.inner(), rect) {
+                eprintln!("painel da memória: {e}");
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Fora do Linux os bounds do `add_child`/`set_bounds` (px físicos) bastam.
+#[cfg(not(target_os = "linux"))]
+fn anchor_memory_panel(app: &tauri::AppHandle, rect: PanelRect) -> Result<(), String> {
     if let Some(webview) = app.get_webview(MEMORY_WEBVIEW) {
+        let scale = app
+            .get_window("main")
+            .and_then(|w| w.scale_factor().ok())
+            .unwrap_or(1.0);
         webview
-            .set_bounds(rect.bounds())
+            .set_bounds(rect.bounds(scale))
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Ancoragem GTK do painel da memória (F5.5). No Linux o wry (0.57) coloca a webview do
+/// `add_child` direto na GtkBox da janela (`pack_start`, dividindo a janela com a UI) e
+/// ignora os bounds — eles só valem nos ramo GtkFixed/X11, que o tauri não usa aqui.
+/// Então no setup a webview principal passa a morar num GtkOverlay com um GtkFixed como
+/// palco sobreposto, e a webview da memória é movida para o palco, posicionada nas
+/// coordenadas de CSS que a React mede (getBoundingClientRect): GTK e WebKit usam a
+/// mesma escala do GDK, px de CSS de um lado vale do outro.
+#[cfg(target_os = "linux")]
+mod gtk_panel {
+    use gtk::glib::{Cast, IsA};
+    use gtk::prelude::*;
+
+    /// No setup: tira a webview principal da GtkBox e a recoloca como filho base de um
+    /// GtkOverlay que ocupa a janela toda; o palco GtkFixed fica sobre ela, pronto para
+    /// receber o painel da memória.
+    pub fn wrap_main_in_overlay<W: IsA<gtk::Widget>>(main: &W) -> Result<(), String> {
+        let parent = main
+            .parent()
+            .and_then(|p| p.downcast::<gtk::Box>().ok())
+            .ok_or_else(|| "pai da webview principal não é uma GtkBox".to_owned())?;
+        let overlay = gtk::Overlay::new();
+        parent.remove(main);
+        overlay.add(main);
+        // Palco: filho de overlay com halign/valign Fill (o padrão) cobre a área toda.
+        // Pass-through: sem ele o palco captura o ponteiro e a UI principal para de receber
+        // cliques; o painel da memória continua recebendo os seus, por ser filho do palco.
+        let stage = gtk::Fixed::new();
+        overlay.add_overlay(&stage);
+        overlay.set_overlay_pass_through(&stage, true);
+        parent.pack_start(&overlay, true, true, 0);
+        overlay.show_all();
+        Ok(())
+    }
+
+    /// Move a webview da memória para o palco e ancla no retângulo da React (px de CSS).
+    /// Idempotente: reancorar é só `move_` + `set_size_request` no palco.
+    pub fn anchor<W: IsA<gtk::Widget>>(child: &W, rect: super::PanelRect) -> Result<(), String> {
+        let x = rect.x.round() as i32;
+        let y = rect.y.round() as i32;
+        let width = rect.width.round() as i32;
+        let height = rect.height.round() as i32;
+        match child.parent() {
+            // Recém-criada (add_child): está na GtkBox da janela; troca pelo palco.
+            Some(parent) if parent.is::<gtk::Box>() => {
+                let box_ = parent
+                    .downcast::<gtk::Box>()
+                    .map_err(|_| "esperava uma GtkBox".to_owned())?;
+                let stage = box_
+                    .children()
+                    .into_iter()
+                    .find_map(|w| w.downcast::<gtk::Overlay>().ok())
+                    .ok_or_else(|| {
+                        "GtkOverlay da janela não encontrado (setup não rodou?)".to_owned()
+                    })?
+                    .children()
+                    .into_iter()
+                    .find_map(|w| w.downcast::<gtk::Fixed>().ok())
+                    .ok_or_else(|| "palco GtkFixed não encontrado".to_owned())?;
+                box_.remove(child);
+                stage.put(child, x, y);
+                child.set_size_request(width, height);
+                child.show();
+            }
+            // Já é filha do palco (reabertura, resize da janela): só reposiciona.
+            Some(parent) => {
+                let stage = parent
+                    .downcast::<gtk::Fixed>()
+                    .map_err(|_| "esperava o palco GtkFixed".to_owned())?;
+                child.set_size_request(width, height);
+                stage.move_(child, x, y);
+            }
+            None => return Err("webview da memória sem pai GTK".to_owned()),
+        }
+        Ok(())
+    }
 }
 
 /// Fecha a webview filha (o painel React também sai do DOM).
@@ -302,6 +443,22 @@ fn main() {
             update_memory_panel_bounds,
             close_memory_panel
         ])
+        .setup(|app| {
+            // O painel da memória sobrepõe a UI: a webview principal precisa morar num
+            // GtkOverlay com palco GtkFixed (no Linux o wry ignora os bounds do
+            // add_child — veja gtk_panel).
+            #[cfg(target_os = "linux")]
+            if let Some(webview) = app.get_webview("main") {
+                webview
+                    .with_webview(|platform| {
+                        if let Err(e) = gtk_panel::wrap_main_in_overlay(&platform.inner()) {
+                            eprintln!("painel da memória: {e}");
+                        }
+                    })
+                    .map_err(|e| format!("não consegui preparar a janela: {e}"))?;
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Assistente");
 }

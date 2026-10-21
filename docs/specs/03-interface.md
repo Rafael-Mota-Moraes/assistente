@@ -16,7 +16,7 @@ o que exige o host (`src/bridge/host.ts` ↔ `app/src-tauri/src/main.rs`):
 | `/api/memory` | Saúde do ai-memory **local** na VM (`GET /healthz` em `[memory].port`, F5.0) |
 | `open_in_cursor` | abre `cursor <caminho>` se o caminho estiver dentro de uma raiz de perfil |
 | `open_url` | abre `xdg-open <url>` no navegador padrão; só `http://`/`https://` (links do terminal, F2.4) |
-| `open_memory_panel` / `update_memory_panel_bounds` / `close_memory_panel` | painel da memória (F5.5): webview filha `memoria` com a web UI do ai-memory via `/memoria/entrar` do hubd, ancorada sobre a área de conteúdo principal (bounds em px lógicos vêm da UI); fora das capabilities, sem acesso aos comandos |
+| `open_memory_panel` / `update_memory_panel_bounds` / `close_memory_panel` | painel da memória (F5.5): webview filha `memoria` com a web UI do ai-memory via `/memoria/entrar` do hubd, ancorada sobre a área de conteúdo principal (bounds em px de CSS vêm da UI; no Linux o wry (0.57) ignora os bounds do `add_child` — as duas webviews dividem a GtkBox da janela — então a webview principal mora num `GtkOverlay` com palco `GtkFixed` e a filha é ancorada por coordenadas de CSS via `with_webview`; fora do Linux o Rust converte px lógicos em **físicos**, pois o wry no X11 reescala lógicos pelo DPI da tela, tauri#15656); fora das capabilities, sem acesso aos comandos |
 
 **Mixed content (validado em 2026-10-19):** no Linux a página do app vem de `tauri://localhost`,
 que o WebKit trata como origem segura, e `fetch` para `http://10.77.0.10` é bloqueado em

@@ -122,6 +122,7 @@ dependencies = [
 name = "assistente-app"
 version = "0.1.0"
 dependencies = [
+ "gtk",
  "hub-core",
  "serde",
  "serde_json",

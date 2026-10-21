@@ -26,6 +26,10 @@ tauri-build = "=2.7.1"
 tauri-plugin-clipboard-manager = "=2.4.1"
 tauri-plugin-http = "=2.8.0"
 tauri-plugin-websocket = "=2.5.0"
+# Ancoragem GTK do painel da memória (F5.5): o wry no Linux ignora os bounds do add_child
+# (as duas webviews dividem a GtkBox), então reposicionamos os widgets GTK via with_webview.
+# Mesma versão que o tauri puxa (Cargo.lock).
+gtk = "=0.18.2"
 # Só nos testes do hubd (cliente WebSocket); mesma versão que o axum usa.
 tokio-tungstenite = "=0.29.0"
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink"] }

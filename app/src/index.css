@@ -26,6 +26,11 @@ body,
   /* biome-ignore lint/complexity/noImportantStyles: o CodeMirror injeta o próprio overflow; o !important vence a ordem de carga */
   overflow: auto !important;
 }
+/* O diff (MergeView) só rola com altura definida: sem isso ele cresce com o conteúdo,
+   passa do painel e fica cortado, sem rolagem do mouse. */
+.cm-mergeView {
+  height: 100%;
+}
 
 body {
   overflow: hidden;

@@ -22,6 +22,10 @@ import { DiffView } from "./DiffView";
 
 type TreeNode = { name: string; path: string; children: Map<string, TreeNode>; file: boolean };
 
+/** Recuo de cada nível da árvore e espaço antes do primeiro ícone. */
+const INDENT_PX = 16;
+const TREE_PADDING_PX = 8;
+
 function buildTree(files: string[]): TreeNode {
   const root: TreeNode = { name: "", path: "", children: new Map(), file: false };
   for (const f of files) {
@@ -43,7 +47,8 @@ function buildTree(files: string[]): TreeNode {
   return root;
 }
 
-function FileTree({
+/** Árvore de arquivos do projeto: pastas e arquivos com o recuo de cada nível. */
+export function FileTree({
   files,
   status,
   selected,
@@ -72,13 +77,16 @@ function FileTree({
             <button
               type="button"
               onClick={() => onSelect(child.path)}
-              style={{ paddingLeft: `${depth * 12 + 4}px` }}
+              style={{ paddingLeft: `${TREE_PADDING_PX + depth * INDENT_PX}px` }}
               className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs font-mono ${
                 selected === child.path
                   ? "bg-white/10 text-white"
                   : "text-slate-300 hover:bg-white/5"
               }`}
             >
+              {/* Espaço do chevron: alinha o ícone do arquivo com o da pasta, para o
+                  arquivo ficar à direita do nome da pasta que o contém. */}
+              <span className="size-3.5 shrink-0" aria-hidden="true" />
               <FileCode2 className="size-3.5 shrink-0 text-slate-500" />
               <span className="truncate">{child.name}</span>
               {st && (
@@ -94,7 +102,7 @@ function FileTree({
           <button
             type="button"
             onClick={() => onToggle(child.path)}
-            style={{ paddingLeft: `${depth * 12 + 4}px` }}
+            style={{ paddingLeft: `${TREE_PADDING_PX + depth * INDENT_PX}px` }}
             className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs font-mono text-slate-400 hover:bg-white/5"
           >
             {isOpen ? (

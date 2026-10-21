@@ -59,6 +59,8 @@ Loop (`vm/trabalhador`): para cada modelo, `attempts` tentativas. Progresso = co
 limpa. Com progresso: `fora-do-jail kanban done <id> --commit <sha>` e sai com 0. Esgotou os modelos:
 `fora-do-jail kanban release <id>` e sai com 1. O loop não conhece o quadro: fala com o hubd pelo
 token da própria sessão. Testado por `vm/teste-trabalhador.sh` (opencode e fora-do-jail falsos).
+O `opencode run` vai com `--standalone`, como o agente: sem ele tenta o servidor compartilhado na
+porta 49374 (a do ai-memory) e aborta toda tentativa com "Managed service port 49374 … in use".
 
 Vigia (F11.10): cada tentativa roda o opencode num grupo próprio e olha a saída a cada
 `AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`,
@@ -103,5 +105,4 @@ Opt-in por projeto: `[sleep] source = "quadro"`. O padrão `backlog` não muda n
 - `vm/teste-trabalhador.sh` e `notebook/teste-dorme.sh` (quadro: prioridade, commit, volta ao backlog,
   quadro vazio).
 - `KanbanBoard.test.tsx`, `ProjectList.test.tsx`.
-- Não coberto aqui (F11.8, humano): opencode real, nomes de modelo do `opencode models`,
-  `--standalone` no `opencode run` dentro do jail.
+- Não coberto aqui (F11.8, humano): opencode real, nomes de modelo do `opencode models`.

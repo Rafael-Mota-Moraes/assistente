@@ -33,7 +33,9 @@ executa() { # <modelo>
   rm -f "$fim"
   set -m
   (
-    timeout "${MAX_MIN}m" "$OPENCODE" run --auto -m "$1" "$PROMPT" >"$SAIDA" 2>&1
+    # `--standalone`: sem ele o opencode tenta o servidor compartilhado na porta 49374, que é a do
+    # ai-memory, e aborta com "Managed service port 49374 … already in use" (F11.8).
+    timeout "${MAX_MIN}m" "$OPENCODE" run --standalone --auto -m "$1" "$PROMPT" >"$SAIDA" 2>&1
     echo $? >"$fim"
   ) &
   pid=$!

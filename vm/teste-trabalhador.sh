@@ -16,10 +16,17 @@ falha() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
 cat >"$work/opencode" <<'FAKE'
 #!/usr/bin/env bash
 modelo=""
+standalone=0
 while [ $# -gt 0 ]; do
   if [ "$1" = -m ]; then modelo="$2"; fi
+  if [ "$1" = --standalone ]; then standalone=1; fi
   shift
 done
+# Como no opencode real: sem --standalone a porta 49374 (do ai-memory) está ocupada e ele aborta.
+if [ "$standalone" = 0 ]; then
+  echo "Error: Managed service port 49374 on 127.0.0.1 is already in use by another process."
+  exit 1
+fi
 echo "$modelo" >>"$CHAMADAS"
 case "$modelo" in
   bom) echo x >>arquivo.txt; git add arquivo.txt; git commit -qm "feito por bom"; exit 0 ;;

@@ -122,9 +122,28 @@ describe("KanbanBoard", () => {
   });
 
   it("Popular pelo backlog abre o Claude e mostra a aba dele", async () => {
+    // A sessão nova ainda não está na lista (ela chega no próximo polling): é o caso real.
     const hub = connect({ next: 1, cards: [] });
+    useAppStore.setState({ sessions: [], activeView: { key: "pessoal/game", kind: "board" } });
     fireEvent.click(await screen.findByRole("button", { name: /Popular pelo backlog/ }));
     await vi.waitFor(() => expect(hub.explorarBacklog).toHaveBeenCalledWith("pessoal", "game"));
-    await vi.waitFor(() => expect(useAppStore.getState().activeSession).toBe(claude.id));
+    await vi.waitFor(() => {
+      const state = useAppStore.getState();
+      expect(state.activeSession).toBe(claude.id);
+      expect(state.activeView).toBeNull();
+      expect(state.sessions).toContainEqual(claude);
+    });
+  });
+
+  it("sem login do Claude no perfil, não abre a sessão e mostra o comando de login", async () => {
+    const hub = connect({ next: 1, cards: [] });
+    useAppStore.setState({
+      profiles: [
+        { id: "pessoal", label: "Pessoal", color: "#fff", root: "/x", claude_login: false },
+      ],
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Popular pelo backlog/ }));
+    expect(await screen.findByText(/ainda não tem login no perfil Pessoal/)).toBeInTheDocument();
+    expect(hub.explorarBacklog).not.toHaveBeenCalled();
   });
 });

@@ -368,9 +368,11 @@ fn jail_argv(
 }
 
 /// A sessão de exploração recebe o prompt como primeiro argumento do Claude, lido do arquivo
-/// (sem quoting no tmux).
-const EXPLORE_COMMAND: [&str; 4] = [
+/// (sem quoting no tmux). `-l`: o `claude` fica em `~/.local/bin`, que só o perfil de login põe
+/// no PATH (sem ele, o painel morre com `claude: not found`).
+const EXPLORE_COMMAND: [&str; 5] = [
     "bash",
+    "-l",
     "-c",
     "exec claude \"$(cat \"$ASSISTENTE_PROMPT_FILE\")\"",
     "claude",
@@ -735,11 +737,12 @@ mod tests {
             env(&plan, "ASSISTENTE_PROMPT_FILE"),
             Some("/home/rafa/.assistente/perfis/pessoal/explorar/pessoal--x--claude-1.md")
         );
-        let tail = &plan.argv[plan.argv.len() - 4..];
+        let tail = &plan.argv[plan.argv.len() - 5..];
         assert_eq!(tail[0], "bash");
-        assert_eq!(tail[1], "-c");
-        assert!(tail[2].contains("$ASSISTENTE_PROMPT_FILE"), "{tail:?}");
-        assert_eq!(tail[3], "claude");
+        assert_eq!(tail[1], "-l", "sem login o claude não está no PATH");
+        assert_eq!(tail[2], "-c");
+        assert!(tail[3].contains("$ASSISTENTE_PROMPT_FILE"), "{tail:?}");
+        assert_eq!(tail[4], "claude");
         assert_eq!(
             explore_file(&profile_data_dir(&home, "pessoal"), "pessoal--x--claude-1"),
             PathBuf::from("/home/rafa/.assistente/perfis/pessoal/explorar/pessoal--x--claude-1.md")

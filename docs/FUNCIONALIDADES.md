@@ -285,6 +285,31 @@ comandos do app.
   Pronto quando: `git push origin main` envia os commits pendentes da `main` (`b7c80ca`, `b1234fa`).
   Como testar: `git push --dry-run origin main` sem erro.
 
+## F14 — Diagnóstico da VM pelo agente
+
+- [ ] **F14.1 Leitura de diagnóstico sem aprovação.** Rota nova na API dos agentes (`127.0.0.1:7879`,
+  token da sessão, como o `fora-do-jail`): `POST /v1/diagnostico` com `{"comando": "..."}`. Só aceita
+  uma lista fixa de comandos de leitura, escrita no Rust (não é shell livre): `journal-hubd` (últimas N
+  linhas de `journalctl -u hubd`), `tmux-ls`, `tmux-pane` (`capture-pane` de uma sessão do projeto,
+  com `-S -200`), `explorar` (lista e tamanho dos prompts em `explorar/`) e `claude-login`
+  (`bash -l -c 'command -v claude'`). A saída é cortada em 64 KiB e comando fora da lista responde 400.
+  Não passa pelo `ExecApprovals` (F9.7) porque não escreve nada. Testes: parser e recusa de comando
+  fora da lista em Rust; chamada com token errado responde 401.
+  Pronto quando: um agente dentro de uma sessão do projeto lê o journal do hubd e a saída de uma sessão
+  morta sem pedir aprovação. Como testar: `cargo test` das rotas + uma sessão de agente que chama a rota.
+- [ ] **F14.2 Journal do hubd sem sudo.** `vm/provisionar.sh` põe o usuário no grupo `systemd-journal`,
+  para `journalctl -u hubd` rodar sem senha de `sudo` (a VM tem a senha travada, `lock_passwd: true`).
+  Vale depois de relogar. Idempotente: rodar `provisionar.sh` duas vezes não falha.
+  Pronto quando: `groups` mostra `systemd-journal` e `journalctl -u hubd -n 5` lê as linhas sem `sudo`.
+  Como testar: `bash -n vm/provisionar.sh` e `shellcheck`; na VM, `groups` e `journalctl -u hubd -n 5`.
+- [ ] **F14.3 Sessão que morre deixa o painel.** Sessões de agente sobem com `remain-on-exit` no tmux
+  (só o painel da sessão, não o servidor), para a saída de quem saiu com erro continuar visível na aba
+  até ela ser encerrada. A aba mostra "Sessão encerrada (status N)" e o que o processo imprimiu. Hoje
+  a aba só mostra o terminal vazio, e foi assim que `claude: not found` passou despercebido.
+  Pronto quando: uma sessão que sai com erro mostra a última saída e o status na aba.
+  Como testar: rota com tmux real (um comando que sai com status 127 e `capture-pane` com o erro);
+  `TerminalView.test.tsx` com a mensagem de encerramento.
+
 ## Depois
 
 - Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.

@@ -8,7 +8,8 @@ import type {
   KanbanPriority,
   SessionInfo,
 } from "../../bridge/types";
-import { selectSession, useAppStore } from "../../store";
+import { useAppStore } from "../../store";
+import { claudeLoginCommand } from "../sessions/actions";
 import { tabLabel } from "../sessions/SessionArea";
 import { CardDialog } from "./CardDialog";
 
@@ -43,6 +44,7 @@ export function KanbanBoard() {
   const activeProfile = useAppStore((s) => s.activeProfile);
   const activeProject = useAppStore((s) => s.activeProject);
   const sessions = useAppStore((s) => s.sessions);
+  const profiles = useAppStore((s) => s.profiles);
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<KanbanCard | "novo" | null>(null);
@@ -73,13 +75,15 @@ export function KanbanBoard() {
 
   /** Roda uma ação na API, mostra o erro se falhar e atualiza o quadro. */
   async function act(action: () => Promise<unknown>) {
+    let failure: string | null = null;
     try {
       await action();
-      setError(null);
     } catch (e) {
-      setError(message(e));
+      failure = message(e);
     }
+    // O refresh limpa o erro quando a leitura funciona: o erro da ação vem depois dele.
     await refresh();
+    if (failure) setError(failure);
   }
 
   function moveTo(card: KanbanCard, column: KanbanColumn) {
@@ -109,11 +113,25 @@ export function KanbanBoard() {
             type="button"
             onClick={() =>
               void act(async () => {
+                // Mesma guarda do openSession: sem login o Claude morre dentro do jail e a aba
+                // some sem explicação.
+                const profileView = profiles.find((p) => p.id === profile);
+                if (profileView?.claude_login === false) {
+                  throw new Error(
+                    `O Claude ainda não tem login no perfil ${profileView.label}. No PC, rode: ` +
+                      `${claudeLoginCommand(profile)} — depois clique em Popular pelo backlog de novo.`,
+                  );
+                }
                 const info = await client.explorarBacklog(profile, project);
-                selectSession(info.id);
-                useAppStore.setState({
+                // Registra a aba já aqui (como o openSession): a sessão só chega à lista no
+                // próximo polling, e sem isso o quadro fecha para uma aba que ainda não existe.
+                useAppStore.setState((s) => ({
+                  sessions: [...s.sessions.filter((x) => x.id !== info.id), info],
+                  closedTabs: s.closedTabs.filter((x) => x !== info.id),
+                  activeSession: info.id,
+                  activeView: null,
                   toast: "Claude lendo o backlog: os cards aparecem aqui conforme ele cria.",
-                });
+                }));
               })
             }
             title="Abre um Claude que lê o backlog (os .md do projeto) e cria os cards"

@@ -19,7 +19,7 @@ OPENCODE="${AGENTE_OPENCODE:-opencode}"
 RESULTADOS="${AGENTE_RESULTADOS:-/dev/null}"
 # Intervalo em que a saída é vigiada, e o que nela quer dizer "o provedor recusou o modelo".
 VIGIA="${AGENTE_VIGIA:-5}"
-ERRO_PROVEDOR='rate.?limit|too many requests|quota exceeded|overloaded|ECONNRESET|ETIMEDOUT|ProviderModelNotFound|model not found|status(code)?[:=] ?(429|5[0-9][0-9])'
+ERRO_PROVEDOR='rate.?limit|too many requests|quota exceeded|overloaded|ECONNRESET|ETIMEDOUT|ProviderModelNotFound|model not found|model unavailable|status(code)?[:=] ?(429|5[0-9][0-9])'
 SAIDA="$LOG.tentativa"
 FORA="${ASSISTENTE_FORA_DO_JAIL:?sem o cliente fora-do-jail: a sessão não tem a API dos agentes}"
 PROMPT="$(cat "$PROMPT_FILE")"
@@ -52,6 +52,11 @@ executa() { # <modelo>
   wait "$pid"
   cat "$SAIDA" >>"$LOG"
   read -r rc <"$fim"
+  # Um opencode que morre antes da primeira vigia (ex.: modelo indisponível) não passou pelo loop
+  # acima: a saída inteira é conferida aqui também.
+  if [ "$rc" != 0 ] && grep -qiE "$ERRO_PROVEDOR" "$SAIDA"; then
+    return 125
+  fi
   return "$rc"
 }
 

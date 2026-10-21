@@ -63,7 +63,7 @@ O `opencode run` vai com `--standalone`, como o agente: sem ele tenta o servidor
 porta 49374 (a do ai-memory) e aborta toda tentativa com "Managed service port 49374 … in use".
 
 Vigia (F11.10): cada tentativa roda o opencode num grupo próprio e olha a saída a cada
-`AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`,
+`AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`, `model unavailable`,
 `ECONNRESET`, …) mata o grupo e troca de modelo sem esperar o resto da tentativa (código 125). A
 lista de padrões fica em `ERRO_PROVEDOR` no script; o risco é casar texto que o agente imprimiu por
 acaso, então a lista é estreita de propósito.

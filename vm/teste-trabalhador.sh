@@ -33,6 +33,8 @@ case "$modelo" in
   sujo) echo x >>arquivo.txt; git add arquivo.txt; git commit -qm "parcial"; echo y >lixo.txt; exit 0 ;;
   # recusado pelo provedor e preso: o trabalhador tem que matar e trocar sem esperar.
   limite) echo "Error: rate limit exceeded (429)"; exec sleep 300 ;;
+  # indisponível: morre logo, antes de qualquer vigia (caso real do opencode, F11.10).
+  indisponivel) echo "Error: Model unavailable: opencode/$modelo"; exit 1 ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -118,6 +120,17 @@ if [ "$rc" = 0 ] && [ "$duracao" -lt 60 ] && [ "$(grep -c '^limite$' "$work/cham
   ok "erro de provedor troca o modelo na hora e grava o histórico"
 else
   falha "vigia: rc=$rc duracao=${duracao}s chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null) resultados=$(tr '\n' ' ' <"$work/resultados" 2>/dev/null)"
+fi
+
+# 5) Modelo indisponível sai na hora com erro: não repete o mesmo modelo, troca para a reserva.
+repo="$(repo_novo indisponivel)"
+rc="$(rodar "$repo" "indisponivel bom" 3)"
+sha="$(git -C "$repo" rev-parse HEAD)"
+if [ "$rc" = 0 ] && [ "$(grep -c '^indisponivel$' "$work/chamadas")" = 1 ] \
+  && grep -qx "kanban done T3 --commit $sha" "$work/chamadas"; then
+  ok "modelo indisponível troca para a reserva sem repetir"
+else
+  falha "indisponivel: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
 fi
 
 if [ "$falhas" -gt 0 ]; then

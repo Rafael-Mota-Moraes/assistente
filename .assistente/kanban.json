@@ -1,5 +1,5 @@
 {
-  "next": 4,
+  "next": 5,
   "cards": [
     {
       "id": "T1",
@@ -23,6 +23,15 @@
       "id": "T3",
       "title": "F9.11 Cuidados do modo PC",
       "description": "Card em vermelho com \"vai rodar no seu PC\", comando e pasta por inteiro; sem \"aprovar e sempre permitir\" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).\nPronto quando: nenhum caminho aprova pedido `host` sem clique (fora da lista exata) e todo pedido executado fica no registro. Como testar: vitest do card e da lista; revisão da spec 05.",
+      "priority": "normal",
+      "kind": "manual",
+      "column": "backlog",
+      "created_at": 1792614072
+    },
+    {
+      "id": "T4",
+      "title": "F12.1 Preview do projeto",
+      "description": "`preview_url` opcional em `ProjectSettings` (F9.2) e no espelho `app/src/bridge/types.ts`, editável na engrenagem (F9.3), com a dica de que o endereço é visto do PC (projeto rodando na VM usa o IP dela). Comandos Tauri no molde de F5.5: `open_preview_panel`, `update_preview_panel_bounds`, `preview_panel_visible` (esconde ao abrir o modal), `preview_picker` (liga/desliga o modo por `eval` no script) e `close_preview_panel`, validando `http`/`https` e recusando credenciais. Botão \"Visualizar\" junto dos agentes; o chrome (URL, recarregar, apontar, fechar) é React e a webview preenche o retângulo, inclusive ao redimensionar a janela. Testes: `project_settings_round_trip` com `preview_url`, validação da URL e caso em `ProjectSettingsDialog.test.tsx`.\nPronto quando: colar a URL do dev server na engrenagem e clicar em Visualizar abre o app dentro do Assistente, sem fechar a sessão.\nComo testar: `./dev just hubd` + `vite --host` de um projeto de teste e o painel no app.",
       "priority": "normal",
       "kind": "manual",
       "column": "backlog",

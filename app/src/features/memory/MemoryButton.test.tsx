@@ -4,7 +4,17 @@ import type { HubClient } from "../../bridge/hub";
 import { useAppStore } from "../../store";
 import { MemoryButton } from "./MemoryButton";
 
-const memory = { port: 49374, data_dir: "/d", mirror_dir: "/m", up: true, last_error: null, checked_at: 0, server_version: null, last_commit: null, web_url: "/web" };
+const memory = {
+  port: 49374,
+  data_dir: "/d",
+  mirror_dir: "/m",
+  up: true,
+  last_error: null,
+  checked_at: 0,
+  server_version: null,
+  last_commit: null,
+  web_url: "/web",
+};
 
 function fakeHub() {
   return {

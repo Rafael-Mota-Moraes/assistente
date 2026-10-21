@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { useAppStore } from "../../store";
 import type { MemoryStatus } from "../../bridge/types";
+import { useAppStore } from "../../store";
 
 /** Painel operacional do ai-memory (F5.6): paths, saúde, último commit, link para a web UI. */
 export function MemoryStatusPanel({
@@ -19,16 +19,15 @@ export function MemoryStatusPanel({
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="memory-status-title"
         className="w-full max-w-lg rounded-xl border border-line bg-surface-strong p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-slate-100">
+          <h2 id="memory-status-title" className="text-base font-semibold text-slate-100">
             ai-memory — estado operacional
           </h2>
           <button
@@ -47,7 +46,10 @@ export function MemoryStatusPanel({
           <Row label="mirror_dir (wiki)" value={memory.mirror_dir} />
           <Row label="versão do servidor" value={memory.server_version ?? "—"} />
           <Row label="último commit do wiki" value={memory.last_commit ?? "—"} />
-          <Row label="verificado às" value={new Date(memory.checked_at * 1000).toLocaleTimeString("pt-BR")} />
+          <Row
+            label="verificado às"
+            value={new Date(memory.checked_at * 1000).toLocaleTimeString("pt-BR")}
+          />
         </dl>
         <div className="mt-4 flex justify-end gap-2">
           <button

@@ -162,6 +162,13 @@ describe("KanbanBoard", () => {
     expect(hub.explorarBacklog).not.toHaveBeenCalled();
   });
 
+  it("Parar encerra o trabalhador que segura o card (a tarefa volta ao backlog pela leitura)", async () => {
+    const hub = connect({ next: 2, cards: [card("T3", { column: "fazendo", holder: claude.id })] });
+    const fazendo = await column("Fazendo");
+    fireEvent.click(within(fazendo).getByRole("button", { name: /Parar/ }));
+    await waitFor(() => expect(hub.deleteSession).toHaveBeenCalledWith(claude.id));
+  });
+
   it("Mandar mostra que está processando e o erro continua na tela depois do poll", async () => {
     const hub = connect({ next: 2, cards: [card("T1")] });
     let fail: (reason: Error) => void = () => undefined;

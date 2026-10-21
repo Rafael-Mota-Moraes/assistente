@@ -1,4 +1,14 @@
-import { LayoutGrid, Pencil, Play, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import {
+  LayoutGrid,
+  Pencil,
+  Play,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useState } from "react";
 import type {
   KanbanBoard as Board,
@@ -287,6 +297,19 @@ export function KanbanBoard() {
                             className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
                           >
                             <RotateCcw className="size-3.5" /> Reiniciar
+                          </button>
+                        )}
+                        {column.id === "fazendo" && card.holder && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const holder = card.holder ?? "";
+                              void act(() => client.deleteSession(holder));
+                            }}
+                            title="Para o trabalhador e devolve a tarefa ao backlog; o worktree e os commits ficam"
+                            className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                          >
+                            <Square className="size-3.5" /> Parar
                           </button>
                         )}
                         <button

@@ -52,7 +52,14 @@ Roda como o seu usuário na VM, **fora do ai-jail**, e grava estado e log em
    `anterior`.
 5. Se o hubd mudou: reinicia o hubd e espera `GET /api/health` responder com o commit novo em
    até 30 s. Se não responder, volta `atual` para `anterior`, reinicia de novo e marca falha.
-6. Apaga o worktree e mantém as 3 últimas versões.
+6. Apaga o worktree e mantém as 3 últimas versões — sem tocar nos alvos dos links `atual` e
+   `anterior` (a poda por data poderia apagar justamente a versão do "Voltar").
+
+`vm/teste-atualizar.sh` (`./dev just teste-atualizar`) reproduz o ciclo no devenv com um
+repositório e um serviço falsos: aplica, guarda `anterior`, saúde quebrada volta sozinha,
+verificação que falha não muda nada e a poda respeita os links. Os comandos de reinício e de
+saúde são configuráveis por env (`ASSISTENTE_RESTART_CMD`, `ASSISTENTE_HEALTH_TRIES`,
+`ASSISTENTE_HEALTH_WAIT`), para o teste trocar o `systemctl` por um serviço falso.
 
 `vm/hubd.service` passa a `ExecStart=%h/.assistente/versoes/atual/hubd` com
 `Restart=always`: o atualizador encerra o hubd com SIGTERM, e o `on-failure` de hoje não

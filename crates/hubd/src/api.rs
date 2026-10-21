@@ -3710,4 +3710,140 @@ mod tests {
         assert_eq!(pending.len(), 3);
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    /// App com home temporário para as rotas de atualização (F8.5).
+    fn update_app(name: &str) -> (Router, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("hubd-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let config = Config::parse(EXAMPLE, &home).unwrap();
+        (
+            router(AppState::new(config, home, None, None, Tmux::default())),
+            dir,
+        )
+    }
+
+    #[tokio::test]
+    async fn apply_update_rejects_bad_commits_and_missing_updater() {
+        let (app, dir) = update_app("update-aplicar-guards");
+        for body in [
+            r#"{"commit":""}"#,
+            r#"{"commit":"abc"}"#,
+            r#"{"commit":"nao-hexadecimal"}"#,
+            r#"{"commit":"0123456789abcdef0123456789abcdef0123456789"}"#,
+        ] {
+            let (status, _) =
+                call_method(app.clone(), "POST", "/api/update/apply", Some(body), None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        }
+        // Sem o atualizador instalado na VM (e sem override de teste), 409 com o motivo.
+        let (status, body) = call_method(
+            app,
+            "POST",
+            "/api/update/apply",
+            Some(r#"{"commit":"0123456789abcdef0123456789abcdef01234567"}"#),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("atualizar.sh")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_update_starts_the_updater_with_the_commit() {
+        let dir = std::env::temp_dir().join(format!("hubd-update-spawn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let marker = dir.join("atualizador.txt");
+        let script = dir.join("atualizador.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/usr/bin/env bash\nprintf '%s' \"$1\" > '{}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        // O hubd chama `<comando> "$1"`; o script ignora argumentos extras e grava o commit.
+        let command = format!("bash '{}'", script.display());
+        let config = Config::parse(EXAMPLE, &home).unwrap();
+        let app = router(
+            AppState::new(config, home, None, None, Tmux::default())
+                .with_update_command(command, Vec::new()),
+        );
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let (status, body) = call_method(
+            app,
+            "POST",
+            "/api/update/apply",
+            Some(&format!(r#"{{"commit":"{commit}"}}"#)),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["started"], true);
+        // O atualizador roda desanexado (setsid): espera o marcador aparecer.
+        let mut lido = None;
+        for _ in 0..200 {
+            if let Ok(text) = std::fs::read_to_string(&marker) {
+                lido = Some(text);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(lido.as_deref(), Some(commit));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rollback_swaps_current_and_previous_versions() {
+        let (_, dir) = update_app("update-rollback");
+        let home = dir.join("home");
+        let versoes = home.join(".assistente/versoes");
+        std::fs::create_dir_all(versoes.join("aaa")).unwrap();
+        std::fs::create_dir_all(versoes.join("bbb")).unwrap();
+        std::os::unix::fs::symlink("aaa", versoes.join("atual")).unwrap();
+        std::os::unix::fs::symlink("bbb", versoes.join("anterior")).unwrap();
+        let config = Config::parse(EXAMPLE, &home).unwrap();
+        let app = router(AppState::new(config, home, None, None, Tmux::default()));
+
+        let (status, _) =
+            call_method(app.clone(), "POST", "/api/update/rollback", None, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            std::fs::read_link(versoes.join("atual")).unwrap(),
+            PathBuf::from("bbb")
+        );
+        assert_eq!(
+            std::fs::read_link(versoes.join("anterior")).unwrap(),
+            PathBuf::from("aaa")
+        );
+
+        // Voltar de novo troca outra vez.
+        let (status, _) =
+            call_method(app.clone(), "POST", "/api/update/rollback", None, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            std::fs::read_link(versoes.join("atual")).unwrap(),
+            PathBuf::from("aaa")
+        );
+
+        // Sem `anterior`, 409 e nada muda.
+        std::fs::remove_file(versoes.join("anterior")).unwrap();
+        let (status, _) = call_method(app, "POST", "/api/update/rollback", None, None).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            std::fs::read_link(versoes.join("atual")).unwrap(),
+            PathBuf::from("aaa")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

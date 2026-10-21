@@ -21,6 +21,7 @@ check: deps
     just shellcheck
     just teste-dorme
     just teste-backup
+    just teste-atualizar
     just idade-crates
 
 # Formata Rust e frontend
@@ -35,7 +36,7 @@ test: deps
 
 # Lint dos scripts bash
 shellcheck:
-    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh vm/atualizar.sh vm/fora-do-jail notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
+    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh vm/atualizar.sh vm/teste-atualizar.sh vm/fora-do-jail notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
 
 # Loop do modo dormir com agentes falsos, sem IA (F6.1)
 teste-dorme:
@@ -44,6 +45,10 @@ teste-dorme:
 # Backup/restauração com incus falso, sem VM (F7.1)
 teste-backup:
     bash bin/teste-backup.sh
+
+# Atualizador da VM com repositório e serviço falsos, sem VM (F8.5)
+teste-atualizar:
+    bash vm/teste-atualizar.sh
 
 # Roda o hubd com a config de exemplo em http://127.0.0.1:7878, sem túnel (fora da VM)
 hubd *args:

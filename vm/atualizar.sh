@@ -10,7 +10,12 @@
 #   ASSISTENTE_BUILD_HUBD_CMD comando de build do hubd (padrão: ./dev just build-hubd)
 #   ASSISTENTE_HUBD_ARTIFACT  binário gerado (padrão: target/release/hubd)
 #   ASSISTENTE_HUBD_SERVICE   unidade systemd (padrão: hubd)
+#   ASSISTENTE_RESTART_CMD    reinício do serviço (padrão: systemctl restart <serviço>; nos
+#                             testes troca o serviço por um falso). Sem systemd e sem esta
+#                             variável, o reinício é pulado.
 #   ASSISTENTE_HEALTH_URL     URL de saúde (padrão: http://127.0.0.1:7878/api/health)
+#   ASSISTENTE_HEALTH_TRIES   tentativas de saúde após o reinício (padrão: 30)
+#   ASSISTENTE_HEALTH_WAIT    segundos entre tentativas (padrão: 1)
 #   ASSISTENTE_KEEP_VERSIONS  quantas versões manter (padrão: 3)
 set -euo pipefail
 
@@ -24,7 +29,10 @@ BUILD_UI_CMD="${ASSISTENTE_BUILD_UI_CMD:-./dev just build-ui}"
 BUILD_HUBD_CMD="${ASSISTENTE_BUILD_HUBD_CMD:-./dev just build-hubd}"
 HUBD_ARTIFACT="${ASSISTENTE_HUBD_ARTIFACT:-target/release/hubd}"
 SERVICE="${ASSISTENTE_HUBD_SERVICE:-hubd}"
+RESTART_CMD="${ASSISTENTE_RESTART_CMD:-}"
 HEALTH_URL="${ASSISTENTE_HEALTH_URL:-http://127.0.0.1:7878/api/health}"
+HEALTH_TRIES="${ASSISTENTE_HEALTH_TRIES:-30}"
+HEALTH_WAIT="${ASSISTENTE_HEALTH_WAIT:-1}"
 KEEP="${ASSISTENTE_KEEP_VERSIONS:-3}"
 
 STATE_DIR="$ATUALIZACOES/$COMMIT"
@@ -58,6 +66,19 @@ PY
 
 echo "[$(date -Is)] iniciando atualização para $COMMIT" | tee "$LOG"
 write_state running
+
+# Reinício do hubd: comando configurado (testes) ou systemd. Sem os dois, não reinicia.
+restart_hubd() {
+  if [ -n "$RESTART_CMD" ]; then
+    bash -c "$RESTART_CMD"
+  else
+    systemctl restart "$SERVICE"
+  fi
+}
+
+can_restart() {
+  [ -n "$RESTART_CMD" ] || [ "$(ps -p 1 -o comm= 2>/dev/null)" = "systemd" ]
+}
 
 cleanup_worktree() {
   if [ -d "$SRC" ]; then
@@ -136,16 +157,16 @@ else
   hubd_changed=1
 fi
 
-if [ "$hubd_changed" -eq 1 ] && [ "$(ps -p 1 -o comm= 2>/dev/null)" = "systemd" ]; then
-  systemctl restart "$SERVICE" || true
-  # espera até 30s
+if [ "$hubd_changed" -eq 1 ] && can_restart; then
+  restart_hubd || true
+  # espera até HEALTH_TRIES tentativas
   ok=0
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 "$HEALTH_TRIES"); do
     if curl -fsS "$HEALTH_URL" 2>/dev/null | grep -q "$COMMIT"; then
       ok=1
       break
     fi
-    sleep 1
+    sleep "$HEALTH_WAIT"
   done
   if [ "$ok" -ne 1 ]; then
     echo "hubd não respondeu com o commit novo; voltando" | tee -a "$LOG"
@@ -154,7 +175,7 @@ if [ "$hubd_changed" -eq 1 ] && [ "$(ps -p 1 -o comm= 2>/dev/null)" = "systemd" 
     if [ -e "$VERSOES/anterior" ]; then
       mv "$VERSOES/anterior" "$VERSOES/atual"
     fi
-    systemctl restart "$SERVICE" || true
+    restart_hubd || true
     write_state failed "hubd não respondeu com o commit novo"
     exit 1
   fi
@@ -163,15 +184,21 @@ fi
 # 7. limpa worktree e mantém as últimas versões
 cleanup_worktree
 trap - EXIT
-# mantém atual, anterior e as $KEEP mais recentes
-cd "$VERSOES"
-find . -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
+# mantém atual, anterior (e os alvos dos dois) e as $KEEP versões mais recentes
+protected="atual anterior"
+for link in atual anterior; do
+  if target="$(readlink -f "$VERSOES/$link" 2>/dev/null)" && [ -n "$target" ]; then
+    protected="$protected $(basename "$target")"
+  fi
+done
+pattern="^($(printf '%s' "$protected" | tr ' ' '|'))$"
+find "$VERSOES" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
   | sort -rn \
   | sed 's/^[^ ]* //' \
-  | grep -v -E '^(atual|anterior)$' \
+  | { grep -v -E "$pattern" || true; } \
   | tail -n +$((KEEP + 1)) \
   | while read -r old; do
-      rm -rf "$old"
+      rm -rf "${VERSOES:?}/$old"
     done
 
 write_state success

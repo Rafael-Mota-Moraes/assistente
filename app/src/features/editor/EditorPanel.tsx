@@ -1,11 +1,21 @@
-import { ChevronDown, ChevronRight, FileCode2, Folder, FolderOpen, GitCompare, RefreshCw, Save, X } from "lucide-react";
-import { basicSetup } from "codemirror";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, keymap, type ViewUpdate } from "@codemirror/view";
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Compartment, EditorState } from "@codemirror/state";
+import { oneDark } from "@codemirror/theme-one-dark";
+import { EditorView, keymap, type ViewUpdate } from "@codemirror/view";
+import { basicSetup } from "codemirror";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileCode2,
+  Folder,
+  FolderOpen,
+  GitCompare,
+  RefreshCw,
+  Save,
+  X,
+} from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { GitFileStatus } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { DiffView } from "./DiffView";
@@ -24,7 +34,9 @@ function buildTree(files: string[]): TreeNode {
       if (!cur.children.has(name)) {
         cur.children.set(name, { name, path, children: new Map(), file: isFile });
       }
-      cur = cur.children.get(name)!;
+      const child = cur.children.get(name);
+      if (!child) break;
+      cur = child;
       if (i === parts.length - 1) cur.file = true;
     }
   }
@@ -62,12 +74,16 @@ function FileTree({
               onClick={() => onSelect(child.path)}
               style={{ paddingLeft: `${depth * 12 + 4}px` }}
               className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs font-mono ${
-                selected === child.path ? "bg-white/10 text-white" : "text-slate-300 hover:bg-white/5"
+                selected === child.path
+                  ? "bg-white/10 text-white"
+                  : "text-slate-300 hover:bg-white/5"
               }`}
             >
               <FileCode2 className="size-3.5 shrink-0 text-slate-500" />
               <span className="truncate">{child.name}</span>
-              {st && <span className="ml-auto shrink-0 text-[10px] text-amber-300">{st.status}</span>}
+              {st && (
+                <span className="ml-auto shrink-0 text-[10px] text-amber-300">{st.status}</span>
+              )}
             </button>
           </li>
         );
@@ -81,8 +97,16 @@ function FileTree({
             style={{ paddingLeft: `${depth * 12 + 4}px` }}
             className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs font-mono text-slate-400 hover:bg-white/5"
           >
-            {isOpen ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
-            {isOpen ? <FolderOpen className="size-3.5 shrink-0 text-amber-300/70" /> : <Folder className="size-3.5 shrink-0 text-amber-300/70" />}
+            {isOpen ? (
+              <ChevronDown className="size-3.5 shrink-0" />
+            ) : (
+              <ChevronRight className="size-3.5 shrink-0" />
+            )}
+            {isOpen ? (
+              <FolderOpen className="size-3.5 shrink-0 text-amber-300/70" />
+            ) : (
+              <Folder className="size-3.5 shrink-0 text-amber-300/70" />
+            )}
             <span className="truncate">{child.name}</span>
           </button>
           {isOpen && <ul className="flex flex-col">{render(child, depth + 1)}</ul>}
@@ -142,6 +166,7 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
   dirtyRef.current = dirty;
 
   // Cria o editor uma vez.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: o editor é criado uma vez de propósito
   useEffect(() => {
     if (!editorRef.current) return;
     const view = new EditorView({
@@ -151,7 +176,15 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
           basicSetup,
           oneDark,
           langCompartment.current.of([]),
-          keymap.of([{ key: "Mod-s", run: () => { void save(); return true; } }]),
+          keymap.of([
+            {
+              key: "Mod-s",
+              run: () => {
+                void save();
+                return true;
+              },
+            },
+          ]),
           EditorView.updateListener.of((u: ViewUpdate) => {
             if (u.docChanged && !loadingRef.current) {
               setContent(u.state.doc.toString());
@@ -167,7 +200,6 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
       view.destroy();
       viewRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function refreshFiles() {
@@ -198,10 +230,10 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
     }
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: recarrega quando muda de perfil/projeto
   useEffect(() => {
     void refreshFiles();
     void refreshStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, project, hub]);
 
   async function loadFile(path: string) {
@@ -231,7 +263,9 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
       toast(e instanceof Error ? e.message : String(e));
     } finally {
       // libera após o dispatch ser processado
-      setTimeout(() => { loadingRef.current = false; }, 0);
+      setTimeout(() => {
+        loadingRef.current = false;
+      }, 0);
       setLoading(false);
     }
   }
@@ -260,16 +294,15 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
     }
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: carrega o arquivo quando a seleção muda
   useEffect(() => {
     if (selected) void loadFile(selected);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
   function openDiff(path: string) {
     setDiffTarget(path);
     setMode("diff");
   }
-
 
   async function discardFile(path: string) {
     if (!hub || !profile || !project) return;
@@ -285,7 +318,9 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
         if (v) {
           loadingRef.current = true;
           v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: head } });
-          setTimeout(() => { loadingRef.current = false; }, 0);
+          setTimeout(() => {
+            loadingRef.current = false;
+          }, 0);
         }
       }
       await refreshStatus();
@@ -304,12 +339,22 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
       <aside style={{ width: leftWidth }} className="flex shrink-0 flex-col border-r border-line">
         <header className="flex items-center justify-between border-b border-line px-3 py-2">
           <span className="text-sm font-semibold text-slate-200">Arquivos</span>
-          <button type="button" onClick={() => { void refreshFiles(); void refreshStatus(); }} className="rounded p-1 text-slate-400 hover:text-slate-200" title="Atualizar">
+          <button
+            type="button"
+            onClick={() => {
+              void refreshFiles();
+              void refreshStatus();
+            }}
+            className="rounded p-1 text-slate-400 hover:text-slate-200"
+            title="Atualizar"
+          >
             <RefreshCw className="size-3.5" />
           </button>
         </header>
         <div className="flex-1 overflow-auto p-1">
-          {files.length === 0 && <p className="px-2 py-4 text-xs text-slate-500">Nenhum arquivo.</p>}
+          {files.length === 0 && (
+            <p className="px-2 py-4 text-xs text-slate-500">Nenhum arquivo.</p>
+          )}
           <FileTree
             files={files}
             status={status}
@@ -337,7 +382,9 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
                 <li key={s.path} className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => { selectFile(s.path); }}
+                    onClick={() => {
+                      selectFile(s.path);
+                    }}
                     className="flex-1 truncate px-2 py-0.5 text-left text-xs font-mono text-slate-300 hover:bg-white/5"
                   >
                     {s.path}
@@ -365,13 +412,15 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
         )}
       </aside>
 
-      <div
+      <button
+        type="button"
+        aria-label="Redimensionar a lateral"
         onMouseDown={() => {
           draggingRef.current = true;
           document.body.style.cursor = "col-resize";
           document.body.style.userSelect = "none";
         }}
-        className="w-1 shrink-0 cursor-col-resize bg-line/60 hover:bg-accent/60"
+        className="w-1 shrink-0 cursor-col-resize border-0 bg-line/60 p-0 hover:bg-accent/60"
         title="Arraste para redimensionar"
       />
 
@@ -394,7 +443,9 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { void save(); }}
+                  onClick={() => {
+                    void save();
+                  }}
                   disabled={saving || !dirty}
                   className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
                 >
@@ -426,11 +477,7 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
         {mode === "editor" ? (
           <div ref={editorRef} className="min-h-0 flex-1 overflow-hidden bg-[#282c34]" />
         ) : (
-          <DiffView
-            profile={profile}
-            project={project}
-            path={diffTarget ?? selected ?? ""}
-          />
+          <DiffView profile={profile} project={project} path={diffTarget ?? selected ?? ""} />
         )}
         {loading && (
           <div className="border-t border-line px-4 py-1 text-xs text-slate-500">Carregando…</div>
@@ -439,5 +486,3 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
     </div>
   );
 }
-
-

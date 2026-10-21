@@ -23,6 +23,7 @@ body,
   height: 100%;
 }
 .cm-scroller {
+  /* biome-ignore lint/complexity/noImportantStyles: o CodeMirror injeta o próprio overflow; o !important vence a ordem de carga */
   overflow: auto !important;
 }
 

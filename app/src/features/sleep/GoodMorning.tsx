@@ -1,8 +1,8 @@
 import { Check, GitCompare, GitMerge, RefreshCw, Sunrise, X } from "lucide-react";
 import { useState } from "react";
 import { useAppStore } from "../../store";
-import { closeMorning, mergeMorning, refreshMorning, setMorningDate } from "./morning";
 import { DiffView } from "../editor/DiffView";
+import { closeMorning, mergeMorning, refreshMorning, setMorningDate } from "./morning";
 
 /** Tela "Bom dia" (F6.6): revisar o que o agente fez à noite e mesclar com um clique. */
 export function GoodMorning() {

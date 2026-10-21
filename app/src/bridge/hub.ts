@@ -70,31 +70,49 @@ export class HubClient {
 
   /** F10.1: árvore de arquivos do projeto. */
   listFiles(profile: string, project: string): Promise<FileList> {
-    return this.get(`/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/files`);
+    return this.get(
+      `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/files`,
+    );
   }
 
   /** F10.1: lê um arquivo (texto UTF-8). */
   readFile(profile: string, project: string, path: string): Promise<FileContent> {
-    return this.get(`/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/files/${encodeURIComponent(path)}`);
+    return this.get(
+      `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/files/${encodeURIComponent(path)}`,
+    );
   }
 
   /** F10.1: grava um arquivo (texto UTF-8). */
   async writeFile(profile: string, project: string, path: string, content: string): Promise<void> {
-    await this.request("PUT", `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/files/${encodeURIComponent(path)}`, { content });
+    await this.request(
+      "PUT",
+      `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/files/${encodeURIComponent(path)}`,
+      { content },
+    );
   }
 
   /** F10.1: status git dos arquivos alterados. */
   gitStatus(profile: string, project: string): Promise<GitStatus> {
-    return this.get(`/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/git/status`);
+    return this.get(
+      `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/git/status`,
+    );
   }
 
   /** F10.1/F10.4: conteúdo de um arquivo em dois commits (ou HEAD × árvore de trabalho). */
-  gitDiff(profile: string, project: string, path: string, from?: string, to?: string): Promise<GitDiff> {
+  gitDiff(
+    profile: string,
+    project: string,
+    path: string,
+    from?: string,
+    to?: string,
+  ): Promise<GitDiff> {
     const q = new URLSearchParams();
     if (from) q.set("from", from);
     if (to) q.set("to", to);
     const qs = q.toString() ? `?${q.toString()}` : "";
-    return this.get(`/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/git/diff/${encodeURIComponent(path)}${qs}`);
+    return this.get(
+      `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/git/diff/${encodeURIComponent(path)}${qs}`,
+    );
   }
 
   saveProjectSettings(

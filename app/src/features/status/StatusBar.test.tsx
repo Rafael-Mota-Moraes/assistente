@@ -28,7 +28,8 @@ describe("StatusBar", () => {
         version: "0.1.0",
         uptime_seconds: 3,
         commit: { hubd: "abc1234", ui: null },
-        self_update: null,      },
+        self_update: null,
+      },
       memory: {
         port: 49374,
         data_dir: "/home/rafa/.local/share/assistente/ai-memory",

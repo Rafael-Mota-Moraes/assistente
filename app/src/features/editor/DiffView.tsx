@@ -21,7 +21,7 @@ export function DiffView({
   const [data, setData] = useState<GitDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  const mvRef = useRef<any>(null);
+  const mvRef = useRef<MergeView | null>(null);
 
   useEffect(() => {
     if (!hub) return;
@@ -36,7 +36,9 @@ export function DiffView({
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [hub, profile, project, path, from, to]);
 
   useEffect(() => {
@@ -45,7 +47,7 @@ export function DiffView({
       mvRef.current.destroy();
       mvRef.current = null;
     }
-    const mv = new (MergeView as any)({
+    const mv = new MergeView({
       a: { doc: data.head ?? "", extensions: [oneDark] },
       b: { doc: data.working ?? "", extensions: [oneDark] },
       parent: ref.current,

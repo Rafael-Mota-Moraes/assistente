@@ -1,11 +1,11 @@
 import { Bot, FileCode2, RotateCcw, SquareChevronRight, TerminalSquare, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import type { AgentKind, SessionInfo } from "../../bridge/types";
 import { useAppStore, visibleProjectSessions } from "../../store";
+import { EditorPanel } from "../editor/EditorPanel";
 import { claudeLoginCommand, endSession, openSession } from "./actions";
 import { reopenTab } from "./shortcuts";
 import { TerminalView } from "./TerminalView";
-import { EditorPanel } from "../editor/EditorPanel";
 
 const agents: { id: AgentKind; label: string; icon: typeof Bot; title: string }[] = [
   { id: "claude", label: "Claude", icon: Bot, title: "Nova sessão do Claude (no ai-jail da VM)" },

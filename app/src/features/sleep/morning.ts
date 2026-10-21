@@ -69,7 +69,7 @@ export async function refreshMorning() {
 /** Merge fast-forward com um clique; 409 (a base andou) vira aviso, não exceção. */
 export async function mergeMorning() {
   const { hub, morning } = useAppStore.getState();
-  if (!hub || !morning || !morning.report?.fast_forward || morning.merged) return;
+  if (!hub || !morning?.report?.fast_forward || morning.merged) return;
   patch({ busy: true });
   try {
     await hub.mergeSleep({

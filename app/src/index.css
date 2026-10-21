@@ -18,6 +18,14 @@ body,
   margin: 0;
 }
 
+/* O preflight do Tailwind deixa o cursor padrão nos botões: sem isto, nada indica que são clicáveis. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
 /* CodeMirror: garante altura e scroll dentro do editor (F10.2). */
 .cm-editor {
   height: 100%;

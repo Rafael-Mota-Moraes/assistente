@@ -26,6 +26,8 @@ describe("estado persistido (F8.2)", () => {
       activeSession: "pessoal--game--claude-2",
       closedTabs: ["pessoal--game--opencode-1"],
       lastAgent: "opencode",
+      views: [],
+      activeView: null,
     });
   });
 

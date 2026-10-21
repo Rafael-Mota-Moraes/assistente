@@ -7,9 +7,17 @@ import {
   TerminalSquare,
   X,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
 import type { AgentKind, SessionInfo } from "../../bridge/types";
-import { useAppStore, visibleProjectSessions } from "../../store";
+import {
+  closeView,
+  openView,
+  selectSession,
+  useAppStore,
+  type ViewKind,
+  viewKey,
+  visibleProjectSessions,
+} from "../../store";
 import { EditorPanel } from "../editor/EditorPanel";
 import { KanbanBoard } from "../kanban/KanbanBoard";
 import { claudeLoginCommand, endSession, openSession } from "./actions";
@@ -47,6 +55,9 @@ export function tabLabel(session: SessionInfo): string {
   return `${agentLabel[session.agent]} ${n}`.trim();
 }
 
+/** Rótulo das visões que viram abas, como "Claude 1". */
+const viewLabel: Record<ViewKind, string> = { board: "Quadro", editor: "Editor" };
+
 export function SessionArea() {
   const {
     hubError,
@@ -58,11 +69,11 @@ export function SessionArea() {
     activeProject,
     closedTabs,
     execRequests,
+    views,
+    activeView,
   } = useAppStore();
   const profile = profiles.find((p) => p.id === activeProfile);
   const color = profile?.color ?? "#a78bfa";
-  const [showEditor, setShowEditor] = useState(false);
-  const [showBoard, setShowBoard] = useState(false);
   const claudeWithoutLogin = profile?.claude_login === false;
 
   if (hubError) {
@@ -73,9 +84,15 @@ export function SessionArea() {
       </Empty>
     );
   }
-  if (!activeProject) {
+  if (!activeProject || !activeProfile) {
     return <Empty title="Escolha um projeto">As sessões de agente abrem aqui, em abas.</Empty>;
   }
+
+  const key = viewKey(activeProfile, activeProject);
+  // Visões são por projeto: as de outro projeto ficam guardadas, sem aparecer aqui.
+  const projectViews = views.filter((v) => v.key === key).map((v) => v.kind);
+  const focusedView =
+    activeView?.key === key && projectViews.includes(activeView.kind) ? activeView.kind : null;
 
   const projectSessions = sessions.filter(
     (s) => s.profile === activeProfile && s.project === activeProject,
@@ -114,25 +131,17 @@ export function SessionArea() {
           ))}
           <button
             type="button"
-            onClick={() => setShowBoard((v) => !v)}
+            onClick={() => openView(key, "board")}
             title="Quadro de tarefas do projeto: manual ou para o agente (F11)"
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-              showBoard
-                ? "border-accent/60 bg-accent/20 text-white"
-                : "border-line bg-white/5 text-slate-200 hover:bg-white/10"
-            }`}
+            className="flex items-center gap-1.5 rounded-lg border border-line bg-white/5 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-white/10"
           >
             <LayoutGrid className="size-4" /> Quadro
           </button>
           <button
             type="button"
-            onClick={() => setShowEditor((v) => !v)}
+            onClick={() => openView(key, "editor")}
             title="Editar arquivos do projeto e ver diffs"
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-              showEditor
-                ? "border-accent/60 bg-accent/20 text-white"
-                : "border-line bg-white/5 text-slate-200 hover:bg-white/10"
-            }`}
+            className="flex items-center gap-1.5 rounded-lg border border-line bg-white/5 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-white/10"
           >
             <FileCode2 className="size-4" /> Editor
           </button>
@@ -153,83 +162,120 @@ export function SessionArea() {
           {actionError}
         </p>
       )}
-      {showBoard ? (
-        <KanbanBoard onClose={() => setShowBoard(false)} />
-      ) : showEditor ? (
-        <EditorPanel onClose={() => setShowEditor(false)} />
-      ) : projectSessions.length === 0 ? (
-        <Empty title="Nenhuma sessão aberta">
-          Clique em Claude ou OpenCode para abrir um agente neste projeto, ou em Terminal para um
-          bash fora do jail. A sessão continua viva na VM mesmo se você fechar o app.
-        </Empty>
-      ) : (
-        <>
-          <div className="flex items-center gap-1 border-b border-line px-3 pt-2" role="tablist">
-            {visible.map((session) => {
-              const active = session.id === current?.id;
-              const tint = session.agent === "shell" ? outsideJail : color;
-              return (
-                <div
-                  key={session.id}
-                  className={`group flex items-center gap-1 rounded-t-lg border border-b-0 px-3 py-1.5 text-sm ${
-                    active
-                      ? "bg-[#0b0e1a] text-white"
-                      : "border-transparent text-slate-400 hover:text-slate-200"
+      {(projectSessions.length > 0 || projectViews.length > 0) && (
+        <div className="flex items-center gap-1 border-b border-line px-3 pt-2" role="tablist">
+          {visible.map((session) => {
+            const active = focusedView === null && session.id === current?.id;
+            const tint = session.agent === "shell" ? outsideJail : color;
+            return (
+              <div
+                key={session.id}
+                className={`group flex items-center rounded-t-lg border border-b-0 text-sm ${
+                  active
+                    ? "bg-[#0b0e1a] text-white"
+                    : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
+                style={active ? { borderColor: `${tint}88` } : undefined}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => selectSession(session.id)}
+                  className={`flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 ${
+                    session.agent === "shell" ? "text-amber-200" : ""
                   }`}
-                  style={active ? { borderColor: `${tint}88` } : undefined}
                 >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => useAppStore.setState({ activeSession: session.id })}
-                    className={session.agent === "shell" ? "text-amber-200" : undefined}
-                  >
-                    {tabLabel(session)}
-                  </button>
+                  {tabLabel(session)}
                   {execRequests.some((r) => r.state === "pending" && r.session === session.id) && (
                     <span
                       className="size-2 rounded-full bg-amber-400"
                       title="Esperando você aprovar um comando fora do jail"
                     />
                   )}
-                  <button
-                    type="button"
-                    title="Encerrar a sessão (mata o agente)"
-                    onClick={() => {
-                      if (
-                        window.confirm(`Encerrar ${tabLabel(session)}? O agente será finalizado.`)
-                      ) {
-                        endSession(session.id);
-                      }
-                    }}
-                    className="rounded p-0.5 text-slate-500 opacity-0 hover:text-rose-300 group-hover:opacity-100"
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </div>
-              );
-            })}
-            {lastHidden && (
-              <button
-                type="button"
-                title={`Reabrir ${tabLabel(lastHidden)} (a sessão continuou viva)`}
-                onClick={() => reopenTab(lastHidden.id)}
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-500 hover:text-slate-200"
+                </button>
+                <button
+                  type="button"
+                  title="Encerrar a sessão (mata o agente)"
+                  onClick={() => {
+                    if (
+                      window.confirm(`Encerrar ${tabLabel(session)}? O agente será finalizado.`)
+                    ) {
+                      endSession(session.id);
+                    }
+                  }}
+                  className="mr-1 rounded p-0.5 text-slate-500 opacity-0 hover:text-rose-300 group-hover:opacity-100"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            );
+          })}
+          {projectViews.map((kind) => {
+            const active = focusedView === kind;
+            return (
+              <div
+                key={kind}
+                className={`group flex items-center rounded-t-lg border border-b-0 text-sm ${
+                  active
+                    ? "bg-[#0b0e1a] text-white"
+                    : "border-transparent text-slate-400 hover:text-slate-200"
+                }`}
+                style={active ? { borderColor: `${color}88` } : undefined}
               >
-                <RotateCcw className="size-3.5" /> {hidden.length}
-              </button>
-            )}
-          </div>
-          {current ? (
-            <TerminalView key={current.id} sessionId={current.id} />
-          ) : (
-            <Empty title="Todas as abas fechadas">
-              As sessões continuam vivas na VM. Reabra pela seta acima ou por Ctrl+Shift+T para uma
-              nova.
-            </Empty>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => openView(key, kind)}
+                  className="flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5"
+                >
+                  {kind === "board" ? (
+                    <LayoutGrid className="size-3.5" />
+                  ) : (
+                    <FileCode2 className="size-3.5" />
+                  )}
+                  {viewLabel[kind]}
+                </button>
+                <button
+                  type="button"
+                  title={`Fechar ${viewLabel[kind]}`}
+                  onClick={() => closeView(key, kind)}
+                  className="mr-1 rounded p-0.5 text-slate-500 hover:text-white"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            );
+          })}
+          {lastHidden && (
+            <button
+              type="button"
+              title={`Reabrir ${tabLabel(lastHidden)} (a sessão continuou viva)`}
+              onClick={() => reopenTab(lastHidden.id)}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-500 hover:text-slate-200"
+            >
+              <RotateCcw className="size-3.5" /> {hidden.length}
+            </button>
           )}
-        </>
+        </div>
+      )}
+      {focusedView === "board" ? (
+        <KanbanBoard />
+      ) : focusedView === "editor" ? (
+        <EditorPanel />
+      ) : projectSessions.length === 0 ? (
+        <Empty title="Nenhuma sessão aberta">
+          Clique em Claude ou OpenCode para abrir um agente neste projeto, ou em Terminal para um
+          bash fora do jail. A sessão continua viva na VM mesmo se você fechar o app.
+        </Empty>
+      ) : current ? (
+        <TerminalView key={current.id} sessionId={current.id} />
+      ) : (
+        <Empty title="Todas as abas fechadas">
+          As sessões continuam vivas na VM. Reabra pela seta acima ou por Ctrl+Shift+T para uma
+          nova.
+        </Empty>
       )}
     </div>
   );

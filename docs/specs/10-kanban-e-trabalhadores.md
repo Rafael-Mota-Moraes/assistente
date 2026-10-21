@@ -23,6 +23,13 @@ sessão que segura, só em "fazendo"), `commit` (só em "feito").
 mesma tarefa (o pull é atômico sob `kanban_lock`). Sessão morta = tarefa solta na próxima leitura do
 quadro, com commit `kanban: solta T3 (sessão encerrada)`. Regras puras em `hub_core::kanban`.
 
+## Popular pelo backlog (F11.9)
+
+`POST …/kanban/explorar` abre um Claude no projeto cujo prompt (`hub_core::worker::EXPLORE_PROMPT`) é
+gravado em `~/.assistente/perfis/<perfil>/explorar/<sessão>.md`. O Claude lê o backlog em markdown,
+usa `kanban listar` para não duplicar e `kanban criar` (`POST /v1/kanban/criar`, token da sessão) para
+cada item pendente. Cards nascem `manual`. A sessão não implementa nada.
+
 ## Trabalhador
 
 Uma sessão do opencode no jail, rodando `vm/trabalhador`, no worktree da tarefa:

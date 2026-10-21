@@ -22,10 +22,10 @@ kanban() {
   if [ -z "$url" ] || [ -z "$token" ]; then
     die "fora de uma sessão do Assistente (sem ASSISTENTE_EXEC_URL/ASSISTENTE_EXEC_TOKEN)"
   fi
-  local acao="${1:-}" id="" commit="" modelos=""
+  local acao="${1:-}" id="" commit="" modelos="" titulo="" descricao="" tipo="" prioridade=""
   [ $# -gt 0 ] && shift
   case "$acao" in
-    pull) ;;
+    pull|listar|criar) ;;
     done|release|trabalhador)
       [ $# -gt 0 ] || die "$acao: falta o id da tarefa (ex.: T3)"
       id="$1"
@@ -37,12 +37,21 @@ kanban() {
     case "$1" in
       --commit) [ $# -ge 2 ] || uso_kanban; commit="$2"; shift 2 ;;
       --modelos) [ $# -ge 2 ] || uso_kanban; modelos="$2"; shift 2 ;;
+      --titulo) [ $# -ge 2 ] || uso_kanban; titulo="$2"; shift 2 ;;
+      --descricao) [ $# -ge 2 ] || uso_kanban; descricao="$2"; shift 2 ;;
+      --tipo) [ $# -ge 2 ] || uso_kanban; tipo="$2"; shift 2 ;;
+      --prioridade) [ $# -ge 2 ] || uso_kanban; prioridade="$2"; shift 2 ;;
       *) uso_kanban ;;
     esac
   done
-  local path body
+  if [ "$acao" = criar ]; then
+    [ -n "$titulo" ] || die "criar: informe --titulo"
+  fi
+  local path method=POST body
   case "$acao" in
     pull) path=/v1/kanban/pull ;;
+    listar) path=/v1/kanban; method=GET ;;
+    criar) path=/v1/kanban/criar ;;
     done) path=/v1/kanban/done ;;
     release) path=/v1/kanban/release ;;
     trabalhador)
@@ -52,20 +61,33 @@ kanban() {
   esac
   body="$(python3 -c '
 import json, sys
-acao, task, commit, modelos = sys.argv[1:5]
+acao, task, commit, modelos, titulo, descricao, tipo, prioridade = sys.argv[1:9]
 if acao == "done":
     body = {"id": task, "commit": commit or None}
 elif acao == "release":
     body = {"id": task}
 elif acao == "trabalhador":
     body = {"task": task, "models": [m for m in modelos.split(",") if m]}
+elif acao == "criar":
+    body = {"title": titulo}
+    if descricao:
+        body["description"] = descricao
+    if tipo:
+        body["kind"] = tipo
+    if prioridade:
+        body["priority"] = prioridade
 else:
     body = {}
-print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos")"
+print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos" "$titulo" "$descricao" "$tipo" "$prioridade")"
   local response status json
-  response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
-    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
-    --data-binary "$body" "$url$path")" || die "o hubd não respondeu em $url"
+  if [ "$method" = GET ]; then
+    response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+      -H "Authorization: Bearer $token" "$url$path")" || die "o hubd não respondeu em $url"
+  else
+    response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+      -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+      --data-binary "$body" "$url$path")" || die "o hubd não respondeu em $url"
+  fi
   status="${response##*$'\n'}"
   json="${response%$'\n'*}"
   case "$status" in
@@ -79,7 +101,8 @@ except ValueError:
   esac
 }
 uso_kanban() {
-  echo "uso: fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> --modelos m1,m2" >&2
+  echo "uso: fora-do-jail kanban listar | criar --titulo T [--descricao D] [--tipo manual|agente] [--prioridade alta|normal|baixa]" >&2
+  echo "     fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> --modelos m1,m2" >&2
   exit 2
 }
 

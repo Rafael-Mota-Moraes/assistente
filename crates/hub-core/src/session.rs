@@ -140,7 +140,19 @@ impl LaunchPlan {
         seq: u32,
         options: &LaunchOptions,
     ) -> Result<Self, LaunchError> {
-        Self::assemble(config, home, spec, seq, options, None)
+        Self::assemble(config, home, spec, seq, options, Mode::Agent)
+    }
+
+    /// Claude que já começa explorando (F11.9): o prompt é o arquivo de `explore_file`, que o
+    /// chamador grava antes de criar a sessão. Só faz sentido para `AgentKind::Claude`.
+    pub fn build_explore(
+        config: &Config,
+        home: &Path,
+        spec: &SessionSpec,
+        seq: u32,
+        options: &LaunchOptions,
+    ) -> Result<Self, LaunchError> {
+        Self::assemble(config, home, spec, seq, options, Mode::Explore)
     }
 
     /// Sessão de trabalhador (F11.6): o opencode roda `vm/trabalhador` no worktree da tarefa,
@@ -153,7 +165,7 @@ impl LaunchPlan {
         options: &LaunchOptions,
         run: &WorkerRun,
     ) -> Result<Self, LaunchError> {
-        Self::assemble(config, home, spec, seq, options, Some(run))
+        Self::assemble(config, home, spec, seq, options, Mode::Worker(run))
     }
 
     fn assemble(
@@ -162,7 +174,7 @@ impl LaunchPlan {
         spec: &SessionSpec,
         seq: u32,
         options: &LaunchOptions,
-        worker: Option<&WorkerRun>,
+        mode: Mode<'_>,
     ) -> Result<Self, LaunchError> {
         let profile = config
             .profile(&spec.profile)
@@ -204,8 +216,18 @@ impl LaunchPlan {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
             vec!["bash".to_owned(), "-l".to_owned()]
         } else {
-            let command = match worker {
-                Some(run) => {
+            let command = match mode {
+                Mode::Explore => {
+                    env.push((
+                        "ASSISTENTE_PROMPT_FILE".to_owned(),
+                        explore_file(&data_dir, &session).display().to_string(),
+                    ));
+                    EXPLORE_COMMAND
+                        .iter()
+                        .map(|part| (*part).to_owned())
+                        .collect()
+                }
+                Mode::Worker(run) => {
                     cwd = run.worktree.clone();
                     let files = crate::worker::files(&data_dir, &session);
                     env.extend(worker_env(run, &files));
@@ -216,7 +238,7 @@ impl LaunchPlan {
                             .to_string(),
                     ]
                 }
-                None => agent_command(spec.agent),
+                Mode::Agent => agent_command(spec.agent),
             };
             let settings = &options.settings;
             let jail = JailOptions {
@@ -343,6 +365,28 @@ fn jail_argv(
     argv.push("--".to_owned());
     argv.extend(jail.command.iter().cloned());
     argv
+}
+
+/// A sessão de exploração recebe o prompt como primeiro argumento do Claude, lido do arquivo
+/// (sem quoting no tmux).
+const EXPLORE_COMMAND: [&str; 4] = [
+    "bash",
+    "-c",
+    "exec claude \"$(cat \"$ASSISTENTE_PROMPT_FILE\")\"",
+    "claude",
+];
+
+/// Arquivo do prompt de exploração da sessão `session` (`<data>/explorar/<session>.md`).
+pub fn explore_file(profile_data: &Path, session: &str) -> PathBuf {
+    profile_data.join("explorar").join(format!("{session}.md"))
+}
+
+/// Como a sessão foi montada: agente comum, trabalhador do quadro (F11.6) ou exploração (F11.9).
+#[derive(Clone, Copy)]
+enum Mode<'a> {
+    Agent,
+    Worker(&'a WorkerRun),
+    Explore,
 }
 
 /// Comando do agente dentro do jail. O opencode 2 roda como cliente de um servidor em segundo
@@ -673,6 +717,33 @@ mod tests {
             settings,
             exec: None,
         }
+    }
+
+    #[test]
+    fn explore_starts_claude_reading_the_prompt_file() {
+        let (config, home) = setup();
+        let options = LaunchOptions::default();
+        let plan = LaunchPlan::build_explore(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Claude),
+            1,
+            &options,
+        )
+        .unwrap();
+        assert_eq!(
+            env(&plan, "ASSISTENTE_PROMPT_FILE"),
+            Some("/home/rafa/.assistente/perfis/pessoal/explorar/pessoal--x--claude-1.md")
+        );
+        let tail = &plan.argv[plan.argv.len() - 4..];
+        assert_eq!(tail[0], "bash");
+        assert_eq!(tail[1], "-c");
+        assert!(tail[2].contains("$ASSISTENTE_PROMPT_FILE"), "{tail:?}");
+        assert_eq!(tail[3], "claude");
+        assert_eq!(
+            explore_file(&profile_data_dir(&home, "pessoal"), "pessoal--x--claude-1"),
+            PathBuf::from("/home/rafa/.assistente/perfis/pessoal/explorar/pessoal--x--claude-1.md")
+        );
     }
 
     #[test]

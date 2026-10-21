@@ -2,7 +2,7 @@
 // vitest; quem executa é o `useShortcuts` (listener no window) — o TerminalView só engole
 // essas teclas para não irem ao agente.
 import { useEffect } from "react";
-import { useAppStore, visibleProjectSessions } from "../../store";
+import { selectSession, useAppStore, visibleProjectSessions } from "../../store";
 import { openSession } from "./actions";
 import { clipboardShortcut } from "./clipboard";
 
@@ -48,6 +48,7 @@ export function closeTab() {
   useAppStore.setState({
     closedTabs: [...state.closedTabs, current.id],
     activeSession: neighbor?.id ?? null,
+    activeView: null,
   });
 }
 
@@ -56,6 +57,7 @@ export function reopenTab(id: string) {
   useAppStore.setState((s) => ({
     closedTabs: s.closedTabs.filter((x) => x !== id),
     activeSession: id,
+    activeView: null,
   }));
 }
 
@@ -66,14 +68,14 @@ export function cycleTab() {
   if (visible.length < 2) return;
   const index = visible.findIndex((s) => s.id === state.activeSession);
   const next = visible[(index + 1) % visible.length];
-  useAppStore.setState({ activeSession: next.id });
+  selectSession(next.id);
 }
 
 /** Ctrl+1..9: foca a aba N (1-based); se não existe, não faz nada. */
 export function selectTab(index: number) {
   const visible = visibleProjectSessions(useAppStore.getState());
   const target = visible[index];
-  if (target) useAppStore.setState({ activeSession: target.id });
+  if (target) selectSession(target.id);
 }
 
 /** Ctrl+Shift+P: próximo perfil, como clicar no seletor (limpa projeto e lista). */

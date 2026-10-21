@@ -53,6 +53,10 @@ type State = {
   morning: MorningState | null;
   /** Modal de configurações do projeto (engrenagem, F9.3); `null` = fechado. */
   projectSettings: { profile: string; project: string } | null;
+  /** Visões abertas como abas (Quadro e Editor), por projeto: `key` = `perfil/projeto`. */
+  views: { key: string; kind: ViewKind }[];
+  /** Aba de visão em foco; `null` = uma sessão de agente. */
+  activeView: { key: string; kind: ViewKind } | null;
   /** Painel da web UI do ai-memory (F5.5); `true` = aberto. */
   memoryPanelOpen: boolean;
   /** Pedidos dos agentes para rodar fora do jail (F9.7), atualizados a cada 2 s. */
@@ -80,7 +84,40 @@ export const initialState: State = {
   projectSettings: null,
   memoryPanelOpen: false,
   execRequests: [],
+  views: [],
+  activeView: null,
 };
+
+/** Visões que aparecem como abas: o Quadro e o Editor de cada projeto. */
+export type ViewKind = "board" | "editor";
+
+/** Chave de um projeto nas visões (`perfil/projeto`). */
+export function viewKey(profile: string, project: string): string {
+  return `${profile}/${project}`;
+}
+
+/** Foca uma sessão de agente: sai da visão em foco. */
+export function selectSession(id: string | null) {
+  useAppStore.setState({ activeSession: id, activeView: null });
+}
+
+/** Abre (ou só foca) a visão como aba do projeto. */
+export function openView(key: string, kind: ViewKind) {
+  useAppStore.setState((s) => ({
+    views: s.views.some((v) => v.key === key && v.kind === kind)
+      ? s.views
+      : [...s.views, { key, kind }],
+    activeView: { key, kind },
+  }));
+}
+
+/** Fecha a aba da visão; se ela estava em foco, volta para a sessão. */
+export function closeView(key: string, kind: ViewKind) {
+  useAppStore.setState((s) => ({
+    views: s.views.filter((v) => !(v.key === key && v.kind === kind)),
+    activeView: s.activeView?.key === key && s.activeView.kind === kind ? null : s.activeView,
+  }));
+}
 
 /** Sessões visíveis (abas) do projeto ativo: as do perfil/projeto, menos as abas fechadas. */
 export function visibleProjectSessions(
@@ -107,6 +144,8 @@ export const useAppStore = create<State>()(
       activeSession: state.activeSession,
       closedTabs: state.closedTabs,
       lastAgent: state.lastAgent,
+      views: state.views,
+      activeView: state.activeView,
     }),
   }),
 );

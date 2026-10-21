@@ -1,4 +1,4 @@
-import { LayoutGrid, Pencil, Play, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { LayoutGrid, Pencil, Play, Plus, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useState } from "react";
 import type {
   KanbanBoard as Board,
@@ -8,7 +8,7 @@ import type {
   KanbanPriority,
   SessionInfo,
 } from "../../bridge/types";
-import { useAppStore } from "../../store";
+import { selectSession, useAppStore } from "../../store";
 import { tabLabel } from "../sessions/SessionArea";
 import { CardDialog } from "./CardDialog";
 
@@ -38,7 +38,7 @@ function holderLabel(holder: string, sessions: SessionInfo[]): string {
 }
 
 /** Quadro do projeto ativo (F11.3): backlog · fazendo · feito, no lugar da área de sessões. */
-export function KanbanBoard({ onClose }: { onClose: () => void }) {
+export function KanbanBoard() {
   const hub = useAppStore((s) => s.hub);
   const activeProfile = useAppStore((s) => s.activeProfile);
   const activeProject = useAppStore((s) => s.activeProject);
@@ -107,18 +107,26 @@ export function KanbanBoard({ onClose }: { onClose: () => void }) {
         <div className="ml-auto flex gap-2">
           <button
             type="button"
+            onClick={() =>
+              void act(async () => {
+                const info = await client.explorarBacklog(profile, project);
+                selectSession(info.id);
+                useAppStore.setState({
+                  toast: "Claude lendo o backlog: os cards aparecem aqui conforme ele cria.",
+                });
+              })
+            }
+            title="Abre um Claude que lê o backlog (os .md do projeto) e cria os cards"
+            className="flex items-center gap-1.5 rounded-lg border border-line bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10"
+          >
+            <Sparkles className="size-4" /> Popular pelo backlog
+          </button>
+          <button
+            type="button"
             onClick={() => setEditing("novo")}
             className="flex items-center gap-1.5 rounded-lg border border-line bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10"
           >
             <Plus className="size-4" /> Novo card
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            title="Voltar às sessões"
-            className="rounded-lg border border-line bg-white/5 p-1.5 text-slate-300 hover:bg-white/10"
-          >
-            <X className="size-4" />
           </button>
         </div>
       </header>

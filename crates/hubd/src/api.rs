@@ -14,8 +14,8 @@ use axum::{Json, Router};
 use http_body_util::{BodyExt, Full};
 use hub_core::{
     AgentKind, Config, ExecAccess, LaunchOptions, LaunchPlan, Project, ProjectSettings,
-    SessionSpec, claude_logged_in, discover_projects, exec_client_dir, load_settings,
-    settings_path,
+    SessionSpec, claude_logged_in, discover_projects, exec_client_dir, explore_file, load_settings,
+    profile_data_dir, settings_path,
 };
 use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
@@ -241,6 +241,10 @@ pub fn router(state: AppState) -> Router {
             post(kanban::mandar_card),
         )
         .route("/api/sessions/{id}/reiniciar", post(kanban::restart_worker))
+        .route(
+            "/api/projects/{profile}/{project}/kanban/explorar",
+            post(kanban::explore_backlog),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     let mut public = Router::new()
@@ -266,6 +270,8 @@ pub fn agent_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/exec", post(agent_submit))
         .route("/v1/exec/{id}", get(agent_result))
+        .route("/v1/kanban", get(kanban::agent_board))
+        .route("/v1/kanban/criar", post(kanban::agent_create))
         .route("/v1/kanban/pull", post(kanban::agent_pull))
         .route("/v1/kanban/done", post(kanban::agent_done))
         .route("/v1/kanban/release", post(kanban::agent_release))
@@ -2264,20 +2270,50 @@ async fn create_session(
     State(state): State<AppState>,
     Json(spec): Json<SessionSpec>,
 ) -> Result<(StatusCode, Json<SessionInfo>), Response> {
+    let info = launch_session(&state, &spec, None).await?;
+    Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// Abre uma sessão de agente. Com `prompt`, o Claude já começa com ele (F11.9): o prompt vai para
+/// um arquivo na pasta de dados do perfil (visível dentro do jail) antes de a sessão subir.
+pub(super) async fn launch_session(
+    state: &AppState,
+    spec: &SessionSpec,
+    prompt: Option<&str>,
+) -> Result<SessionInfo, Response> {
     let inner = &state.0;
     let Some(profile) = inner.config.profile(&spec.profile) else {
         return Err(error(StatusCode::NOT_FOUND, "perfil desconhecido"));
     };
+    if prompt.is_some() && spec.agent != AgentKind::Claude {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "só o Claude começa com prompt",
+        ));
+    }
     let existing = inner.tmux.list().await.map_err(|e| internal(&e))?;
-    let seq = next_seq(&existing, &spec);
+    let seq = next_seq(&existing, spec);
     let exec = exec_access_for(inner, spec.agent);
     let exec_token = exec.as_ref().map(|e| e.token.clone());
     let options = LaunchOptions {
         settings: project_settings_for(inner, &spec.profile, &spec.project),
         exec,
     };
-    let mut plan = LaunchPlan::build_with(&inner.config, &inner.home, &spec, seq, &options)
-        .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    let mut plan = match prompt {
+        Some(_) => LaunchPlan::build_explore(&inner.config, &inner.home, spec, seq, &options),
+        None => LaunchPlan::build_with(&inner.config, &inner.home, spec, seq, &options),
+    }
+    .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    if let Some(prompt) = prompt {
+        let file = explore_file(
+            &profile_data_dir(&inner.home, &spec.profile),
+            &plan.tmux_session,
+        );
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| internal(&e.to_string()))?;
+        }
+        std::fs::write(&file, prompt).map_err(|e| internal(&e.to_string()))?;
+    }
     // Só projetos de verdade (repo git na raiz do perfil).
     if !plan.cwd.join(".git").exists() || !plan.cwd.starts_with(&profile.root) {
         return Err(error(
@@ -2294,11 +2330,11 @@ async fn create_session(
     }
     let info = inner
         .tmux
-        .create(&plan, &spec, exec_token.as_deref())
+        .create(&plan, spec, exec_token.as_deref())
         .await
         .map_err(|e| internal(&e))?;
     tracing::info!("sessão criada: {}", info.id);
-    Ok((StatusCode::CREATED, Json(info)))
+    Ok(info)
 }
 
 /// Configurações do projeto para o jail. Arquivo inválido: o padrão (o mais fechado), não falha.

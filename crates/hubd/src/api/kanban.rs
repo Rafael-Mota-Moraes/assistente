@@ -386,6 +386,55 @@ fn write_worker_files(files: &worker::WorkerFiles, prompt: &str, run: &WorkerRun
     std::fs::write(&files.run, run_json).map_err(|e| internal(&e.to_string()))
 }
 
+/// POST /api/projects/{perfil}/{projeto}/kanban/explorar: abre um Claude que lê o backlog em
+/// markdown e monta o quadro (F11.9). Os cards nascem `manual`; você marca os que vão para o agente.
+pub(super) async fn explore_backlog(
+    State(state): State<AppState>,
+    Params((profile, project)): Params<(String, String)>,
+) -> Reply<(StatusCode, Json<SessionInfo>)> {
+    project_dir(&state, &profile, &project)?;
+    let spec = SessionSpec {
+        profile,
+        project,
+        agent: AgentKind::Claude,
+    };
+    let info = super::launch_session(&state, &spec, Some(worker::EXPLORE_PROMPT)).await?;
+    Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// GET /v1/kanban (API dos agentes): o quadro inteiro, para não criar card repetido.
+pub(super) async fn agent_board(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Reply<Json<Board>> {
+    let session = agent_session(&state, &headers).await?;
+    let dir = project_dir(&state, &session.profile, &session.project)?;
+    let _guard = state.0.kanban_lock.lock().await;
+    Ok(Json(load(&state, &dir).await?))
+}
+
+/// POST /v1/kanban/criar `{title, description?, priority?, kind?}` (API dos agentes): card novo no
+/// backlog. Sem `kind`, nasce `manual`.
+pub(super) async fn agent_create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(draft): Json<Draft>,
+) -> Reply<(StatusCode, Json<Card>)> {
+    let session = agent_session(&state, &headers).await?;
+    let dir = project_dir(&state, &session.profile, &session.project)?;
+    let mut draft = draft;
+    draft.column = None;
+    let _guard = state.0.kanban_lock.lock().await;
+    let mut board = load(&state, &dir).await?;
+    let card = board.create(draft, now()).map_err(kanban_error)?.clone();
+    persist(
+        &dir,
+        &board,
+        &format!("kanban: cria {} (por {})", card.id, session.id),
+    )?;
+    Ok((StatusCode::CREATED, Json(card)))
+}
+
 #[derive(Deserialize)]
 pub(super) struct DoneBody {
     id: String,
@@ -948,5 +997,144 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{done}");
         assert_eq!(done["column"], "feito");
+    }
+
+    #[tokio::test]
+    async fn explorar_opens_a_claude_that_starts_with_the_backlog_prompt() {
+        let t = TestTmux::new("kanban-explorar");
+        let hub = hub(&t, true);
+        let uri = "/api/projects/pessoal/proj/kanban/explorar";
+        let (status, _) = send(
+            hub.app.clone(),
+            "POST",
+            "/api/projects/pessoal/nada/kanban/explorar",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, info) = send(hub.app.clone(), "POST", uri, None, None).await;
+        assert_eq!(status, StatusCode::CREATED, "{info}");
+        assert_eq!(info["agent"], "claude");
+        let file = hub_core::explore_file(
+            &hub_core::profile_data_dir(&hub.home, "pessoal"),
+            info["id"].as_str().unwrap(),
+        );
+        let prompt = std::fs::read_to_string(&file).unwrap();
+        assert!(prompt.contains("kanban listar"), "{prompt}");
+        assert!(prompt.contains("Não use --tipo agente"), "{prompt}");
+    }
+
+    #[tokio::test]
+    async fn agents_list_and_create_cards_with_their_session_token() {
+        let t = TestTmux::new("kanban-criar");
+        let hub = hub(&t, false);
+        let (_, claude) = session(&t, AgentKind::Claude, 1).await;
+
+        let create = |body: &'static str, token: Option<String>| {
+            let app = hub.agents.clone();
+            async move {
+                send(
+                    app,
+                    "POST",
+                    "/v1/kanban/criar",
+                    Some(body),
+                    token.as_deref(),
+                )
+                .await
+            }
+        };
+        assert_eq!(
+            create(r#"{"title":"Login"}"#, None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            create(r#"{"title":"  "}"#, Some(claude.clone())).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        let (status, card) = create(
+            r#"{"title":"Login","kind":"agente","priority":"alta"}"#,
+            Some(claude.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{card}");
+        assert_eq!(card["id"], "T1");
+        assert_eq!(card["kind"], "agente");
+        assert_eq!(
+            last_subject(&hub.proj),
+            "kanban: cria T1 (por pessoal--proj--claude-1)"
+        );
+
+        let (status, board) =
+            send(hub.agents.clone(), "GET", "/v1/kanban", None, Some(&claude)).await;
+        assert_eq!(status, StatusCode::OK, "{board}");
+        assert_eq!(board["cards"][0]["title"], "Login");
+    }
+
+    /// Roda o `vm/fora-do-jail` de verdade contra a API dos agentes: pega o quoting e o JSON.
+    #[tokio::test]
+    async fn fora_do_jail_kanban_talks_to_the_board() {
+        let t = TestTmux::new("kanban-cliente");
+        let hub = hub(&t, false);
+        let (_, claude) = session(&t, AgentKind::Claude, 1).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = hub.agents.clone();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let client = |args: &[&str]| {
+            let url = url.clone();
+            let token = claude.clone();
+            let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+            async move {
+                tokio::process::Command::new("bash")
+                    .arg(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/../../vm/fora-do-jail"
+                    ))
+                    .arg("kanban")
+                    .args(&args)
+                    .env("ASSISTENTE_EXEC_URL", url)
+                    .env("ASSISTENTE_EXEC_TOKEN", token)
+                    .output()
+                    .await
+                    .unwrap()
+            }
+        };
+        let out = client(&[
+            "criar",
+            "--titulo",
+            "Tela de \"login\"",
+            "--descricao",
+            "e-mail, senha; \"pronto\" quando passar",
+            "--tipo",
+            "agente",
+        ])
+        .await;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let card: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(card["title"], "Tela de \"login\"");
+        assert_eq!(
+            card["description"],
+            "e-mail, senha; \"pronto\" quando passar"
+        );
+        assert_eq!(card["kind"], "agente");
+
+        let out = client(&["listar"]).await;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let board: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(board["cards"].as_array().unwrap().len(), 1);
+
+        let out = client(&["criar"]).await;
+        assert!(!out.status.success(), "criar sem título precisa falhar");
     }
 }

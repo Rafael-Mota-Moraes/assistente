@@ -33,6 +33,7 @@ function connect(board: Board) {
     deleteCard: vi.fn().mockResolvedValue(undefined),
     mandarCard: vi.fn().mockResolvedValue(claude),
     restartWorker: vi.fn().mockResolvedValue(claude),
+    explorarBacklog: vi.fn().mockResolvedValue(claude),
   };
   useAppStore.setState({
     hub: hub as unknown as HubClient,
@@ -40,7 +41,7 @@ function connect(board: Board) {
     activeProject: "game",
     sessions: [claude],
   });
-  render(<KanbanBoard onClose={() => {}} />);
+  render(<KanbanBoard />);
   return hub;
 }
 
@@ -118,5 +119,12 @@ describe("KanbanBoard", () => {
     const fazendo = await column("Fazendo");
     fireEvent.click(within(fazendo).getByRole("button", { name: /Reiniciar/ }));
     await vi.waitFor(() => expect(hub.restartWorker).toHaveBeenCalledWith(claude.id));
+  });
+
+  it("Popular pelo backlog abre o Claude e mostra a aba dele", async () => {
+    const hub = connect({ next: 1, cards: [] });
+    fireEvent.click(await screen.findByRole("button", { name: /Popular pelo backlog/ }));
+    await vi.waitFor(() => expect(hub.explorarBacklog).toHaveBeenCalledWith("pessoal", "game"));
+    await vi.waitFor(() => expect(useAppStore.getState().activeSession).toBe(claude.id));
   });
 });

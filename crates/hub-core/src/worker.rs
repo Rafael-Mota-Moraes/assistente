@@ -87,6 +87,9 @@ pub fn checked_models(models: &[String]) -> Result<Vec<String>, String> {
     Ok(unique)
 }
 
+/// Prompt da sessão que monta o quadro a partir do backlog em markdown (F11.9).
+pub const EXPLORE_PROMPT: &str = include_str!("explorar_prompt.md");
+
 /// Id de tarefa como o quadro gera (`T1`, `T23`). Vai para um caminho de pasta e um nome de
 /// branch, então o formato é checado antes de qualquer uso.
 pub fn valid_task_id(id: &str) -> bool {

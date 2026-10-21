@@ -221,7 +221,12 @@ export function AssistantPanel({ onClose }: { onClose?: () => void }) {
   async function openAgent() {
     if (!health?.self_update) return;
     const { profile, project } = health.self_update;
-    useAppStore.setState({ activeProfile: profile, activeProject: project, activeSession: null });
+    useAppStore.setState({
+      activeProfile: profile,
+      activeProject: project,
+      activeSession: null,
+      activeView: null,
+    });
     await openSession("claude");
     onClose?.();
   }

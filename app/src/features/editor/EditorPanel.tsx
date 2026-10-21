@@ -125,7 +125,7 @@ export function FileTree({
   return <ul className="flex flex-col">{render(root, 0)}</ul>;
 }
 
-export function EditorPanel({ onClose }: { onClose?: () => void }) {
+export function EditorPanel() {
   const profile = useAppStore((s) => s.activeProfile);
   const project = useAppStore((s) => s.activeProject);
   const hub = useAppStore((s) => s.hub);
@@ -460,16 +460,6 @@ export function EditorPanel({ onClose }: { onClose?: () => void }) {
                   <Save className="size-3.5" /> {saving ? "Salvando…" : "Salvar"}
                 </button>
               </>
-            )}
-            {onClose && (
-              <button
-                type="button"
-                onClick={onClose}
-                title="Fechar o editor"
-                className="flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-medium text-rose-200 hover:bg-rose-500/20"
-              >
-                <X className="size-3.5" /> Fechar
-              </button>
             )}
             {mode === "diff" && (
               <button

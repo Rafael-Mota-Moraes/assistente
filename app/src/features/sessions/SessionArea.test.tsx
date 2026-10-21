@@ -6,6 +6,10 @@ import { useAppStore } from "../../store";
 import { SessionArea, tabLabel } from "./SessionArea";
 import { useShortcuts } from "./shortcuts";
 
+vi.mock("../editor/EditorPanel", () => ({
+  EditorPanel: () => <div>editor</div>,
+}));
+
 vi.mock("./TerminalView", () => ({
   TerminalView: ({ sessionId }: { sessionId: string }) => <div>terminal {sessionId}</div>,
 }));
@@ -26,6 +30,51 @@ const session = (id: string, project: string, agent: SessionInfo["agent"]): Sess
 });
 
 describe("SessionArea", () => {
+  it("Quadro e Editor são abas: abrem, trocam com as sessões e fecham pelo X", async () => {
+    useAppStore.setState({
+      hub: { kanban: vi.fn().mockResolvedValue({ next: 1, cards: [] }) } as unknown as HubClient,
+      activeProfile: "pessoal",
+      activeProject: "game",
+      activeSession: "pessoal--game--claude-1",
+      sessions: [session("pessoal--game--claude-1", "game", "claude")],
+    });
+    render(<SessionArea />);
+    fireEvent.click(screen.getByRole("button", { name: /Quadro/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Editor/ }));
+    expect(screen.getByRole("tab", { name: "Quadro" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Editor" })).toBeInTheDocument();
+    expect(screen.getByText("editor")).toBeInTheDocument();
+
+    // Trocar para o Quadro e depois para a sessão, sem sumir com as abas.
+    fireEvent.click(screen.getByRole("tab", { name: "Quadro" }));
+    expect(await screen.findByRole("region", { name: "Coluna Backlog" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Claude 1" }));
+    expect(screen.queryByRole("region", { name: "Coluna Backlog" })).toBeNull();
+    expect(screen.getByText("terminal pessoal--game--claude-1")).toBeInTheDocument();
+
+    // Fechar a aba do Editor tira ela da barra.
+    fireEvent.click(screen.getByTitle("Fechar Editor"));
+    expect(screen.queryByRole("tab", { name: "Editor" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Quadro" })).toBeInTheDocument();
+  });
+
+  it("com o quadro aberto, as abas continuam e clicar numa volta ao terminal", async () => {
+    useAppStore.setState({
+      hub: { kanban: vi.fn().mockResolvedValue({ next: 1, cards: [] }) } as unknown as HubClient,
+      activeProfile: "pessoal",
+      activeProject: "game",
+      activeSession: "pessoal--game--claude-1",
+      sessions: [session("pessoal--game--claude-1", "game", "claude")],
+    });
+    render(<SessionArea />);
+    fireEvent.click(screen.getByRole("button", { name: /Quadro/ }));
+    expect(await screen.findByRole("region", { name: "Coluna Backlog" })).toBeInTheDocument();
+    const tab = screen.getByRole("tab", { name: "Claude 1" });
+    fireEvent.click(tab);
+    expect(screen.queryByRole("region", { name: "Coluna Backlog" })).toBeNull();
+    expect(screen.getByText("terminal pessoal--game--claude-1")).toBeInTheDocument();
+  });
+
   it("nomeia a aba pelo agente e número", () => {
     expect(tabLabel(session("pessoal--game--opencode-3", "game", "opencode"))).toBe("OpenCode 3");
   });

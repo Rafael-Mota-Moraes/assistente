@@ -228,6 +228,14 @@ hubd); F11.2 antes de F11.4.
   e `…mandar_opens_a_worker…` (reiniciar).
 - [ ] **F11.5 Validação na VM real** *(humano)*. Quadro com 3 tarefas e 2 sessões abertas: cada sessão puxa uma distinta; mover um card pelo app; fechar uma das abas e ver a tarefa voltar ao backlog; `dorme` de noite alimentado pelo quadro, com revisão no "Bom dia".
   Pronto quando: os itens acima conferem. Como testar: sessão real.
+- [x] **F11.9 Popular o quadro pelo backlog.** Botão "Popular pelo backlog" no quadro abre um Claude
+  que lê os `.md` do projeto (itens `- [ ]` de `docs/FUNCIONALIDADES.md` e parecidos, pulando os
+  `*(humano)*` e os `[x]`), confere o que já está no quadro com `fora-do-jail kanban listar` e cria os
+  cards com `fora-do-jail kanban criar --titulo … --descricao … --prioridade …`. Os cards nascem `manual`:
+  você marca os que vão para o agente. Não implementa nada.
+  Pronto quando: o botão abre a sessão, e os cards aparecem no quadro sem duplicar. Como testar:
+  `api::kanban::tests::explorar_opens_a_claude…`, `…agents_list_and_create_cards…`,
+  `…fora_do_jail_kanban_talks_to_the_board` (roda o script de verdade) e `session::explore_starts…`.
 - [ ] **F11.8 Validação na VM real** *(humano)*. Um card `manual` com "Mandar" e um `agente` puxado pelo
   orquestrador, com o opencode de verdade: o modelo grátis falha e a reserva assume; "Reiniciar" num
   trabalhador travado; `opencode models` confere os nomes que vão em `[workers] models`. Confirme também

@@ -112,6 +112,11 @@ export class HubClient {
     );
   }
 
+  /** Abre um Claude que monta o quadro a partir do backlog em markdown (F11.9). */
+  explorarBacklog(profile: string, project: string): Promise<SessionInfo> {
+    return this.request("POST", `${kanbanPath(profile, project)}/explorar`);
+  }
+
   /** Relança um trabalhador com o mesmo modelo, no mesmo worktree (F11.6). */
   restartWorker(session: string): Promise<SessionInfo> {
     return this.request("POST", `/api/sessions/${encodeURIComponent(session)}/reiniciar`);

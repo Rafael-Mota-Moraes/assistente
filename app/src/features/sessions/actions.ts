@@ -33,6 +33,7 @@ export async function openSession(agent: AgentKind) {
     useAppStore.setState({
       sessions: [...sessions.filter((s) => s.id !== session.id), session],
       activeSession: session.id,
+      activeView: null,
       ...(agent === "shell" ? {} : { lastAgent: agent }),
       actionError: null,
     });

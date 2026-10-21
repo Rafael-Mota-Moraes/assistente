@@ -99,6 +99,8 @@ struct JailOptions<'a> {
     command: &'a [String],
     /// Pastas do host montadas em leitura dentro do jail (o `trabalhador` precisa do opencode).
     extra_maps: &'a [PathBuf],
+    /// Pastas do host montadas com escrita (o `.git` do projeto, para o worktree commitar).
+    rw_maps: &'a [PathBuf],
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -216,6 +218,7 @@ impl LaunchPlan {
         }
         let mut cwd = profile.root.join(&spec.project);
         let mut extra_maps: Vec<PathBuf> = Vec::new();
+        let mut rw_maps: Vec<PathBuf> = Vec::new();
         let argv = if spec.agent == AgentKind::Shell {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
             vec!["bash".to_owned(), "-l".to_owned()]
@@ -229,6 +232,8 @@ impl LaunchPlan {
                     let files = crate::worker::files(&data_dir, &session);
                     env.extend(worker_env(run, &files, &crate::worker::opencode_bin(home)));
                     extra_maps.push(crate::worker::opencode_dir(home));
+                    // O worktree é um git worktree: o repo principal (`.git`) é onde ele grava.
+                    rw_maps.push(profile.root.join(&spec.project).join(".git"));
                     vec![
                         exec_client_dir(home)
                             .join("trabalhador")
@@ -246,6 +251,7 @@ impl LaunchPlan {
                 exec_port: exec.map(|e| e.port),
                 command: &command,
                 extra_maps: &extra_maps,
+                rw_maps: &rw_maps,
             };
             jail_argv(config, home, profile, &data_dir, &env, spec.agent, &jail)
         };
@@ -348,6 +354,10 @@ fn jail_argv(
     argv.push(home.join(".local/share/ai-memory").display().to_string());
     for dir in jail.extra_maps {
         argv.push("--map".to_owned());
+        argv.push(dir.display().to_string());
+    }
+    for dir in jail.rw_maps {
+        argv.push("--rw-map".to_owned());
         argv.push(dir.display().to_string());
     }
     // O marcador do workspace mora na raiz do perfil, fora do projeto: sem ele a memória
@@ -783,6 +793,15 @@ mod tests {
             plan.argv
                 .windows(2)
                 .any(|w| w[0] == "--map" && w[1] == opencode_dir),
+            "{:?}",
+            plan.argv
+        );
+        // O worktree grava no `.git` do projeto: ele vai montado com escrita.
+        assert!(
+            plan.argv
+                .windows(2)
+                .any(|w| w[0] == "--rw-map"
+                    && w[1] == "/home/rafa/Documentos/pessoal/projetos/x/.git"),
             "{:?}",
             plan.argv
         );

@@ -5,13 +5,15 @@
 
 use crate::kanban::Card;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// `[workers]` do `.assistente.toml`: modelos do opencode (os "grátis") e limites.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkersConfig {
-    /// Ordem de uso: o primeiro é o principal; os outros são reserva quando ele falha.
+    /// Ordem de uso: o primeiro é o principal; os outros são reserva quando ele falha. Vazio =
+    /// o hubd escolhe entre os grátis do opencode, pelo histórico (F11.10).
     pub models: Vec<String>,
     /// Tentativas por modelo antes de trocar para o próximo.
     pub attempts: u32,
@@ -50,10 +52,12 @@ pub struct WorkerFiles {
     pub prompt: PathBuf,
     pub log: PathBuf,
     pub run: PathBuf,
+    /// Um `ok` ou `falhou` por tentativa, para o histórico de modelos (F11.10).
+    pub outcomes: PathBuf,
 }
 
 const MAX_MODEL_LEN: usize = 100;
-const MAX_MODELS: usize = 5;
+pub const MAX_MODELS: usize = 5;
 
 /// Nome de modelo sem espaço nem metacaractere: vai para a linha de comando do tmux.
 pub fn validate_model(model: &str) -> Result<(), String> {
@@ -85,6 +89,61 @@ pub fn checked_models(models: &[String]) -> Result<Vec<String>, String> {
         }
     }
     Ok(unique)
+}
+
+/// Sucessos e falhas por modelo (F11.10), somados das execuções do perfil.
+pub type Outcomes = HashMap<String, (u32, u32)>;
+
+/// Modelos grátis entre os de `opencode models` (uma linha por modelo, `provedor/modelo`). Grátis
+/// = provedor `opencode` ou "free" no nome. Suposição até confirmar a saída real na VM (F11.10).
+pub fn free_models(listing: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in listing.lines() {
+        let Some(model) = line.split_whitespace().next() else {
+            continue;
+        };
+        let Some((provider, _)) = model.split_once('/') else {
+            continue;
+        };
+        let free = provider == "opencode" || model.to_ascii_lowercase().contains("free");
+        if free && validate_model(model).is_ok() && !found.iter().any(|m| m == model) {
+            found.push(model.to_owned());
+        }
+    }
+    found
+}
+
+/// Linhas `modelo ok` e `modelo falhou`, gravadas pelo trabalhador a cada tentativa. Linhas
+/// que não batem com isso são ignoradas (um arquivo meio escrito não derruba o histórico).
+pub fn parse_outcomes(text: &str) -> Outcomes {
+    let mut outcomes = Outcomes::new();
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(model), Some(result), None) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let (ok, failed) = match result {
+            "ok" => (1, 0),
+            "falhou" => (0, 1),
+            _ => continue,
+        };
+        let entry = outcomes.entry(model.to_owned()).or_insert((0, 0));
+        entry.0 += ok;
+        entry.1 += failed;
+    }
+    outcomes
+}
+
+/// Ordena os candidatos pela taxa de sucesso, suavizada: sem histórico, um modelo fica no meio.
+/// Em empate vale a ordem de descoberta (o sort é estável).
+pub fn rank_models(candidates: &[String], outcomes: &Outcomes) -> Vec<String> {
+    let score = |model: &String| {
+        let (ok, failed) = outcomes.get(model).copied().unwrap_or((0, 0));
+        (f64::from(ok) + 1.0) / (f64::from(ok + failed) + 2.0)
+    };
+    let mut ranked = candidates.to_vec();
+    ranked.sort_by(|a, b| score(b).total_cmp(&score(a)));
+    ranked
 }
 
 /// Prompt da sessão que monta o quadro a partir do backlog em markdown (F11.9).
@@ -119,7 +178,31 @@ pub fn files(profile_data: &Path, session: &str) -> WorkerFiles {
         prompt: dir.join(format!("{session}.md")),
         log: dir.join(format!("{session}.log")),
         run: dir.join(format!("{session}.json")),
+        outcomes: dir.join(format!("{session}.modelos")),
     }
+}
+
+/// Histórico do perfil: junta os `.modelos` de todas as execuções em `trabalhadores/` (F11.10).
+pub fn read_outcomes(profile_data: &Path) -> Outcomes {
+    let mut total = Outcomes::new();
+    let Ok(entries) = std::fs::read_dir(profile_data.join("trabalhadores")) else {
+        return total;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "modelos") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for (model, (ok, failed)) in parse_outcomes(&text) {
+            let sum = total.entry(model).or_insert((0, 0));
+            sum.0 += ok;
+            sum.1 += failed;
+        }
+    }
+    total
 }
 
 /// Prompt da execução: a tarefa, as regras do trabalhador e o que não fazer.
@@ -211,6 +294,67 @@ mod tests {
         );
         assert!(files.prompt.ends_with("pessoal--proj--opencode-1.md"));
         assert!(files.run.ends_with("pessoal--proj--opencode-1.json"));
+        assert!(
+            files
+                .outcomes
+                .ends_with("pessoal--proj--opencode-1.modelos")
+        );
+    }
+
+    #[test]
+    fn free_models_keep_the_opencode_provider_and_free_names() {
+        let listing = "opencode/big-pickle\n\
+                       9router/free\n\
+                       9router/gpt-5\n\
+                       openai/gpt-5-free-trial extra\n\
+                       lixo sem barra\n\
+                       opencode/big-pickle\n\
+                       a b/c;d\n";
+        assert_eq!(
+            free_models(listing),
+            vec![
+                "opencode/big-pickle".to_owned(),
+                "9router/free".to_owned(),
+                "openai/gpt-5-free-trial".to_owned(),
+            ]
+        );
+        assert!(free_models("").is_empty());
+    }
+
+    #[test]
+    fn outcomes_are_counted_per_model_and_bad_lines_are_skipped() {
+        let outcomes =
+            parse_outcomes("a ok\na falhou\na ok\nb falhou\nlixo\nc ok extra\nd talvez\n");
+        assert_eq!(outcomes.get("a"), Some(&(2, 1)));
+        assert_eq!(outcomes.get("b"), Some(&(0, 1)));
+        assert!(!outcomes.contains_key("c"));
+        assert!(!outcomes.contains_key("d"));
+    }
+
+    #[test]
+    fn ranking_prefers_success_and_keeps_discovery_order_on_ties() {
+        let candidates: Vec<String> = ["x/novo", "x/ruim", "x/bom"].map(String::from).to_vec();
+        let outcomes = parse_outcomes("x/bom ok\nx/bom ok\nx/ruim falhou\nx/ruim falhou\n");
+        assert_eq!(
+            rank_models(&candidates, &outcomes),
+            vec!["x/bom".to_owned(), "x/novo".to_owned(), "x/ruim".to_owned()]
+        );
+        assert_eq!(rank_models(&candidates, &Outcomes::new()), candidates);
+    }
+
+    #[test]
+    fn read_outcomes_sums_every_run_of_the_profile() {
+        let dir = std::env::temp_dir().join(format!("hub-core-modelos-{}", std::process::id()));
+        let trab = dir.join("trabalhadores");
+        std::fs::create_dir_all(&trab).unwrap();
+        std::fs::write(trab.join("s1.modelos"), "a ok\na falhou\n").unwrap();
+        std::fs::write(trab.join("s2.modelos"), "a ok\nb falhou\n").unwrap();
+        std::fs::write(trab.join("s2.log"), "a ok\n").unwrap();
+        let total = read_outcomes(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(total.get("a"), Some(&(2, 1)));
+        assert_eq!(total.get("b"), Some(&(0, 1)));
+        assert!(read_outcomes(&dir).is_empty());
     }
 
     #[test]

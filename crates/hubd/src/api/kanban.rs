@@ -12,8 +12,8 @@ use axum::extract::Path as Params;
 use hub_core::kanban::{Board, Card, Column, Draft, KanbanError};
 use hub_core::worker::{self, WorkerRun};
 use hub_core::{profile_data_dir, workers_config_at};
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 type Reply<T> = Result<T, Response>;
 
@@ -227,17 +227,14 @@ async fn start_worker(
 ) -> Reply<SessionInfo> {
     let dir = project_dir(state, profile, project)?;
     let config = workers_config_at(&dir);
-    let models = if models.is_empty() {
+    // Pedido > `[workers] models` do projeto > escolha automática entre os grátis (F11.10).
+    let models = if !models.is_empty() {
+        models
+    } else if !config.models.is_empty() {
         config.models.clone()
     } else {
-        models
+        auto_models(state, profile).await?
     };
-    if models.is_empty() {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "escolha um modelo ou defina [workers] models no .assistente.toml do projeto",
-        ));
-    }
     let models = worker::checked_models(&models).map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
     // O id vai para um caminho de pasta e um nome de branch: só o formato gerado pelo quadro.
     if !worker::valid_task_id(id) {
@@ -293,6 +290,51 @@ async fn start_worker(
         return Err(response);
     }
     Ok(info)
+}
+
+/// Binário do opencode na VM: o instalador põe em `~/.opencode/bin` (F1.3), fora do PATH do hubd.
+fn opencode_bin(home: &Path) -> PathBuf {
+    let installed = home.join(".opencode/bin/opencode");
+    if installed.exists() {
+        installed
+    } else {
+        PathBuf::from("opencode")
+    }
+}
+
+/// Modelos grátis do opencode (`opencode models` com a config do perfil), na ordem do histórico
+/// de sucesso do perfil (F11.10). Sem nenhum grátis, responde erro com o que fazer.
+async fn auto_models(state: &AppState, profile: &str) -> Reply<Vec<String>> {
+    let inner = &state.0;
+    let data = profile_data_dir(&inner.home, profile);
+    let listing = tokio::process::Command::new(opencode_bin(&inner.home))
+        .arg("models")
+        .env("OPENCODE_CONFIG", data.join("opencode/opencode.json"))
+        .kill_on_drop(true)
+        .output();
+    let output = tokio::time::timeout(Duration::from_secs(60), listing)
+        .await
+        .map_err(|_| {
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "`opencode models` demorou demais",
+            )
+        })?
+        .map_err(|e| {
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                &format!("não consegui rodar `opencode models`: {e}"),
+            )
+        })?;
+    let free = worker::free_models(&String::from_utf8_lossy(&output.stdout));
+    if free.is_empty() {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "nenhum modelo grátis em `opencode models`: escolha um modelo ou defina [workers] models",
+        ));
+    }
+    let ranked = worker::rank_models(&free, &worker::read_outcomes(&data));
+    Ok(ranked.into_iter().take(worker::MAX_MODELS).collect())
 }
 
 /// Worktree da tarefa (`.assistente/worktrees/<id>`, branch `agente/<id>`). Reaproveita o que já
@@ -845,6 +887,64 @@ mod tests {
         );
         assert_eq!(last_subject(&hub.proj), "kanban: T2 devolvida ao backlog");
         assert_eq!(pull(tok2).await.1["card"]["id"], "T2");
+    }
+
+    #[tokio::test]
+    async fn mandar_without_models_picks_the_free_ones_by_history() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = TestTmux::new("kanban-auto");
+        let hub = hub(&t, true);
+        // opencode falso: `models` lista um grátis do provedor opencode, um do 9router (não grátis)
+        // e um grátis com "free" no nome.
+        let bin = hub.home.join(".opencode/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let fake = bin.join("opencode");
+        std::fs::write(
+            &fake,
+            "#!/usr/bin/env bash\necho opencode/big-pickle\necho 9router/gpt-5\necho 9router/free-novo\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Histórico do perfil: o grátis do opencode deu certo; o outro falhou.
+        let trab = hub.home.join(".assistente/perfis/pessoal/trabalhadores");
+        std::fs::create_dir_all(&trab).unwrap();
+        std::fs::write(
+            trab.join("antiga.modelos"),
+            "9router/free-novo falhou\nopencode/big-pickle ok\n",
+        )
+        .unwrap();
+        send(
+            hub.app.clone(),
+            "POST",
+            CARDS,
+            Some(r#"{"title":"Tela de login"}"#),
+            None,
+        )
+        .await;
+
+        let (status, info) = send(
+            hub.app.clone(),
+            "POST",
+            &format!("{CARDS}/T1/mandar"),
+            Some("{}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{info}");
+        let files = worker::files(
+            &hub.home.join(".assistente/perfis/pessoal"),
+            info["id"].as_str().unwrap(),
+        );
+        let run: WorkerRun =
+            serde_json::from_str(&std::fs::read_to_string(&files.run).unwrap()).unwrap();
+        assert_eq!(
+            run.models,
+            vec![
+                "opencode/big-pickle".to_owned(),
+                "9router/free-novo".to_owned()
+            ],
+            "grátis só, o melhor pelo histórico primeiro"
+        );
     }
 
     #[tokio::test]

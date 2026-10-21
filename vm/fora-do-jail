@@ -55,7 +55,6 @@ kanban() {
     done) path=/v1/kanban/done ;;
     release) path=/v1/kanban/release ;;
     trabalhador)
-      [ -n "$modelos" ] || die "trabalhador: informe --modelos principal,reserva1,reserva2"
       path=/v1/workers
       ;;
   esac
@@ -102,7 +101,7 @@ except ValueError:
 }
 uso_kanban() {
   echo "uso: fora-do-jail kanban listar | criar --titulo T [--descricao D] [--tipo manual|agente] [--prioridade alta|normal|baixa]" >&2
-  echo "     fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> --modelos m1,m2" >&2
+  echo "     fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> [--modelos m1,m2]" >&2
   exit 2
 }
 

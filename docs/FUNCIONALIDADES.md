@@ -238,9 +238,21 @@ hubd); F11.2 antes de F11.4.
   `…fora_do_jail_kanban_talks_to_the_board` (roda o script de verdade) e `session::explore_starts…`.
 - [ ] **F11.8 Validação na VM real** *(humano)*. Um card `manual` com "Mandar" e um `agente` puxado pelo
   orquestrador, com o opencode de verdade: o modelo grátis falha e a reserva assume; "Reiniciar" num
-  trabalhador travado; `opencode models` confere os nomes que vão em `[workers] models`. Confirme também
+  trabalhador travado; `opencode models` confere o formato e os grátis que o F11.10 escolhe (e os nomes
+  que vão em `[workers] models`, se usar override). Confirme também
   se o `opencode run` aceita `--standalone` dentro do jail (o trabalhador roda sem ele, como o dorme).
   Pronto quando: os itens acima conferem. Como testar: sessão real.
+- [x] **F11.10 Modelo automático.** Sem `[workers] models` e sem `--modelos`, o hubd lista os modelos
+  do `opencode models` (com a config do perfil), fica com os grátis (provedor `opencode` ou "free" no
+  nome) e ordena pela taxa de sucesso do perfil (suavizada; empate = ordem da lista). Cada tentativa
+  grava `ok` ou `falhou` em `trabalhadores/<sessão>.modelos`, e o histórico soma todas as execuções.
+  O `trabalhador` vigia a saída do opencode: erro de provedor (rate limit, 429/5xx, modelo inexistente,
+  conexão caída) mata a tentativa na hora e troca de modelo. `[workers] models` continua valendo como
+  override. Pronto quando: "Mandar" sem configuração escolhe um grátis e um erro de provedor troca de
+  modelo sem esperar a tentativa acabar. Como testar: `api::kanban::tests::mandar_without_models…`,
+  `worker::tests::{free_models…,ranking…,outcomes…,read_outcomes…}` e `vm/teste-trabalhador.sh`
+  (caso do provedor recusado, com modelo falso preso). Suposição não verificada: o formato de
+  `opencode models` (uma linha `provedor/modelo`) e a regra de "grátis"; confirmar na VM (F11.8).
 
 ## F12 — Apontar e pedir na tela
 

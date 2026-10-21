@@ -392,6 +392,10 @@ fn worker_env(run: &WorkerRun, files: &crate::worker::WorkerFiles) -> Vec<(Strin
             files.prompt.display().to_string(),
         ),
         ("AGENTE_LOG".to_owned(), files.log.display().to_string()),
+        (
+            "AGENTE_RESULTADOS".to_owned(),
+            files.outcomes.display().to_string(),
+        ),
     ]
 }
 

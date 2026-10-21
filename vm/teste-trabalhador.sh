@@ -24,6 +24,8 @@ echo "$modelo" >>"$CHAMADAS"
 case "$modelo" in
   bom) echo x >>arquivo.txt; git add arquivo.txt; git commit -qm "feito por bom"; exit 0 ;;
   sujo) echo x >>arquivo.txt; git add arquivo.txt; git commit -qm "parcial"; echo y >lixo.txt; exit 0 ;;
+  # recusado pelo provedor e preso: o trabalhador tem que matar e trocar sem esperar.
+  limite) echo "Error: rate limit exceeded (429)"; exec sleep 300 ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -47,7 +49,7 @@ repo_novo() { # <nome> → repo com um commit inicial
 rodar() { # <repo> <modelos> <tentativas> → código de saída do trabalhador
   local repo="$1"
   echo "prompt da tarefa" >"$work/prompt.md"
-  rm -f "$work/chamadas" "$work/log"
+  rm -f "$work/chamadas" "$work/log" "$work/resultados"
   (
     cd "$repo"
     AGENTE_TAREFA=T3 \
@@ -55,8 +57,10 @@ rodar() { # <repo> <modelos> <tentativas> → código de saída do trabalhador
     AGENTE_TENTATIVAS="$3" \
     AGENTE_ESPERA=0 \
     AGENTE_MAX_MIN=1 \
+    AGENTE_VIGIA=1 \
     AGENTE_PROMPT_FILE="$work/prompt.md" \
     AGENTE_LOG="$work/log" \
+    AGENTE_RESULTADOS="$work/resultados" \
     AGENTE_OPENCODE="$work/opencode" \
     ASSISTENTE_FORA_DO_JAIL="$work/fora" \
     CHAMADAS="$work/chamadas" \
@@ -92,6 +96,21 @@ if [ "$rc" = 1 ] && grep -qx "kanban release T3" "$work/chamadas"; then
   ok "árvore suja não é progresso"
 else
   falha "sujo: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
+fi
+
+# 4) Erro de provedor no meio da tentativa: o modelo é morto na hora (não espera o sleep de 300s)
+#    e a reserva assume. O histórico registra cada resultado para a escolha automática (F11.10).
+repo="$(repo_novo vigia)"
+inicio="$(date +%s)"
+rc="$(rodar "$repo" "limite bom" 2)"
+duracao=$(($(date +%s) - inicio))
+sha="$(git -C "$repo" rev-parse HEAD)"
+if [ "$rc" = 0 ] && [ "$duracao" -lt 60 ] && [ "$(grep -c '^limite$' "$work/chamadas")" = 1 ] \
+  && grep -qx "kanban done T3 --commit $sha" "$work/chamadas" \
+  && grep -qx "limite falhou" "$work/resultados" && grep -qx "bom ok" "$work/resultados"; then
+  ok "erro de provedor troca o modelo na hora e grava o histórico"
+else
+  falha "vigia: rc=$rc duracao=${duracao}s chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null) resultados=$(tr '\n' ' ' <"$work/resultados" 2>/dev/null)"
 fi
 
 if [ "$falhas" -gt 0 ]; then

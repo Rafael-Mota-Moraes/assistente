@@ -124,11 +124,11 @@ usuário manda (botão "Mandar"); `agente` foi marcado para o agente implementar
 - `"$ASSISTENTE_FORA_DO_JAIL" kanban done <id> --commit <sha>`: conclui uma tarefa que você
   segura, com o commit que a fechou. `kanban release <id>` devolve ao backlog.
 - Orquestrador (só sessão do Claude): para uma tarefa que você puxou, abra um trabalhador com
-  `"$ASSISTENTE_FORA_DO_JAIL" kanban trabalhador <id> --modelos principal,reserva1,reserva2`.
-  O trabalhador roda o opencode no worktree da tarefa (`.assistente/worktrees/<id>`, branch
-  `agente/<id>`), troca para a reserva quando um modelo falha e devolve a tarefa se todos
-  falharem. Você acompanha pelas abas e não precisa reiniciar nada à mão. Os nomes dos modelos
-  saem de `opencode models`; confirme antes de usar.
+  `"$ASSISTENTE_FORA_DO_JAIL" kanban trabalhador <id>`. Sem `--modelos`, o hubd escolhe entre os
+  modelos grátis do opencode, pela taxa de sucesso do perfil; com `--modelos a,b` você fixa a
+  ordem. O trabalhador roda o opencode no worktree da tarefa (`.assistente/worktrees/<id>`, branch
+  `agente/<id>`), troca de modelo na hora quando o provedor recusa e devolve a tarefa se todos
+  falharem. Você acompanha pelas abas e não precisa reiniciar nada à mão.
 - Trabalhador: não marque a tarefa nem edite o quadro; o `trabalhador` faz isso pelo resultado
   do git.
 MD

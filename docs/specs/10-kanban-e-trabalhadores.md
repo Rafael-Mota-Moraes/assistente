@@ -37,14 +37,28 @@ Uma sessão do opencode no jail, rodando `vm/trabalhador`, no worktree da tarefa
 - Worktree: `<projeto>/.assistente/worktrees/<id>`, branch `agente/<id>`. Fica fora do `git status`
   pelo `info/exclude`. Você revisa e mescla a branch (F10.4 mostra o diff).
 - Prompt e registro: `~/.assistente/perfis/<perfil>/trabalhadores/<sessão>.{md,json}`, fora do repo
-  e dentro do mount de dados do perfil (o jail enxerga). O `.log` é a saída do loop.
+  e dentro do mount de dados do perfil (o jail enxerga). O `.log` é a saída do loop; `.modelos` tem
+  um `ok` ou `falhou` por tentativa (F11.10).
 - `[workers]` do `.assistente.toml`: `models` (principal primeiro, depois reservas), `attempts`
-  (tentativas por modelo), `max_minutes` e `wait_secs`. Sem `models` o "Mandar" pede o modelo.
+  (tentativas por modelo), `max_minutes` e `wait_secs`. `models` é opcional (F11.10).
+
+Escolha dos modelos (F11.10), na ordem: pedido (`--modelos` ou o "Mandar" com modelos) > `[workers]
+models` do projeto > automática. A automática roda `opencode models` com a config do perfil
+(`OPENCODE_CONFIG`), fica com os grátis (provedor `opencode` ou "free" no nome) e ordena pela taxa de
+sucesso do perfil: `(ok+1)/(ok+falhas+2)`, somando os `.modelos` de `trabalhadores/`. Sem histórico,
+todos ficam no meio e vale a ordem da lista; até `MAX_MODELS` (5). Não há critério por tipo de tarefa:
+o card não guarda categoria, então o histórico é por modelo. Nenhum grátis = erro com o que fazer.
 
 Loop (`vm/trabalhador`): para cada modelo, `attempts` tentativas. Progresso = commit novo **e** árvore
 limpa. Com progresso: `fora-do-jail kanban done <id> --commit <sha>` e sai com 0. Esgotou os modelos:
 `fora-do-jail kanban release <id>` e sai com 1. O loop não conhece o quadro: fala com o hubd pelo
 token da própria sessão. Testado por `vm/teste-trabalhador.sh` (opencode e fora-do-jail falsos).
+
+Vigia (F11.10): cada tentativa roda o opencode num grupo próprio e olha a saída a cada
+`AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`,
+`ECONNRESET`, …) mata o grupo e troca de modelo sem esperar o resto da tentativa (código 125). A
+lista de padrões fica em `ERRO_PROVEDOR` no script; o risco é casar texto que o agente imprimiu por
+acaso, então a lista é estreita de propósito.
 
 ## Orquestrador
 

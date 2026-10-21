@@ -15,31 +15,72 @@ TENTATIVAS="${AGENTE_TENTATIVAS:-3}"
 MAX_MIN="${AGENTE_MAX_MIN:-60}"
 ESPERA="${AGENTE_ESPERA:-60}"
 OPENCODE="${AGENTE_OPENCODE:-opencode}"
+# Um `ok` ou `falhou` por tentativa: o hubd soma isso para escolher os modelos (F11.10).
+RESULTADOS="${AGENTE_RESULTADOS:-/dev/null}"
+# Intervalo em que a saída é vigiada, e o que nela quer dizer "o provedor recusou o modelo".
+VIGIA="${AGENTE_VIGIA:-5}"
+ERRO_PROVEDOR='rate.?limit|too many requests|quota exceeded|overloaded|ECONNRESET|ETIMEDOUT|ProviderModelNotFound|model not found|status(code)?[:=] ?(429|5[0-9][0-9])'
+SAIDA="$LOG.tentativa"
 FORA="${ASSISTENTE_FORA_DO_JAIL:?sem o cliente fora-do-jail: a sessão não tem a API dos agentes}"
 PROMPT="$(cat "$PROMPT_FILE")"
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+
+# Uma tentativa: o opencode roda num grupo próprio e a saída é vigiada. Erro de provedor mata o
+# grupo na hora (125), em vez de esperar a tentativa acabar. Senão, devolve o rc do opencode.
+executa() { # <modelo>
+  local fim="$SAIDA.fim" pid rc
+  rm -f "$fim"
+  set -m
+  (
+    timeout "${MAX_MIN}m" "$OPENCODE" run --auto -m "$1" "$PROMPT" >"$SAIDA" 2>&1
+    echo $? >"$fim"
+  ) &
+  pid=$!
+  set +m
+  while [ ! -s "$fim" ]; do
+    if grep -qiE "$ERRO_PROVEDOR" "$SAIDA"; then
+      kill -TERM -- "-$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      cat "$SAIDA" >>"$LOG"
+      return 125
+    fi
+    sleep "$VIGIA"
+  done
+  wait "$pid"
+  cat "$SAIDA" >>"$LOG"
+  read -r rc <"$fim"
+  return "$rc"
+}
 
 # A tarefa é marcada pelo resultado do git, não pelo texto do agente (ver o prompt).
 antes="$(git rev-parse HEAD)"
 log "trabalhador na tarefa $TAREFA; modelos: $MODELOS"
 
 for modelo in $MODELOS; do
+  recusado=0
   for tentativa in $(seq 1 "$TENTATIVAS"); do
-    log "tentativa $tentativa/$TENTATIVAS com $modelo (timeout ${MAX_MIN}m)"
-    timeout "${MAX_MIN}m" "$OPENCODE" run --auto -m "$modelo" "$PROMPT" >>"$LOG" 2>&1
+    log "tentativa $tentativa/$TENTATIVAS com $modelo (timeout ${MAX_MIN}m; vigia erro de provedor)"
+    executa "$modelo"
     rc=$?
-    log "opencode terminou com rc=$rc (124 = timeout)"
+    log "opencode terminou com rc=$rc (124 = timeout, 125 = erro de provedor)"
     if [[ -z "$(git status --porcelain)" && "$(git rev-parse HEAD)" != "$antes" ]]; then
       commit="$(git rev-parse HEAD)"
+      echo "$modelo ok" >>"$RESULTADOS"
       log "tarefa $TAREFA concluída em $commit"
       "$FORA" kanban "done" "$TAREFA" --commit "$commit" >>"$LOG" 2>&1
       exit 0
     fi
+    echo "$modelo falhou" >>"$RESULTADOS"
+    if [ "$rc" = 125 ]; then
+      recusado=1
+      log "$modelo recusado pelo provedor; próximo modelo"
+      break
+    fi
     log "sem commit novo com a árvore limpa; tentando de novo"
     sleep "$ESPERA"
   done
-  log "$modelo esgotou as $TENTATIVAS tentativas; próximo modelo"
+  [ "$recusado" = 1 ] || log "$modelo esgotou as $TENTATIVAS tentativas; próximo modelo"
 done
 
 log "todos os modelos falharam; devolvendo $TAREFA ao backlog"

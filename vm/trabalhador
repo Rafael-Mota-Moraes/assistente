@@ -19,7 +19,7 @@ OPENCODE="${AGENTE_OPENCODE:-opencode}"
 RESULTADOS="${AGENTE_RESULTADOS:-/dev/null}"
 # Intervalo em que a saída é vigiada, e o que nela quer dizer "o provedor recusou o modelo".
 VIGIA="${AGENTE_VIGIA:-5}"
-ERRO_PROVEDOR='rate.?limit|too many requests|quota exceeded|overloaded|ECONNRESET|ETIMEDOUT|ProviderModelNotFound|model not found|model unavailable|status(code)?[:=] ?(429|5[0-9][0-9])'
+ERRO_PROVEDOR='rate.?limit|too many requests|quota exceeded|overloaded|ECONNRESET|ETIMEDOUT|ProviderModelNotFound|model not found|model unavailable|has been deprecated|status(code)?[:=] ?(429|5[0-9][0-9])'
 SAIDA="$LOG.tentativa"
 FORA="${ASSISTENTE_FORA_DO_JAIL:?sem o cliente fora-do-jail: a sessão não tem a API dos agentes}"
 PROMPT="$(cat "$PROMPT_FILE")"
@@ -28,15 +28,18 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
 # Uma tentativa: o opencode roda num grupo próprio e a saída é vigiada. Erro de provedor mata o
 # grupo na hora (125), em vez de esperar a tentativa acabar. Senão, devolve o rc do opencode.
+# A saída também vai para a tela (o `tee`): a aba do trabalhador mostra o agente trabalhando.
 executa() { # <modelo>
   local fim="$SAIDA.fim" pid rc
   rm -f "$fim"
+  : >"$SAIDA"
   set -m
   (
     # `--standalone`: sem ele o opencode tenta o servidor compartilhado na porta 49374, que é a do
     # ai-memory, e aborta com "Managed service port 49374 … already in use" (F11.8).
-    timeout "${MAX_MIN}m" "$OPENCODE" run --standalone --auto -m "$1" "$PROMPT" >"$SAIDA" 2>&1
-    echo $? >"$fim"
+    timeout "${MAX_MIN}m" "$OPENCODE" run --standalone --auto -m "$1" "$PROMPT" 2>&1 \
+      | tee "$SAIDA"
+    echo "${PIPESTATUS[0]}" >"$fim"
   ) &
   pid=$!
   set +m

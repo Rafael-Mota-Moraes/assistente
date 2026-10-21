@@ -28,6 +28,7 @@ if [ "$standalone" = 0 ]; then
   exit 1
 fi
 echo "$modelo" >>"$CHAMADAS"
+echo "opencode falso trabalhando com $modelo"
 case "$modelo" in
   bom) echo x >>arquivo.txt; git add arquivo.txt; git commit -qm "feito por bom"; exit 0 ;;
   sujo) echo x >>arquivo.txt; git add arquivo.txt; git commit -qm "parcial"; echo y >lixo.txt; exit 0 ;;
@@ -35,6 +36,7 @@ case "$modelo" in
   limite) echo "Error: rate limit exceeded (429)"; exec sleep 300 ;;
   # indisponível: morre logo, antes de qualquer vigia (caso real do opencode, F11.10).
   indisponivel) echo "Error: Model unavailable: opencode/$modelo"; exit 1 ;;
+  descontinuado) echo "Error: Model $modelo has been deprecated."; exit 1 ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -58,7 +60,7 @@ repo_novo() { # <nome> → repo com um commit inicial
 rodar() { # <repo> <modelos> <tentativas> → código de saída do trabalhador
   local repo="$1"
   echo "prompt da tarefa" >"$work/prompt.md"
-  rm -f "$work/chamadas" "$work/log" "$work/resultados"
+  rm -f "$work/chamadas" "$work/log" "$work/resultados" "$work/tela"
   (
     cd "$repo"
     AGENTE_TAREFA=T3 \
@@ -73,7 +75,7 @@ rodar() { # <repo> <modelos> <tentativas> → código de saída do trabalhador
     AGENTE_OPENCODE="$work/opencode" \
     ASSISTENTE_FORA_DO_JAIL="$work/fora" \
     CHAMADAS="$work/chamadas" \
-      bash "$TRAB" >/dev/null 2>&1
+      bash "$TRAB" >"$work/tela" 2>&1
   ) && echo 0 || echo $?
 }
 
@@ -86,6 +88,12 @@ if [ "$rc" = 0 ] && grep -qx "kanban done T3 --commit $sha" "$work/chamadas" \
   ok "modelo de reserva conclui e marca o commit"
 else
   falha "reserva: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
+fi
+# A aba do trabalhador mostra a saída do opencode enquanto ele roda, não só o log do loop.
+if grep -qx "opencode falso trabalhando com bom" "$work/tela"; then
+  ok "saída do opencode aparece na tela do trabalhador"
+else
+  falha "tela: $(tr '\n' ' ' <"$work/tela" 2>/dev/null)"
 fi
 
 # 2) Tudo falha: a tarefa volta ao backlog e o trabalhador sai com erro.
@@ -124,9 +132,10 @@ fi
 
 # 5) Modelo indisponível sai na hora com erro: não repete o mesmo modelo, troca para a reserva.
 repo="$(repo_novo indisponivel)"
-rc="$(rodar "$repo" "indisponivel bom" 3)"
+rc="$(rodar "$repo" "indisponivel descontinuado bom" 3)"
 sha="$(git -C "$repo" rev-parse HEAD)"
 if [ "$rc" = 0 ] && [ "$(grep -c '^indisponivel$' "$work/chamadas")" = 1 ] \
+  && [ "$(grep -c '^descontinuado$' "$work/chamadas")" = 1 ] \
   && grep -qx "kanban done T3 --commit $sha" "$work/chamadas"; then
   ok "modelo indisponível troca para a reserva sem repetir"
 else

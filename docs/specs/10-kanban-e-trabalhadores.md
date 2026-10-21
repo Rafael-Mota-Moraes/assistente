@@ -50,7 +50,8 @@ F11.10, achado por reprodução com o hubd de verdade).
 Escolha dos modelos (F11.10), na ordem: pedido (`--modelos` ou o "Mandar" com modelos) > `[workers]
 models` do projeto > automática. A automática lê o catálogo do opencode (`~/.cache/opencode/models.json`,
 o mesmo do `/models` da TUI, atualizado pelo próprio opencode a cada chamada), fica com os modelos do
-provedor `opencode` de custo zero (entrada e saída) e ordena pela taxa de
+provedor `opencode` de custo zero (entrada e saída), sem os `"status": "deprecated"` (o `opencode
+run` recusa esses), e ordena pela taxa de
 sucesso do perfil: `(ok+1)/(ok+falhas+2)`, somando os `.modelos` de `trabalhadores/`. Sem histórico,
 todos ficam no meio e vale a ordem da lista; até `MAX_MODELS` (5). Não há critério por tipo de tarefa:
 o card não guarda categoria, então o histórico é por modelo. Nenhum grátis = erro com o que fazer.
@@ -61,9 +62,11 @@ limpa. Com progresso: `fora-do-jail kanban done <id> --commit <sha>` e sai com 0
 token da própria sessão. Testado por `vm/teste-trabalhador.sh` (opencode e fora-do-jail falsos).
 O `opencode run` vai com `--standalone`, como o agente: sem ele tenta o servidor compartilhado na
 porta 49374 (a do ai-memory) e aborta toda tentativa com "Managed service port 49374 … in use".
+A saída do `opencode run` vai para a tela da sessão (`tee`) e para o `.log`: a aba do trabalhador
+mostra o agente trabalhando, não só as linhas do loop.
 
 Vigia (F11.10): cada tentativa roda o opencode num grupo próprio e olha a saída a cada
-`AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`, `model unavailable`,
+`AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`, `model unavailable`, `has been deprecated`,
 `ECONNRESET`, …) mata o grupo e troca de modelo sem esperar o resto da tentativa (código 125). A
 lista de padrões fica em `ERRO_PROVEDOR` no script; o risco é casar texto que o agente imprimiu por
 acaso, então a lista é estreita de propósito.

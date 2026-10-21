@@ -241,7 +241,10 @@ hubd); F11.2 antes de F11.4.
   trabalhador travado; `opencode models` confere o formato e os grátis que o F11.10 escolhe (e os nomes
   que vão em `[workers] models`, se usar override). Confirme também
   se o `opencode run --standalone` roda dentro do jail (o trabalhador passa a usar a flag: sem ela a
-  porta 49374, do ai-memory, fica ocupada e toda tentativa aborta).
+  porta 49374, do ai-memory, fica ocupada e toda tentativa aborta). Visto na VM (2026-10-21): com a
+  flag o `run` sobe e chega ao provedor; o catálogo marca vários grátis como `deprecated` (agora
+  filtrados) e o provedor pode responder `Model unavailable` (agora troca de modelo na hora). Falta
+  uma tarefa concluída de ponta a ponta.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
 - [x] **F11.10 Modelo automático.** Sem `[workers] models` e sem `--modelos`, o hubd lista os modelos
   do catálogo do opencode (`~/.cache/opencode/models.json`), fica com os do provedor `opencode` de

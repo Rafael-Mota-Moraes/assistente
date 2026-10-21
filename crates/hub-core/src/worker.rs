@@ -122,8 +122,11 @@ pub fn free_models(catalogue: &str) -> Vec<String> {
                 .and_then(|value| value.as_f64())
         };
         let name = format!("opencode/{id}");
+        // Descontinuado continua no catálogo com custo zero, mas o `opencode run` recusa.
+        let deprecated = model.get("status").and_then(|s| s.as_str()) == Some("deprecated");
         if cost("input") == Some(0.0)
             && cost("output") == Some(0.0)
+            && !deprecated
             && validate_model(&name).is_ok()
         {
             found.push(name);
@@ -341,6 +344,7 @@ mod tests {
         let catalogue = r#"{
             "opencode": {"models": {
                 "big-pickle": {"cost": {"input": 0, "output": 0}},
+                "glm-5-free": {"cost": {"input": 0, "output": 0}, "status": "deprecated"},
                 "kimi-k2": {"cost": {"input": 0.4, "output": 2.5}},
                 "sem-preco": {"name": "x"},
                 "so-entrada": {"cost": {"input": 0, "output": 1}}

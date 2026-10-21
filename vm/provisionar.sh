@@ -212,7 +212,8 @@ nova="$versoes/provisionado-$(sha256sum /tmp/assistente/hubd | cut -c1-12)"
 install -d -o "$USER_NAME" -g "$USER_NAME" "$nova/ui"
 install -m755 -o "$USER_NAME" -g "$USER_NAME" /tmp/assistente/hubd "$nova/hubd"
 # A UI segue a versão anterior: o build dela não vem do provisionamento (o atualizador da F8.5 faz).
-if [ -n "$antiga" ] && [ -d "$antiga/ui" ]; then
+# Se o hubd não mudou, `antiga` já é esta versão e a UI já está nela: não há o que copiar.
+if [ -n "$antiga" ] && [ -d "$antiga/ui" ] && [ "$antiga" != "$(readlink -f "$nova")" ]; then
   cp -a "$antiga/ui/." "$nova/ui/"
 fi
 chown -R "$USER_NAME:" "$versoes"

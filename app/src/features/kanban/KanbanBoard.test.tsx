@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HubClient } from "../../bridge/hub";
 import type { KanbanBoard as Board, KanbanCard, SessionInfo } from "../../bridge/types";
@@ -160,5 +160,27 @@ describe("KanbanBoard", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Popular pelo backlog/ }));
     expect(await screen.findByText(/ainda não tem login no perfil Pessoal/)).toBeInTheDocument();
     expect(hub.explorarBacklog).not.toHaveBeenCalled();
+  });
+
+  it("Mandar mostra que está processando e o erro continua na tela depois do poll", async () => {
+    const hub = connect({ next: 2, cards: [card("T1")] });
+    let fail: (reason: Error) => void = () => undefined;
+    hub.mandarCard.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+    );
+    const backlog = await column("Backlog");
+    fireEvent.click(within(backlog).getByRole("button", { name: /Mandar/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Processando");
+    fail(new Error("não consegui rodar `opencode models`"));
+    expect(await screen.findByText(/não consegui rodar/)).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    // O poll roda a cada 2 s: o erro da ação não pode sumir com ele.
+    const reads = hub.kanban.mock.calls.length;
+    await waitFor(() => expect(hub.kanban.mock.calls.length).toBeGreaterThan(reads), {
+      timeout: 4000,
+    });
+    expect(screen.getByText(/não consegui rodar/)).toBeInTheDocument();
   });
 });

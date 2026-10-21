@@ -48,8 +48,9 @@ trabalhador recebe o caminho absoluto em `AGENTE_OPENCODE`. Sem isso o trabalhad
 F11.10, achado por reprodução com o hubd de verdade).
 
 Escolha dos modelos (F11.10), na ordem: pedido (`--modelos` ou o "Mandar" com modelos) > `[workers]
-models` do projeto > automática. A automática roda `opencode models` com a config do perfil
-(`OPENCODE_CONFIG`), fica com os grátis (provedor `opencode` ou "free" no nome) e ordena pela taxa de
+models` do projeto > automática. A automática lê o catálogo do opencode (`~/.cache/opencode/models.json`,
+o mesmo do `/models` da TUI, atualizado pelo próprio opencode a cada chamada), fica com os modelos do
+provedor `opencode` de custo zero (entrada e saída) e ordena pela taxa de
 sucesso do perfil: `(ok+1)/(ok+falhas+2)`, somando os `.modelos` de `trabalhadores/`. Sem histórico,
 todos ficam no meio e vale a ordem da lista; até `MAX_MODELS` (5). Não há critério por tipo de tarefa:
 o card não guarda categoria, então o histórico é por modelo. Nenhum grátis = erro com o que fazer.

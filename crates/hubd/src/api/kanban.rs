@@ -13,7 +13,7 @@ use hub_core::kanban::{Board, Card, Column, Draft, KanbanError};
 use hub_core::worker::{self, WorkerRun};
 use hub_core::{profile_data_dir, workers_config_at};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 type Reply<T> = Result<T, Response>;
 
@@ -292,35 +292,26 @@ async fn start_worker(
     Ok(info)
 }
 
-/// Modelos grátis do opencode (`opencode models` com a config do perfil), na ordem do histórico
-/// de sucesso do perfil (F11.10). Sem nenhum grátis, responde erro com o que fazer.
+/// Modelos grátis do opencode, lidos do catálogo que ele mantém (F11.10), na ordem do histórico
+/// de sucesso do perfil. Sem catálogo ou sem nenhum grátis, responde erro com o que fazer.
 async fn auto_models(state: &AppState, profile: &str) -> Reply<Vec<String>> {
     let inner = &state.0;
     let data = profile_data_dir(&inner.home, profile);
-    let listing = tokio::process::Command::new(worker::opencode_bin(&inner.home))
-        .arg("models")
-        .env("OPENCODE_CONFIG", data.join("opencode/opencode.json"))
-        .kill_on_drop(true)
-        .output();
-    let output = tokio::time::timeout(Duration::from_secs(60), listing)
-        .await
-        .map_err(|_| {
-            error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "`opencode models` demorou demais",
-            )
-        })?
-        .map_err(|e| {
-            error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                &format!("não consegui rodar `opencode models`: {e}"),
-            )
-        })?;
-    let free = worker::free_models(&String::from_utf8_lossy(&output.stdout));
+    let path = worker::catalogue_path(&inner.home);
+    let catalogue = std::fs::read_to_string(&path).map_err(|e| {
+        error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!(
+                "catálogo do opencode não lido em {} ({e}): abra o opencode uma vez",
+                path.display()
+            ),
+        )
+    })?;
+    let free = worker::free_models(&catalogue);
     if free.is_empty() {
         return Err(error(
             StatusCode::BAD_REQUEST,
-            "nenhum modelo grátis em `opencode models`: escolha um modelo ou defina [workers] models",
+            "nenhum modelo grátis do opencode no catálogo: escolha um modelo ou defina [workers] models",
         ));
     }
     let ranked = worker::rank_models(&free, &worker::read_outcomes(&data));
@@ -881,26 +872,27 @@ mod tests {
 
     #[tokio::test]
     async fn mandar_without_models_picks_the_free_ones_by_history() {
-        use std::os::unix::fs::PermissionsExt;
         let t = TestTmux::new("kanban-auto");
         let hub = hub(&t, true);
-        // opencode falso: `models` lista um grátis do provedor opencode, um do 9router (não grátis)
-        // e um grátis com "free" no nome.
-        let bin = hub.home.join(".opencode/bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let fake = bin.join("opencode");
+        // Catálogo do opencode: dois grátis do provedor opencode, um pago e um grátis de outro
+        // provedor (que não entra).
+        let catalogue = hub.home.join(".cache/opencode/models.json");
+        std::fs::create_dir_all(catalogue.parent().unwrap()).unwrap();
         std::fs::write(
-            &fake,
-            "#!/usr/bin/env bash\necho opencode/big-pickle\necho 9router/gpt-5\necho 9router/free-novo\n",
+            &catalogue,
+            r#"{"opencode": {"models": {
+                "big-pickle": {"cost": {"input": 0, "output": 0}},
+                "novo-free": {"cost": {"input": 0, "output": 0}},
+                "pago": {"cost": {"input": 0.4, "output": 2.5}}
+            }}, "9router": {"models": {"gpt-5": {"cost": {"input": 0, "output": 0}}}}}"#,
         )
         .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // Histórico do perfil: o grátis do opencode deu certo; o outro falhou.
+        // Histórico do perfil: o grátis big-pickle deu certo; o novo-free falhou.
         let trab = hub.home.join(".assistente/perfis/pessoal/trabalhadores");
         std::fs::create_dir_all(&trab).unwrap();
         std::fs::write(
             trab.join("antiga.modelos"),
-            "9router/free-novo falhou\nopencode/big-pickle ok\n",
+            "opencode/novo-free falhou\nopencode/big-pickle ok\n",
         )
         .unwrap();
         send(
@@ -931,9 +923,9 @@ mod tests {
             run.models,
             vec![
                 "opencode/big-pickle".to_owned(),
-                "9router/free-novo".to_owned()
+                "opencode/novo-free".to_owned()
             ],
-            "grátis só, o melhor pelo histórico primeiro"
+            "grátis do opencode só, o melhor pelo histórico primeiro"
         );
     }
 

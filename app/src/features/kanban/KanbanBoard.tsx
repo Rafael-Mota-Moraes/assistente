@@ -48,7 +48,12 @@ export function KanbanBoard() {
   const profiles = useAppStore((s) => s.profiles);
   const boardChat = useAppStore((s) => s.boardChat);
   const [board, setBoard] = useState<Board | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Erro da leitura (poll) e erro da última ação ficam separados: o poll a cada 2 s não pode
+  // apagar a mensagem de um "Mandar" que falhou.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const error = actionError ?? loadError;
   const [editing, setEditing] = useState<KanbanCard | "novo" | null>(null);
   const [dragging, setDragging] = useState<KanbanCard | null>(null);
   const [overColumn, setOverColumn] = useState<KanbanColumn | null>(null);
@@ -57,9 +62,9 @@ export function KanbanBoard() {
     if (!hub || !activeProfile || !activeProject) return;
     try {
       setBoard(await hub.kanban(activeProfile, activeProject));
-      setError(null);
+      setLoadError(null);
     } catch (e) {
-      setError(message(e));
+      setLoadError(message(e));
     }
   }, [hub, activeProfile, activeProject]);
 
@@ -76,17 +81,18 @@ export function KanbanBoard() {
   const project = activeProject;
   const chat = boardChat?.key === viewKey(profile, project) ? boardChat : null;
 
-  /** Roda uma ação na API, mostra o erro se falhar e atualiza o quadro. */
+  /** Roda uma ação na API, mostra o erro se falhar e atualiza o quadro. Enquanto roda, `busy`. */
   async function act(action: () => Promise<unknown>) {
-    let failure: string | null = null;
+    setBusy(true);
+    setActionError(null);
     try {
       await action();
     } catch (e) {
-      failure = message(e);
+      setActionError(message(e));
+    } finally {
+      setBusy(false);
     }
-    // O refresh limpa o erro quando a leitura funciona: o erro da ação vem depois dele.
     await refresh();
-    if (failure) setError(failure);
   }
 
   function moveTo(card: KanbanCard, column: KanbanColumn) {
@@ -118,6 +124,11 @@ export function KanbanBoard() {
       <header className="flex items-center gap-3 border-b border-line px-5 py-3">
         <LayoutGrid className="size-4 text-slate-300" />
         <h2 className="text-lg font-semibold text-white">Quadro · {project}</h2>
+        {busy && (
+          <span role="status" className="text-xs text-slate-400">
+            Processando…
+          </span>
+        )}
         <div className="ml-auto flex gap-2">
           <button
             type="button"

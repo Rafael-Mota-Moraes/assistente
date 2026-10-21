@@ -94,20 +94,39 @@ pub fn checked_models(models: &[String]) -> Result<Vec<String>, String> {
 /// Sucessos e falhas por modelo (F11.10), somados das execuções do perfil.
 pub type Outcomes = HashMap<String, (u32, u32)>;
 
-/// Modelos grátis entre os de `opencode models` (uma linha por modelo, `provedor/modelo`). Grátis
-/// = provedor `opencode` ou "free" no nome. Suposição até confirmar a saída real na VM (F11.10).
-pub fn free_models(listing: &str) -> Vec<String> {
+/// Catálogo de modelos que o opencode mantém (provedor → `models` → modelo → `cost`). É o mesmo
+/// que o `/models` da TUI usa, e o próprio opencode o atualiza.
+pub fn catalogue_path(home: &Path) -> PathBuf {
+    home.join(".cache/opencode/models.json")
+}
+
+/// Modelos grátis do opencode, como `opencode/<id>`: do provedor `opencode`, com custo zero de
+/// entrada e de saída. Lê o catálogo a cada chamada, então acompanha as mudanças dos modelos.
+pub fn free_models(catalogue: &str) -> Vec<String> {
+    let Ok(providers) = serde_json::from_str::<serde_json::Value>(catalogue) else {
+        return Vec::new();
+    };
+    let Some(models) = providers
+        .get("opencode")
+        .and_then(|provider| provider.get("models"))
+        .and_then(|models| models.as_object())
+    else {
+        return Vec::new();
+    };
     let mut found: Vec<String> = Vec::new();
-    for line in listing.lines() {
-        let Some(model) = line.split_whitespace().next() else {
-            continue;
+    for (id, model) in models {
+        let cost = |field: &str| {
+            model
+                .get("cost")
+                .and_then(|cost| cost.get(field))
+                .and_then(|value| value.as_f64())
         };
-        let Some((provider, _)) = model.split_once('/') else {
-            continue;
-        };
-        let free = provider == "opencode" || model.to_ascii_lowercase().contains("free");
-        if free && validate_model(model).is_ok() && !found.iter().any(|m| m == model) {
-            found.push(model.to_owned());
+        let name = format!("opencode/{id}");
+        if cost("input") == Some(0.0)
+            && cost("output") == Some(0.0)
+            && validate_model(&name).is_ok()
+        {
+            found.push(name);
         }
     }
     found
@@ -318,23 +337,27 @@ mod tests {
     }
 
     #[test]
-    fn free_models_keep_the_opencode_provider_and_free_names() {
-        let listing = "opencode/big-pickle\n\
-                       9router/free\n\
-                       9router/gpt-5\n\
-                       openai/gpt-5-free-trial extra\n\
-                       lixo sem barra\n\
-                       opencode/big-pickle\n\
-                       a b/c;d\n";
+    fn free_models_are_the_zero_cost_models_of_the_opencode_provider() {
+        let catalogue = r#"{
+            "opencode": {"models": {
+                "big-pickle": {"cost": {"input": 0, "output": 0}},
+                "kimi-k2": {"cost": {"input": 0.4, "output": 2.5}},
+                "sem-preco": {"name": "x"},
+                "so-entrada": {"cost": {"input": 0, "output": 1}}
+            }},
+            "9router": {"models": {"free": {"cost": {"input": 0, "output": 0}}}},
+            "openrouter": {"models": {"x:free": {"cost": {"input": 0, "output": 0}}}}
+        }"#;
         assert_eq!(
-            free_models(listing),
-            vec![
-                "opencode/big-pickle".to_owned(),
-                "9router/free".to_owned(),
-                "openai/gpt-5-free-trial".to_owned(),
-            ]
+            free_models(catalogue),
+            vec!["opencode/big-pickle".to_owned()]
         );
-        assert!(free_models("").is_empty());
+        assert!(free_models("não é json").is_empty());
+        assert!(free_models("{}").is_empty());
+        assert_eq!(
+            catalogue_path(Path::new("/home/rafa")),
+            PathBuf::from("/home/rafa/.cache/opencode/models.json")
+        );
     }
 
     #[test]

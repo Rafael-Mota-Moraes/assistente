@@ -1,5 +1,5 @@
 {
-  "next": 5,
+  "next": 6,
   "cards": [
     {
       "id": "T1",
@@ -32,6 +32,15 @@
       "id": "T4",
       "title": "F12.1 Preview do projeto",
       "description": "`preview_url` opcional em `ProjectSettings` (F9.2) e no espelho `app/src/bridge/types.ts`, editável na engrenagem (F9.3), com a dica de que o endereço é visto do PC (projeto rodando na VM usa o IP dela). Comandos Tauri no molde de F5.5: `open_preview_panel`, `update_preview_panel_bounds`, `preview_panel_visible` (esconde ao abrir o modal), `preview_picker` (liga/desliga o modo por `eval` no script) e `close_preview_panel`, validando `http`/`https` e recusando credenciais. Botão \"Visualizar\" junto dos agentes; o chrome (URL, recarregar, apontar, fechar) é React e a webview preenche o retângulo, inclusive ao redimensionar a janela. Testes: `project_settings_round_trip` com `preview_url`, validação da URL e caso em `ProjectSettingsDialog.test.tsx`.\nPronto quando: colar a URL do dev server na engrenagem e clicar em Visualizar abre o app dentro do Assistente, sem fechar a sessão.\nComo testar: `./dev just hubd` + `vite --host` de um projeto de teste e o painel no app.",
+      "priority": "normal",
+      "kind": "manual",
+      "column": "backlog",
+      "created_at": 1792614072
+    },
+    {
+      "id": "T5",
+      "title": "F12.2 Modo apontar",
+      "description": "Script injetado na webview do preview (`initialization_script`, fora do bundle do projeto): botão flutuante \"Apontar\", contorno no elemento sob o mouse, clique capturado na fase de captura (sem disparar o clique da página), Esc cancela e um novo clique troca a seleção. O pick leva tag, id, classes, `role`/`aria`, texto curto, trecho de HTML curto, seletor CSS estável, caminho no DOM, retângulo, viewport/scroll e URL; chega ao app por uma navegação `assistente-pick:` interceptada com `on_navigation` no Rust, que descarta payload acima do limite, anexa a URL real da webview (não confia na URL do payload), emite o evento e cancela a navegação — sem IPC e sem CORS na página remota. Testes: parser do pick e interceptação em Rust; `PickDialog.test.tsx` com pick fake; manual com app de teste.\nPronto quando: apontar um botão no app rodando abre a caixa de pedido com o elemento certo, e o botão da página não dispara a ação.\nComo testar: app de teste com um botão que muda de cor; apontar e conferir que nada mudou antes de enviar.",
       "priority": "normal",
       "kind": "manual",
       "column": "backlog",

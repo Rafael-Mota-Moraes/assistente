@@ -1,5 +1,5 @@
 {
-  "next": 10,
+  "next": 11,
   "cards": [
     {
       "id": "T1",
@@ -78,6 +78,15 @@
       "title": "F14.2 Journal do hubd sem sudo",
       "description": "`vm/provisionar.sh` põe o usuário no grupo `systemd-journal`,\npara `journalctl -u hubd` rodar sem senha de `sudo` (a VM tem a senha travada, `lock_passwd: true`).\nVale depois de relogar. Idempotente: rodar `provisionar.sh` duas vezes não falha.\nPronto quando: `groups` mostra `systemd-journal` e `journalctl -u hubd -n 5` lê as linhas sem `sudo`.\nComo testar: `bash -n vm/provisionar.sh` e `shellcheck`; na VM, `groups` e `journalctl -u hubd -n 5`.",
       "priority": "normal",
+      "kind": "manual",
+      "column": "backlog",
+      "created_at": 1792614073
+    },
+    {
+      "id": "T10",
+      "title": "F14.3 Sessão que morre deixa o painel",
+      "description": "Sessões de agente sobem com `remain-on-exit` no tmux\n(só o painel da sessão, não o servidor), para a saída de quem saiu com erro continuar visível na aba\naté ela ser encerrada. A aba mostra \"Sessão encerrada (status N)\" e o que o processo imprimiu. Hoje\na aba só mostra o terminal vazio, e foi assim que `claude: not found` passou despercebido.\nPronto quando: uma sessão que sai com erro mostra a última saída e o status na aba.\nComo testar: rota com tmux real (um comando que sai com status 127 e `capture-pane` com o erro);\n`TerminalView.test.tsx` com a mensagem de encerramento.",
+      "priority": "alta",
       "kind": "manual",
       "column": "backlog",
       "created_at": 1792614073

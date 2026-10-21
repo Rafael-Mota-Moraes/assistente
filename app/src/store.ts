@@ -43,6 +43,9 @@ type State = {
   activeSession: string | null;
   /** Abas fechadas (Ctrl+Shift+W): a sessão continua viva na VM, só sai da barra de abas. */
   closedTabs: string[];
+  /** Chat do Claude que monta o quadro (Popular pelo backlog): vive dentro do quadro, sem aba.
+   * `key` = `perfil/projeto`, para o chat não aparecer em outro projeto. */
+  boardChat: { key: string; sessionId: string } | null;
   /** Último agente usado em openSession; o Ctrl+Shift+T abre uma sessão nova dele. */
   lastAgent: AgentKind | null;
   /** Último erro de ação do usuário (criar/encerrar sessão), mostrado num aviso. */
@@ -77,6 +80,7 @@ export const initialState: State = {
   sessions: [],
   activeSession: null,
   closedTabs: [],
+  boardChat: null,
   lastAgent: null,
   actionError: null,
   toast: null,
@@ -121,14 +125,15 @@ export function closeView(key: string, kind: ViewKind) {
 
 /** Sessões visíveis (abas) do projeto ativo: as do perfil/projeto, menos as abas fechadas. */
 export function visibleProjectSessions(
-  state: Pick<State, "activeProfile" | "activeProject" | "sessions" | "closedTabs">,
+  state: Pick<State, "activeProfile" | "activeProject" | "sessions" | "closedTabs" | "boardChat">,
 ): SessionInfo[] {
   if (!state.activeProject) return [];
   return state.sessions.filter(
     (s) =>
       s.profile === state.activeProfile &&
       s.project === state.activeProject &&
-      !state.closedTabs.includes(s.id),
+      !state.closedTabs.includes(s.id) &&
+      s.id !== state.boardChat?.sessionId,
   );
 }
 

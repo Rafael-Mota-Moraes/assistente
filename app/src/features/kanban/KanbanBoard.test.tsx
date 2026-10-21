@@ -2,8 +2,13 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HubClient } from "../../bridge/hub";
 import type { KanbanBoard as Board, KanbanCard, SessionInfo } from "../../bridge/types";
-import { useAppStore } from "../../store";
+import { useAppStore, visibleProjectSessions } from "../../store";
 import { KanbanBoard } from "./KanbanBoard";
+
+// O terminal de verdade (xterm) não roda no jsdom: o teste só confere qual sessão ele recebe.
+vi.mock("../sessions/TerminalView", () => ({
+  TerminalView: ({ sessionId }: { sessionId: string }) => <div>terminal {sessionId}</div>,
+}));
 
 const card = (id: string, extra: Partial<KanbanCard> = {}): KanbanCard => ({
   id,
@@ -34,6 +39,7 @@ function connect(board: Board) {
     mandarCard: vi.fn().mockResolvedValue(claude),
     restartWorker: vi.fn().mockResolvedValue(claude),
     explorarBacklog: vi.fn().mockResolvedValue(claude),
+    deleteSession: vi.fn().mockResolvedValue(undefined),
   };
   useAppStore.setState({
     hub: hub as unknown as HubClient,
@@ -121,18 +127,27 @@ describe("KanbanBoard", () => {
     await vi.waitFor(() => expect(hub.restartWorker).toHaveBeenCalledWith(claude.id));
   });
 
-  it("Popular pelo backlog abre o Claude e mostra a aba dele", async () => {
+  it("Popular pelo backlog mostra o chat dentro do quadro, sem trocar de aba", async () => {
     // A sessão nova ainda não está na lista (ela chega no próximo polling): é o caso real.
     const hub = connect({ next: 1, cards: [] });
     useAppStore.setState({ sessions: [], activeView: { key: "pessoal/game", kind: "board" } });
     fireEvent.click(await screen.findByRole("button", { name: /Popular pelo backlog/ }));
     await vi.waitFor(() => expect(hub.explorarBacklog).toHaveBeenCalledWith("pessoal", "game"));
-    await vi.waitFor(() => {
-      const state = useAppStore.getState();
-      expect(state.activeSession).toBe(claude.id);
-      expect(state.activeView).toBeNull();
-      expect(state.sessions).toContainEqual(claude);
-    });
+    expect(await screen.findByText(`terminal ${claude.id}`)).toBeInTheDocument();
+    const state = useAppStore.getState();
+    expect(state.boardChat).toEqual({ key: "pessoal/game", sessionId: claude.id });
+    expect(state.activeView).toEqual({ key: "pessoal/game", kind: "board" });
+    // Fora das abas: o chat não aparece como sessão do projeto.
+    expect(visibleProjectSessions(state)).not.toContainEqual(claude);
+  });
+
+  it("Encerrar o chat tira o terminal do quadro e apaga a sessão", async () => {
+    const hub = connect({ next: 1, cards: [] });
+    useAppStore.setState({ boardChat: { key: "pessoal/game", sessionId: claude.id } });
+    fireEvent.click(await screen.findByRole("button", { name: /Encerrar o chat/ }));
+    await vi.waitFor(() => expect(hub.deleteSession).toHaveBeenCalledWith(claude.id));
+    expect(useAppStore.getState().boardChat).toBeNull();
+    expect(screen.queryByText(`terminal ${claude.id}`)).toBeNull();
   });
 
   it("sem login do Claude no perfil, não abre a sessão e mostra o comando de login", async () => {

@@ -68,6 +68,7 @@ export function SessionArea() {
     activeProfile,
     activeProject,
     closedTabs,
+    boardChat,
     execRequests,
     views,
     activeView,
@@ -102,6 +103,7 @@ export function SessionArea() {
     activeProject,
     sessions,
     closedTabs,
+    boardChat,
   });
   const hidden = projectSessions.filter((s) => closedTabs.includes(s.id));
   const lastHidden = hidden.at(-1) ?? null;

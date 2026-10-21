@@ -1,4 +1,4 @@
-import { LayoutGrid, Pencil, Play, Plus, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { LayoutGrid, Pencil, Play, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { type DragEvent, useCallback, useEffect, useState } from "react";
 import type {
   KanbanBoard as Board,
@@ -8,9 +8,10 @@ import type {
   KanbanPriority,
   SessionInfo,
 } from "../../bridge/types";
-import { useAppStore } from "../../store";
+import { useAppStore, viewKey } from "../../store";
 import { claudeLoginCommand } from "../sessions/actions";
 import { tabLabel } from "../sessions/SessionArea";
+import { TerminalView } from "../sessions/TerminalView";
 import { CardDialog } from "./CardDialog";
 
 /** Quadro é lido de novo a cada 2 s (F11.3): o que os agentes puxam aparece sem recarregar. */
@@ -45,6 +46,7 @@ export function KanbanBoard() {
   const activeProject = useAppStore((s) => s.activeProject);
   const sessions = useAppStore((s) => s.sessions);
   const profiles = useAppStore((s) => s.profiles);
+  const boardChat = useAppStore((s) => s.boardChat);
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<KanbanCard | "novo" | null>(null);
@@ -72,6 +74,7 @@ export function KanbanBoard() {
   const client = hub;
   const profile = activeProfile;
   const project = activeProject;
+  const chat = boardChat?.key === viewKey(profile, project) ? boardChat : null;
 
   /** Roda uma ação na API, mostra o erro se falhar e atualiza o quadro. */
   async function act(action: () => Promise<unknown>) {
@@ -89,6 +92,13 @@ export function KanbanBoard() {
   function moveTo(card: KanbanCard, column: KanbanColumn) {
     if (card.column === column) return;
     void act(() => client.updateCard(profile, project, card.id, { column }));
+  }
+
+  /** Encerra o chat do backlog (a sessão some do projeto). Sessão já morta não é erro. */
+  async function closeChat(sessionId: string) {
+    useAppStore.setState({ boardChat: null });
+    await client.deleteSession(sessionId).catch(() => undefined);
+    await refresh();
   }
 
   async function saveCard(draft: KanbanDraft) {
@@ -122,15 +132,16 @@ export function KanbanBoard() {
                       `${claudeLoginCommand(profile)} — depois clique em Popular pelo backlog de novo.`,
                   );
                 }
+                // Um chat por projeto: o anterior encerra antes, para não sobrar sessão sem tela.
+                if (chat) await client.deleteSession(chat.sessionId).catch(() => undefined);
                 const info = await client.explorarBacklog(profile, project);
-                // Registra a aba já aqui (como o openSession): a sessão só chega à lista no
-                // próximo polling, e sem isso o quadro fecha para uma aba que ainda não existe.
+                // O chat mora no quadro (sem aba): a sessão entra na lista só para os nomes
+                // aparecerem nos cards, e `visibleProjectSessions` a esconde das abas.
                 useAppStore.setState((s) => ({
                   sessions: [...s.sessions.filter((x) => x.id !== info.id), info],
-                  closedTabs: s.closedTabs.filter((x) => x !== info.id),
-                  activeSession: info.id,
-                  activeView: null,
-                  toast: "Claude lendo o backlog: os cards aparecem aqui conforme ele cria.",
+                  boardChat: { key: viewKey(profile, project), sessionId: info.id },
+                  toast:
+                    "Claude lendo o backlog: o chat aparece aqui, e os cards conforme ele cria.",
                 }));
               })
             }
@@ -153,147 +164,165 @@ export function KanbanBoard() {
           {error}
         </p>
       )}
-      {board === null ? (
-        <p className="p-6 text-sm text-slate-400">Lendo o quadro…</p>
-      ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 overflow-y-auto p-4">
-          {columns.map((column) => {
-            const inColumn = cards.filter((card) => card.column === column.id);
-            const target = overColumn === column.id;
-            return (
-              <section
-                key={column.id}
-                aria-label={`Coluna ${column.label}`}
-                onDragOver={(event: DragEvent) => {
-                  if (!dragging) return;
-                  event.preventDefault();
-                  setOverColumn(column.id);
-                }}
-                onDragLeave={() => setOverColumn((c) => (c === column.id ? null : c))}
-                onDrop={(event: DragEvent) => {
-                  event.preventDefault();
-                  setOverColumn(null);
-                  if (dragging) moveTo(dragging, column.id);
-                  setDragging(null);
-                }}
-                className={`flex min-h-0 flex-col gap-2 rounded-xl border p-3 transition-colors ${
-                  target ? "border-accent/60 bg-accent/10" : "border-line bg-black/20"
-                }`}
-              >
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                  {column.label}
-                  <span className="rounded-full bg-white/10 px-2 text-xs text-slate-400">
-                    {inColumn.length}
-                  </span>
-                </h3>
-                {inColumn.map((card) => (
-                  <article
-                    key={card.id}
-                    aria-label={`${card.id} ${card.title}`}
-                    draggable
-                    onDragStart={(event: DragEvent) => {
-                      event.dataTransfer.setData("text/plain", card.id);
-                      setDragging(card);
-                    }}
-                    onDragEnd={() => {
-                      setDragging(null);
-                      setOverColumn(null);
-                    }}
-                    className="flex cursor-grab flex-col gap-2 rounded-lg border border-line bg-surface-strong p-3 text-sm active:cursor-grabbing"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs text-slate-400">{card.id}</span>
-                      <span
-                        className={`rounded border px-1.5 text-[10px] uppercase ${priorityStyle[card.priority]}`}
-                      >
-                        {card.priority}
-                      </span>
-                      <span
-                        className={`rounded px-1.5 text-[10px] uppercase ${
-                          card.kind === "agente"
-                            ? "bg-violet-500/20 text-violet-200"
-                            : "bg-white/10 text-slate-300"
-                        }`}
-                      >
-                        {card.kind === "agente" ? "agente" : "manual"}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setEditing(card)}
-                      className="text-left font-medium text-white hover:underline"
+      <div className="flex min-h-0 flex-1 flex-col">
+        {board === null ? (
+          <p className="p-6 text-sm text-slate-400">Lendo o quadro…</p>
+        ) : (
+          <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 overflow-y-auto p-4">
+            {columns.map((column) => {
+              const inColumn = cards.filter((card) => card.column === column.id);
+              const target = overColumn === column.id;
+              return (
+                <section
+                  key={column.id}
+                  aria-label={`Coluna ${column.label}`}
+                  onDragOver={(event: DragEvent) => {
+                    if (!dragging) return;
+                    event.preventDefault();
+                    setOverColumn(column.id);
+                  }}
+                  onDragLeave={() => setOverColumn((c) => (c === column.id ? null : c))}
+                  onDrop={(event: DragEvent) => {
+                    event.preventDefault();
+                    setOverColumn(null);
+                    if (dragging) moveTo(dragging, column.id);
+                    setDragging(null);
+                  }}
+                  className={`flex min-h-0 flex-col gap-2 rounded-xl border p-3 transition-colors ${
+                    target ? "border-accent/60 bg-accent/10" : "border-line bg-black/20"
+                  }`}
+                >
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                    {column.label}
+                    <span className="rounded-full bg-white/10 px-2 text-xs text-slate-400">
+                      {inColumn.length}
+                    </span>
+                  </h3>
+                  {inColumn.map((card) => (
+                    <article
+                      key={card.id}
+                      aria-label={`${card.id} ${card.title}`}
+                      draggable
+                      onDragStart={(event: DragEvent) => {
+                        event.dataTransfer.setData("text/plain", card.id);
+                        setDragging(card);
+                      }}
+                      onDragEnd={() => {
+                        setDragging(null);
+                        setOverColumn(null);
+                      }}
+                      className="flex cursor-grab flex-col gap-2 rounded-lg border border-line bg-surface-strong p-3 text-sm active:cursor-grabbing"
                     >
-                      {card.title}
-                    </button>
-                    {card.description && (
-                      <p className="line-clamp-3 whitespace-pre-line text-xs text-slate-400">
-                        {card.description}
-                      </p>
-                    )}
-                    {card.holder && (
-                      <p className="text-xs text-slate-300">
-                        em {holderLabel(card.holder, sessions)}
-                      </p>
-                    )}
-                    {card.commit && (
-                      <p className="font-mono text-xs text-emerald-300">
-                        {card.commit.slice(0, 7)}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {column.id === "backlog" && card.kind === "manual" && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void act(() => client.mandarCard(profile, project, card.id))
-                          }
-                          title="Manda esta tarefa para um trabalhador agora"
-                          className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs text-slate-400">{card.id}</span>
+                        <span
+                          className={`rounded border px-1.5 text-[10px] uppercase ${priorityStyle[card.priority]}`}
                         >
-                          <Play className="size-3.5" /> Mandar
-                        </button>
-                      )}
-                      {column.id === "fazendo" && card.holder && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const holder = card.holder ?? "";
-                            void act(() => client.restartWorker(holder));
-                          }}
-                          title="Relança o trabalhador com o mesmo modelo, no mesmo worktree"
-                          className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                          {card.priority}
+                        </span>
+                        <span
+                          className={`rounded px-1.5 text-[10px] uppercase ${
+                            card.kind === "agente"
+                              ? "bg-violet-500/20 text-violet-200"
+                              : "bg-white/10 text-slate-300"
+                          }`}
                         >
-                          <RotateCcw className="size-3.5" /> Reiniciar
-                        </button>
-                      )}
+                          {card.kind === "agente" ? "agente" : "manual"}
+                        </span>
+                      </div>
                       <button
                         type="button"
                         onClick={() => setEditing(card)}
-                        title="Editar"
-                        className="rounded-md p-1 text-slate-400 hover:text-white"
+                        className="text-left font-medium text-white hover:underline"
                       >
-                        <Pencil className="size-3.5" />
+                        {card.title}
                       </button>
-                      <button
-                        type="button"
-                        title="Apagar o card"
-                        onClick={() => {
-                          if (window.confirm(`Apagar ${card.id} "${card.title}"?`)) {
-                            void act(() => client.deleteCard(profile, project, card.id));
-                          }
-                        }}
-                        className="rounded-md p-1 text-slate-400 hover:text-rose-300"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </section>
-            );
-          })}
-        </div>
-      )}
+                      {card.description && (
+                        <p className="line-clamp-3 whitespace-pre-line text-xs text-slate-400">
+                          {card.description}
+                        </p>
+                      )}
+                      {card.holder && (
+                        <p className="text-xs text-slate-300">
+                          em {holderLabel(card.holder, sessions)}
+                        </p>
+                      )}
+                      {card.commit && (
+                        <p className="font-mono text-xs text-emerald-300">
+                          {card.commit.slice(0, 7)}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {column.id === "backlog" && card.kind === "manual" && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void act(() => client.mandarCard(profile, project, card.id))
+                            }
+                            title="Manda esta tarefa para um trabalhador agora"
+                            className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                          >
+                            <Play className="size-3.5" /> Mandar
+                          </button>
+                        )}
+                        {column.id === "fazendo" && card.holder && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const holder = card.holder ?? "";
+                              void act(() => client.restartWorker(holder));
+                            }}
+                            title="Relança o trabalhador com o mesmo modelo, no mesmo worktree"
+                            className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                          >
+                            <RotateCcw className="size-3.5" /> Reiniciar
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setEditing(card)}
+                          title="Editar"
+                          className="rounded-md p-1 text-slate-400 hover:text-white"
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Apagar o card"
+                          onClick={() => {
+                            if (window.confirm(`Apagar ${card.id} "${card.title}"?`)) {
+                              void act(() => client.deleteCard(profile, project, card.id));
+                            }
+                          }}
+                          className="rounded-md p-1 text-slate-400 hover:text-rose-300"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </section>
+              );
+            })}
+          </div>
+        )}
+        {chat && (
+          <div className="flex h-[45vh] min-h-[16rem] shrink-0 flex-col border-t border-line">
+            <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-slate-300">
+              <Sparkles className="size-3.5" /> Chat do backlog
+              <button
+                type="button"
+                title="Encerrar o chat (o Claude para de ler o backlog)"
+                onClick={() => void closeChat(chat.sessionId)}
+                className="ml-auto rounded p-0.5 text-slate-400 hover:text-white"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <TerminalView sessionId={chat.sessionId} />
+          </div>
+        )}
+      </div>
       {editing && (
         <CardDialog
           target={editing === "novo" ? null : editing}

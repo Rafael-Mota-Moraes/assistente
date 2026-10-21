@@ -10,6 +10,7 @@ import { useShortcuts } from "./features/sessions/shortcuts";
 import { GoodMorning } from "./features/sleep/GoodMorning";
 import { MorningButton, SleepButton } from "./features/sleep/SleepButton";
 import { StatusBar } from "./features/status/StatusBar";
+import { UiUpdatedBanner } from "./features/status/UiUpdatedBanner";
 import { usePolling } from "./features/status/usePolling";
 import { useAppStore } from "./store";
 import { Toast } from "./ui/Toast";
@@ -20,6 +21,7 @@ export function App() {
   const memoryOpen = useAppStore((s) => s.memoryPanelOpen);
   return (
     <div className="flex h-full flex-col">
+      <UiUpdatedBanner />
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-72 shrink-0 flex-col gap-4 border-r border-line bg-surface p-4 backdrop-blur">
           <h1 className="flex items-center gap-2 px-1 text-lg font-bold tracking-tight text-white">

@@ -124,8 +124,8 @@ Spec 09. Ordem sugerida: F8.1 e F8.2 valem sozinhas; F8.4 começa por uma prova 
   Pronto quando: aplicar um commit que quebra o `/api/health` volta sozinho para a versão anterior. Como testar: `./dev just teste-atualizar` (o serviço falso simula o reinício e a saúde).
 - [ ] **F8.6 Aba e painel Assistente.** `[self_update]` na config; botão fixo; painel com commit em uso, pendentes, camadas tocadas, Aplicar, log e Voltar. A fila de pendentes agora exclui os ancestrais do commit em uso; falta o teste manual de Aplicar e Voltar na VM real.
   Pronto quando: dá para aplicar e voltar sem sair do app. Como testar: vitest com dados fake + manual.
-- [ ] **F8.7 Recarregar ao aplicar.** O app nota o commit novo da UI no `/api/health` e recarrega; commit que toca `app/src-tauri` mostra "reinstale o app".
-  Pronto quando: aplicar uma mudança de texto na UI aparece sem fechar o app e com os terminais vivos. Como testar: manual na VM.
+- [x] **F8.7 Recarregar ao aplicar.** O `usePolling` compara o `commit.ui` de `/api/health` (curto ou completo) com o que já estava em uso; quando muda, espera o `running` de `/api/update` cair (o atualizador troca os links antes de reiniciar o hubd), grava o aviso no `sessionStorage`, mostra o toast "versão nova aplicada: recarregando…" e recarrega a página (os terminais reconectam ao tmux). Depois do reload, um banner confirma a versão nova; quando `GET /api/update` responde `shell_changed` (diff `anterior..atual` tocando `app/src-tauri`), o banner pede `assistente atualizar` para reinstalar a casca e só some no X. Testes: `uiUpdate.test.ts` (hashes curtos/longos, aviso idempotente no StrictMode), `usePolling.test.tsx` (recarrega na troca, espera o atualizador e não recarrega quando ele volta), `UiUpdatedBanner.test.tsx` e, no hubd, `touches_shell_only_sees_the_tauri_layer` e `update_status_flags_shell_changes`. Falta conferir na VM real (manual).
+  Pronto quando: aplicar uma mudança de texto na UI aparece sem fechar o app e com os terminais vivos. Como testar: vitest com os fakes + manual na VM.
 
 ## F9 — Fora do jail
 

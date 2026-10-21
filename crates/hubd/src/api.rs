@@ -1016,6 +1016,9 @@ struct UpdateStatusView {
     commit: Option<String>,
     current_ui: Option<String>,
     previous_commit: Option<String>,
+    /// F8.7: entre `previous_commit` e `current_ui` algum arquivo de `app/src-tauri` mudou? A UI
+    /// recarrega sozinha; a casca instalada no PC só troca com `assistente atualizar`.
+    shell_changed: bool,
     error: Option<String>,
     log_tail: Option<String>,
     log: Option<String>,
@@ -1153,18 +1156,27 @@ async fn update_status(State(state): State<AppState>) -> Json<UpdateStatusView> 
     let em_uso: Vec<String> = std::iter::once(env!("HUBD_COMMIT").to_owned())
         .chain(current_ui.clone())
         .collect();
-    let (head, commits) = match &state.0.config.self_update {
+    let (head, commits, shell_changed) = match &state.0.config.self_update {
         Some(self_update) => {
             match sleep_project_dir(&state, &self_update.profile, &self_update.project) {
                 Ok(dir) => {
-                    tokio::task::spawn_blocking(move || update_repo_state(&dir, &em_uso, &applied))
-                        .await
-                        .unwrap_or((None, Vec::new()))
+                    let de = previous_commit.clone();
+                    let ate = current_ui.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let (head, commits) = update_repo_state(&dir, &em_uso, &applied);
+                        let shell_changed = match (de, ate) {
+                            (Some(de), Some(ate)) => touches_shell(&dir, &de, &ate),
+                            _ => false,
+                        };
+                        (head, commits, shell_changed)
+                    })
+                    .await
+                    .unwrap_or((None, Vec::new(), false))
                 }
-                Err(_) => (None, Vec::new()),
+                Err(_) => (None, Vec::new(), false),
             }
         }
-        None => (None, Vec::new()),
+        None => (None, Vec::new(), false),
     };
 
     Json(UpdateStatusView {
@@ -1173,6 +1185,7 @@ async fn update_status(State(state): State<AppState>) -> Json<UpdateStatusView> 
         commit,
         current_ui,
         previous_commit,
+        shell_changed,
         error,
         log: log_tail.clone(),
         log_tail,
@@ -1181,6 +1194,26 @@ async fn update_status(State(state): State<AppState>) -> Json<UpdateStatusView> 
         pending_commits: commits,
         head_commit: head,
     })
+}
+
+/// O diff `de..ate` toca a casca Tauri (`app/src-tauri`, F8.7)? Sem git ou com hash
+/// desconhecido, fica `false`: o aviso é secundário e não pode derrubar o painel.
+fn touches_shell(dir: &std::path::Path, de: &str, ate: &str) -> bool {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "diff",
+            "--name-only",
+            &format!("{de}..{ate}"),
+            "--",
+            "app/src-tauri",
+        ])
+        .output();
+    match output {
+        Ok(out) => out.status.success() && !String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+        Err(_) => false,
+    }
 }
 
 /// HEAD curto e commits do repo `dir` que ainda não rodam. Saem os já aplicados (`applied`, hashes
@@ -3678,22 +3711,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hubd-pendentes-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let git = |args: &[&str]| {
-            let output = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&dir)
-                .args(["-c", "user.name=teste", "-c", "user.email=teste@teste"])
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(output.status.success(), "{output:?}");
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        };
-        git(&["init", "-q"]);
+        git_teste(&dir, &["init", "-q"]);
         for subject in ["feat: um", "feat: dois", "feat: tres"] {
-            git(&["commit", "-q", "--allow-empty", "-m", subject]);
+            git_teste(&dir, &["commit", "-q", "--allow-empty", "-m", subject]);
         }
-        let dois = git(&["rev-parse", "--short", "HEAD~1"]);
+        let dois = git_teste(&dir, &["rev-parse", "--short", "HEAD~1"]);
 
         // Rodando `dois`: `um` é ancestral (já tem o código), só `tres` está pendente.
         let (head, pending) = update_repo_state(&dir, std::slice::from_ref(&dois), &[]);
@@ -3844,6 +3866,106 @@ mod tests {
             std::fs::read_link(versoes.join("atual")).unwrap(),
             PathBuf::from("aaa")
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `git` de teste com identidade fixa (o container não tem user.name global).
+    fn git_teste(dir: &std::path::Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=teste", "-c", "user.email=teste@teste"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    #[test]
+    fn touches_shell_only_sees_the_tauri_layer() {
+        let dir = std::env::temp_dir().join(format!("hubd-shell-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("app/src")).unwrap();
+        git_teste(&dir, &["init", "-q"]);
+        std::fs::write(dir.join("app/src/a.ts"), "a").unwrap();
+        git_teste(&dir, &["add", "."]);
+        git_teste(&dir, &["commit", "-q", "-m", "feat: só UI"]);
+        let ui1 = git_teste(&dir, &["rev-parse", "--short", "HEAD"]);
+
+        std::fs::create_dir_all(dir.join("app/src-tauri")).unwrap();
+        std::fs::write(dir.join("app/src-tauri/main.rs"), "fn main() {}").unwrap();
+        git_teste(&dir, &["add", "."]);
+        git_teste(&dir, &["commit", "-q", "-m", "feat: casca"]);
+        let casca = git_teste(&dir, &["rev-parse", "--short", "HEAD"]);
+
+        std::fs::write(dir.join("app/src/b.ts"), "b").unwrap();
+        git_teste(&dir, &["add", "."]);
+        git_teste(&dir, &["commit", "-q", "-m", "feat: UI de novo"]);
+        let ui2 = git_teste(&dir, &["rev-parse", "--short", "HEAD"]);
+
+        assert!(touches_shell(&dir, &ui1, &casca));
+        assert!(
+            touches_shell(&dir, &ui1, &ui2),
+            "o commit da casca está no meio"
+        );
+        assert!(
+            !touches_shell(&dir, &casca, &ui2),
+            "depois da casca só a UI mudou"
+        );
+        assert!(!touches_shell(&dir, &ui2, &ui2));
+        assert!(
+            !touches_shell(&dir, "deadbeef", &ui2),
+            "hash desconhecido não quebra"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_status_flags_shell_changes() {
+        let dir = std::env::temp_dir().join(format!("hubd-update-shell-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("pessoal");
+        let repo = root.join("assistente");
+        std::fs::create_dir_all(repo.join("app/src")).unwrap();
+        git_teste(&repo, &["init", "-q"]);
+        std::fs::write(repo.join("app/src/a.ts"), "a").unwrap();
+        git_teste(&repo, &["add", "."]);
+        git_teste(&repo, &["commit", "-q", "-m", "feat: só UI"]);
+        let ui_velha = git_teste(&repo, &["rev-parse", "--short", "HEAD"]);
+        std::fs::create_dir_all(repo.join("app/src-tauri")).unwrap();
+        std::fs::write(repo.join("app/src-tauri/main.rs"), "fn main() {}").unwrap();
+        git_teste(&repo, &["add", "."]);
+        git_teste(&repo, &["commit", "-q", "-m", "feat: casca"]);
+        let ui_nova = git_teste(&repo, &["rev-parse", "--short", "HEAD"]);
+
+        // Home com a versão nova em uso (`atual`) e a anterior ao lado.
+        let home = dir.join("home");
+        let versoes = home.join(".assistente/versoes");
+        std::fs::create_dir_all(versoes.join(&ui_nova).join("ui")).unwrap();
+        std::fs::write(
+            versoes.join(&ui_nova).join("ui/commit.txt"),
+            format!("{ui_nova}\n"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(versoes.join(&ui_velha)).unwrap();
+        std::os::unix::fs::symlink(&ui_nova, versoes.join("atual")).unwrap();
+        std::os::unix::fs::symlink(&ui_velha, versoes.join("anterior")).unwrap();
+
+        let text = format!(
+            "{}\n[self_update]\nprofile = \"pessoal\"\nproject = \"assistente\"\n",
+            EXAMPLE.replace("~/Documentos/pessoal/projetos", &root.display().to_string())
+        );
+        let config = Config::parse(&text, &home).unwrap();
+        let app = router(
+            AppState::new(config, home.clone(), None, None, Tmux::default())
+                .with_ui_dir(Some(versoes.join("atual/ui"))),
+        );
+        let (status, body) = call_method(app, "GET", "/api/update", None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["current_ui"], ui_nova);
+        assert_eq!(body["previous_commit"], ui_velha);
+        assert_eq!(body["shell_changed"], true);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

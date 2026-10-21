@@ -18,6 +18,8 @@ export type UpdateStatus = {
   commit: string | null;
   current_ui: string | null;
   previous_commit: string | null;
+  /** F8.7: o commit em uso mexeu em `app/src-tauri`; a casca do app precisa ser reinstalada. */
+  shell_changed: boolean;
   error: string | null;
   log_tail: string | null;
   log: string | null;

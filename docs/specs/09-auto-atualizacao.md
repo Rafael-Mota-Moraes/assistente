@@ -30,7 +30,9 @@ A maior parte das mudanças é na UI e no hubd. A casca é fina de propósito (s
    painel acompanha o log por `GET /api/update`.
 5. **Recarregar.** Quando o commit da UI em uso muda, o app avisa ("versão nova aplicada") e
    recarrega a página. Perfil, projeto e aba ativa voltam do `sessionStorage` (F8.2), e os
-   terminais reconectam ao tmux (F8.1).
+   terminais reconectam ao tmux (F8.1). O aviso atravessa o reload pelo `sessionStorage` e vira
+   um banner; se `GET /api/update` disser `shell_changed` (diff `anterior..atual` tocando
+   `app/src-tauri`), o banner pede `assistente atualizar` para reinstalar a casca.
 
 ```toml
 # assistente.toml

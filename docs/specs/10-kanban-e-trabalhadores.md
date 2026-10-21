@@ -1,6 +1,6 @@
 # 10 — Quadro, orquestrador e trabalhadores
 
-Cobre o quadro por projeto (F11). Funcionalidades F11.1–F11.8. O que e por que: `docs/VISAO.md`
+Cobre o quadro por projeto (F11). Funcionalidades F11.1–F11.11. O que e por que: `docs/VISAO.md`
 (R6 modo dormir, R7 sessões). Este documento é o como.
 
 ## Quadro
@@ -11,7 +11,9 @@ index fica como estava, e a árvore não amanhece suja (o modo dormir exige árv
 
 Colunas: `backlog` · `fazendo` · `feito`. Campos de um card: `id` (`T1`, nunca reaproveitado),
 `title`, `description`, `priority` (`alta` · `normal` · `baixa`), `kind`, `column`, `holder` (a
-sessão que segura, só em "fazendo"), `commit` (só em "feito").
+sessão que segura, só em "fazendo"), `commit` (só em "feito"), `failures` (vezes que voltou do
+"fazendo" sem concluir: `release` ou sessão morta; omitido quando zero). No nível do quadro,
+`orchestrator` (`enabled`, `max_workers`), omitido enquanto estiver no padrão (desligado, 1).
 
 **Tipos de card** (F11.6):
 
@@ -85,6 +87,27 @@ A sessão do Claude. Pelo `fora-do-jail` (instruções em `vm/configurar-agentes
 Pelo `fora-do-jail` o pedido **não** passa por aprovação no app: não roda nada no PC nem na VM fora do
 jail; é coordenação entre sessões.
 
+## Orquestrador automático (F11.11)
+
+Um laço do próprio hubd (`spawn_orchestrator`, iniciado no `main`), sem sessão do Claude e sem
+gastar tokens: o que o orquestrador Claude fazia (puxar e abrir trabalhador) agora não precisa de
+decisão, porque o modelo já é escolhido sozinho (F11.10).
+
+- Liga por projeto no quadro: botão "Orquestrador" + limite (1–4, `MAX_WORKERS`). `PUT
+  …/kanban/orquestrador {enabled, max_workers}` grava em `kanban.json` com commit (`kanban:
+  orquestrador ligado (até 2 em fazendo)`) e já dá a primeira volta antes de responder.
+- A cada 20 s (`ORCHESTRATOR_EVERY`), em cada projeto ligado: enquanto as tarefas em "fazendo" (de
+  qualquer origem, Mandar incluso) estiverem abaixo do limite, abre um trabalhador para a próxima
+  tarefa `agente` do backlog (`Board::next_auto`, mesma ordem do `pull`), pelo mesmo caminho do
+  "Mandar" (`start_worker`: worktree, modelos, posse).
+- **Não insiste**: `next_auto` pula cards com `failures > 0`. O trabalhador que esgotou os modelos,
+  o "Parar" da UI e a sessão que morreu (inclusive VM reiniciada) devolvem o card com `failures + 1`,
+  e ele fica no backlog com "Voltou N× sem concluir". "Tentar de novo" (`PATCH {failures: 0}`) ou
+  "Mandar" põem de volta. O `pull` explícito (orquestrador Claude, `dorme`) não olha `failures`.
+- Uma volta por vez (`orchestrator_lock`): o laço e o "ligar" da UI não disputam a mesma tarefa.
+- Erro (sem API dos agentes, sem modelo grátis…) não para o laço: fica em memória por projeto, vai
+  no `GET …/kanban` como `orchestrator_error` (faixa amarela no quadro) e no log só quando muda.
+
 ## Supervisão
 
 - Dentro: o `trabalhador` troca de modelo e tenta de novo sozinho (acima).
@@ -107,7 +130,8 @@ Opt-in por projeto: `[sleep] source = "quadro"`. O padrão `backlog` não muda n
 
 - `hub_core::kanban` (regras), `hub_core::worker` (config, prompt, nomes), `session::worker_runs…`.
 - `hubd::api::kanban::tests`: CRUD com um commit por escrita, pull/done/release com sessões de tmux de
-  verdade, sessão morta, Mandar com worktree e reinício, orquestrador → trabalhador.
+  verdade, sessão morta, Mandar com worktree e reinício, orquestrador → trabalhador, orquestrador
+  automático (limite, card que voltou fica, "Tentar de novo", erro no quadro).
 - `vm/teste-trabalhador.sh` e `notebook/teste-dorme.sh` (quadro: prioridade, commit, volta ao backlog,
   quadro vazio).
 - `KanbanBoard.test.tsx`, `ProjectList.test.tsx`.

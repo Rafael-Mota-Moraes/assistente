@@ -10,6 +10,7 @@ import type {
   KanbanBoard,
   KanbanCard,
   KanbanDraft,
+  KanbanOrchestrator,
   MainApplyResult,
   MemoryStatus,
   NotebookStatus,
@@ -92,6 +93,15 @@ export class HubClient {
       `${kanbanPath(profile, project)}/${encodeURIComponent(id)}`,
       draft,
     );
+  }
+
+  /** Liga ou desliga o orquestrador automático (F11.11); devolve o quadro depois da 1ª volta. */
+  setOrchestrator(
+    profile: string,
+    project: string,
+    orchestrator: KanbanOrchestrator,
+  ): Promise<KanbanBoard> {
+    return this.request("PUT", `${kanbanPath(profile, project)}/orquestrador`, orchestrator);
   }
 
   async deleteCard(profile: string, project: string, id: string): Promise<void> {

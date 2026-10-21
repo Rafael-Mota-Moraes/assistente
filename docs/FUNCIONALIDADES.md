@@ -260,6 +260,16 @@ hubd); F11.2 antes de F11.4.
   do perfil e sai vazio), então a escolha lê o catálogo `~/.cache/opencode/models.json`, que tem o
   provedor `opencode` com `cost`. Falta confirmar na VM que os grátis rodam no `opencode run` do jail.
 
+- [x] **F11.11 Orquestrador automático.** Botão "Orquestrador" no quadro (com o limite de 1 a 4
+  tarefas em "fazendo"): ligado, o hubd puxa sozinho as tarefas `agente` do backlog, a cada 20 s, e
+  abre um trabalhador para cada uma pelo mesmo caminho do "Mandar", sem sessão do Claude. Card que
+  volta do "fazendo" sem concluir (trabalhador desistiu, "Parar", sessão morta) conta `failures` e o
+  automático não puxa de novo até "Tentar de novo". Erro do laço aparece no quadro. Rota `PUT
+  …/kanban/orquestrador`. Pronto quando: ligar abre trabalhadores até o limite, uma vaga liberada é
+  preenchida pela próxima, e o card que falhou fica no backlog. Como testar:
+  `api::kanban::tests::orchestrator_fills_up_to_the_limit…`, `…orchestrator_error_shows_on_the_board`,
+  `kanban::tests::auto_skips…` e `KanbanBoard.test.tsx`. Na VM real, junto com F11.8.
+
 ## F12 — Apontar e pedir na tela
 
 Enquanto o sistema roda, aponte para o que quer mudar. O app abre o projeto numa webview filha

@@ -9,7 +9,7 @@ use axum::extract::{Path, Query, Request, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, delete, get, patch, post};
+use axum::routing::{any, delete, get, patch, post, put};
 use axum::{Json, Router};
 use http_body_util::{BodyExt, Full};
 use hub_core::{
@@ -21,7 +21,7 @@ use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -29,6 +29,8 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
 mod kanban;
+
+pub use kanban::spawn_orchestrator;
 
 use crate::exec::{self, ExecError, ExecJob, ExecStore, ExecView, NewRequest};
 use crate::sessions::{SessionInfo, Tmux, new_exec_token, next_seq};
@@ -70,6 +72,11 @@ struct Inner {
     memory_session: String,
     /// Serializa leitura-modificação-escrita do quadro de cada projeto (F11.1).
     kanban_lock: tokio::sync::Mutex<()>,
+    /// Uma volta do orquestrador automático por vez (F11.11): o laço e o "ligar" da UI não
+    /// abrem dois trabalhadores para a mesma tarefa.
+    orchestrator_lock: tokio::sync::Mutex<()>,
+    /// Último erro do orquestrador automático por `perfil/projeto`, mostrado no quadro.
+    orchestrator_errors: std::sync::Mutex<HashMap<String, String>>,
     /// Só nos testes: troca o comando do atualizador (F8.5).
     update_command_override: Option<String>,
     /// Só nos testes: env extra do atualizador.
@@ -105,6 +112,8 @@ impl AppState {
             update_command_override: None,
             update_env_override: Vec::new(),
             kanban_lock: tokio::sync::Mutex::new(()),
+            orchestrator_lock: tokio::sync::Mutex::new(()),
+            orchestrator_errors: std::sync::Mutex::new(HashMap::new()),
         }))
     }
 
@@ -231,6 +240,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/projects/{profile}/{project}/kanban",
             get(kanban::list_cards).post(kanban::create_card),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/kanban/orquestrador",
+            put(kanban::set_orchestrator),
         )
         .route(
             "/api/projects/{profile}/{project}/kanban/{id}",

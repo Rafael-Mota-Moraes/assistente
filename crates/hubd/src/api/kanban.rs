@@ -1,6 +1,8 @@
 //! Quadro dos projetos e trabalhadores (F11). Da UI: `/api/projects/{perfil}/{projeto}/kanban…`,
 //! `…/kanban/{id}/mandar` e `/api/sessions/{id}/reiniciar`. Da API dos agentes (token da sessão):
 //! `/v1/kanban/{pull,done,release}` e `/v1/workers`, que só o orquestrador (sessão do Claude) usa.
+//! O orquestrador automático (F11.11, `spawn_orchestrator`) é um laço do próprio hubd: liga em
+//! `PUT …/kanban/orquestrador` e abre trabalhadores para as tarefas `agente`, sem sessão do Claude.
 //! Regras em `hub_core::kanban`; arquivo e commit em `crate::kanban`; trabalhador em `hub_core::worker`.
 
 // Os handlers devolvem `Response` como o resto de `api.rs`; o `Err` grande é o preço disso.
@@ -79,14 +81,75 @@ fn checked_commit(commit: Option<String>) -> Reply<Option<String>> {
     }
 }
 
+/// Quadro para a UI: o arquivo mais o último erro do orquestrador automático (só em memória).
+#[derive(Serialize)]
+pub(super) struct BoardView {
+    #[serde(flatten)]
+    board: Board,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    orchestrator_error: Option<String>,
+}
+
+fn board_view(state: &AppState, profile: &str, project: &str, board: Board) -> BoardView {
+    let errors = state.0.orchestrator_errors.lock().expect("lock dos erros");
+    BoardView {
+        orchestrator_error: errors.get(&orchestrator_key(profile, project)).cloned(),
+        board,
+    }
+}
+
 /// GET /api/projects/{perfil}/{projeto}/kanban
 pub(super) async fn list_cards(
     State(state): State<AppState>,
     Params((profile, project)): Params<(String, String)>,
-) -> Reply<Json<Board>> {
+) -> Reply<Json<BoardView>> {
     let dir = project_dir(&state, &profile, &project)?;
-    let _guard = state.0.kanban_lock.lock().await;
-    Ok(Json(load(&state, &dir).await?))
+    let board = {
+        let _guard = state.0.kanban_lock.lock().await;
+        load(&state, &dir).await?
+    };
+    Ok(Json(board_view(&state, &profile, &project, board)))
+}
+
+#[derive(Deserialize)]
+pub(super) struct OrchestratorBody {
+    enabled: bool,
+    #[serde(default = "one")]
+    max_workers: u32,
+}
+
+fn one() -> u32 {
+    1
+}
+
+/// PUT /api/projects/{perfil}/{projeto}/kanban/orquestrador `{enabled, max_workers}`: liga ou
+/// desliga o orquestrador automático (F11.11). Ligado, já dá a primeira volta antes de responder.
+pub(super) async fn set_orchestrator(
+    State(state): State<AppState>,
+    Params((profile, project)): Params<(String, String)>,
+    Json(body): Json<OrchestratorBody>,
+) -> Reply<Json<BoardView>> {
+    let dir = project_dir(&state, &profile, &project)?;
+    {
+        let _guard = state.0.kanban_lock.lock().await;
+        let mut board = load(&state, &dir).await?;
+        let set = board.set_orchestrator(body.enabled, body.max_workers);
+        let message = if set.enabled {
+            format!(
+                "kanban: orquestrador ligado (até {} em fazendo)",
+                set.max_workers
+            )
+        } else {
+            "kanban: orquestrador desligado".to_owned()
+        };
+        persist(&dir, &board, &message)?;
+    }
+    orchestrate_project(&state, &profile, &project).await;
+    let board = {
+        let _guard = state.0.kanban_lock.lock().await;
+        load(&state, &dir).await?
+    };
+    Ok(Json(board_view(&state, &profile, &project, board)))
 }
 
 /// POST /api/projects/{perfil}/{projeto}/kanban: card novo nasce no backlog.
@@ -560,6 +623,124 @@ pub(super) async fn agent_worker(
     )
     .await?;
     Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// A cada quanto o orquestrador automático olha os quadros (F11.11).
+const ORCHESTRATOR_EVERY: Duration = Duration::from_secs(20);
+
+fn orchestrator_key(profile: &str, project: &str) -> String {
+    format!("{profile}/{project}")
+}
+
+/// Laço do orquestrador automático (F11.11): a cada `ORCHESTRATOR_EVERY`, cada projeto com o
+/// orquestrador ligado no quadro ganha trabalhadores para as próximas tarefas `agente`, até o
+/// limite. Roda enquanto o hubd roda; desligar no quadro basta para ele parar de abrir.
+pub fn spawn_orchestrator(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut timer = tokio::time::interval(ORCHESTRATOR_EVERY);
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            timer.tick().await;
+            orchestrate_all(&state).await;
+        }
+    })
+}
+
+async fn orchestrate_all(state: &AppState) {
+    for (profile, config) in &state.0.config.profiles {
+        let root = config.root.clone();
+        let projects = match tokio::task::spawn_blocking(move || discover_projects(&root)).await {
+            Ok(Ok(projects)) => projects,
+            Ok(Err(e)) => {
+                tracing::warn!("orquestrador: não listei os projetos de {profile}: {e}");
+                continue;
+            }
+            Err(_) => continue,
+        };
+        for project in projects {
+            // Leitura sem lock: só decide se vale a volta; a volta relê o quadro sob o lock.
+            let enabled = store::read(&project.path).is_ok_and(|b| b.orchestrator.enabled);
+            if enabled {
+                orchestrate_project(state, profile, &project.name).await;
+            }
+        }
+    }
+}
+
+/// Uma volta num projeto, com o erro guardado para o quadro mostrar (e o log só quando muda).
+async fn orchestrate_project(state: &AppState, profile: &str, project: &str) {
+    let result = orchestrate(state, profile, project).await;
+    let key = orchestrator_key(profile, project);
+    let mut errors = state.0.orchestrator_errors.lock().expect("lock dos erros");
+    match result {
+        Ok(started) => {
+            for id in started {
+                tracing::info!("orquestrador: {key} {id} com trabalhador");
+            }
+            errors.remove(&key);
+        }
+        Err(e) => {
+            if errors.get(&key) != Some(&e) {
+                tracing::warn!("orquestrador: {key}: {e}");
+            }
+            errors.insert(key, e);
+        }
+    }
+}
+
+/// Abre trabalhadores para as próximas tarefas `agente` enquanto houver vaga em "fazendo".
+/// Devolve as tarefas que começaram. Tarefa que já voltou do "fazendo" fica (`next_auto`).
+async fn orchestrate(
+    state: &AppState,
+    profile: &str,
+    project: &str,
+) -> Result<Vec<String>, String> {
+    let _turn = state.0.orchestrator_lock.lock().await;
+    let dir = match project_dir(state, profile, project) {
+        Ok(dir) => dir,
+        Err(response) => return Err(reply_text(response).await),
+    };
+    let mut started = Vec::new();
+    // Cada volta abre no máximo o limite; trabalhador que morre na hora volta com `failures`
+    // e não é repuxado, então o laço sempre termina.
+    for _ in 0..hub_core::kanban::MAX_WORKERS {
+        let next = {
+            let _guard = state.0.kanban_lock.lock().await;
+            let board = match load(state, &dir).await {
+                Ok(board) => board,
+                Err(response) => return Err(reply_text(response).await),
+            };
+            let limit = board.orchestrator.max_workers as usize;
+            if !board.orchestrator.enabled || board.in_progress() >= limit {
+                break;
+            }
+            match board.next_auto() {
+                Some(card) => card.id.clone(),
+                None => break,
+            }
+        };
+        if let Err(response) = start_worker(state, profile, project, &next, Vec::new(), None).await
+        {
+            return Err(format!("{next}: {}", reply_text(response).await));
+        }
+        started.push(next);
+    }
+    Ok(started)
+}
+
+/// A mensagem de um erro da API (`{"error": …}`), para o log e o quadro.
+async fn reply_text(response: Response) -> String {
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .map(|body| body.to_bytes())
+        .unwrap_or_default();
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v["error"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("erro {status}"))
 }
 
 #[cfg(test)]
@@ -1079,6 +1260,159 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{done}");
         assert_eq!(done["column"], "feito");
+    }
+
+    #[tokio::test]
+    async fn orchestrator_fills_up_to_the_limit_and_leaves_failed_cards_alone() {
+        let t = TestTmux::new("kanban-auto-orquestra");
+        let hub = hub(&t, true);
+        std::fs::write(
+            hub.proj.join(".assistente.toml"),
+            "[workers]\nmodels = [\"x/a\"]\n",
+        )
+        .unwrap();
+        git_sync(&hub.proj, &["add", ".assistente.toml"]);
+        git_sync(&hub.proj, &["commit", "-q", "-m", "config do projeto"]);
+        for body in [
+            r#"{"title":"um","kind":"agente"}"#,
+            r#"{"title":"dois","kind":"agente","priority":"alta"}"#,
+            r#"{"title":"tres","kind":"agente","priority":"baixa"}"#,
+            r#"{"title":"manual"}"#,
+        ] {
+            send(hub.app.clone(), "POST", CARDS, Some(body), None).await;
+        }
+        let column = |board: &serde_json::Value, id: &str| -> String {
+            let card = board["cards"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap();
+            card["column"].as_str().unwrap().to_owned()
+        };
+
+        let uri = format!("{CARDS}/orquestrador");
+        let (status, board) = send(
+            hub.app.clone(),
+            "PUT",
+            &uri,
+            Some(r#"{"enabled":true,"max_workers":2}"#),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{board}");
+        assert_eq!(board["orchestrator"]["enabled"], true);
+        assert_eq!(board["orchestrator"]["max_workers"], 2);
+        // Ligar já dá a primeira volta: as duas primeiras pela ordem do pull, a manual nunca.
+        assert_eq!(column(&board, "T2"), "fazendo", "{board}");
+        assert_eq!(column(&board, "T1"), "fazendo", "{board}");
+        assert_eq!(column(&board, "T3"), "backlog");
+        assert_eq!(column(&board, "T4"), "backlog");
+        assert!(board.get("orchestrator_error").is_none(), "{board}");
+        assert!(
+            git_sync(&hub.proj, &["log", "--format=%s"])
+                .contains("kanban: orquestrador ligado (até 2 em fazendo)")
+        );
+
+        // O trabalhador do T2 desiste: T2 volta ao backlog e o T3 entra na vaga, o T2 não.
+        let worker = board["cards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "T2")
+            .unwrap()["holder"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let token = exec_token(&t, &worker).await;
+        let (status, _) = send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/release",
+            Some(r#"{"id":"T2"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        t.tmux.kill(&worker).await.unwrap();
+        let (_, board) = send(
+            hub.app.clone(),
+            "PUT",
+            &uri,
+            Some(r#"{"enabled":true,"max_workers":2}"#),
+            None,
+        )
+        .await;
+        assert_eq!(column(&board, "T3"), "fazendo", "{board}");
+        assert_eq!(column(&board, "T2"), "backlog");
+        assert_eq!(board["cards"][1]["failures"], 1, "{board}");
+
+        // "Tentar de novo" zera a contagem; com vaga, a próxima volta pega o T2.
+        send(
+            hub.app.clone(),
+            "PATCH",
+            &format!("{CARDS}/T2"),
+            Some(r#"{"failures":0}"#),
+            None,
+        )
+        .await;
+        let (_, board) = send(
+            hub.app.clone(),
+            "PUT",
+            &uri,
+            Some(r#"{"enabled":true,"max_workers":3}"#),
+            None,
+        )
+        .await;
+        assert_eq!(column(&board, "T2"), "fazendo", "{board}");
+
+        // Desligado, nada novo abre e o quadro fica como está.
+        let (_, board) = send(
+            hub.app.clone(),
+            "PUT",
+            &uri,
+            Some(r#"{"enabled":false}"#),
+            None,
+        )
+        .await;
+        assert!(board.get("orchestrator").is_none(), "{board}");
+        assert_eq!(last_subject(&hub.proj), "kanban: orquestrador desligado");
+    }
+
+    #[tokio::test]
+    async fn orchestrator_error_shows_on_the_board() {
+        let t = TestTmux::new("kanban-auto-erro");
+        // Sem a API dos agentes o trabalhador não abre: o erro vai para o quadro.
+        let hub = hub(&t, false);
+        std::fs::write(
+            hub.proj.join(".assistente.toml"),
+            "[workers]\nmodels = [\"x/a\"]\n",
+        )
+        .unwrap();
+        git_sync(&hub.proj, &["add", ".assistente.toml"]);
+        git_sync(&hub.proj, &["commit", "-q", "-m", "config do projeto"]);
+        send(
+            hub.app.clone(),
+            "POST",
+            CARDS,
+            Some(r#"{"title":"um","kind":"agente"}"#),
+            None,
+        )
+        .await;
+        let (status, board) = send(
+            hub.app.clone(),
+            "PUT",
+            &format!("{CARDS}/orquestrador"),
+            Some(r#"{"enabled":true}"#),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{board}");
+        let message = board["orchestrator_error"].as_str().unwrap_or_default();
+        assert!(message.starts_with("T1: a API dos agentes"), "{board}");
+        assert_eq!(board["cards"][0]["column"], "backlog");
+        let (_, listed) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+        assert_eq!(listed["orchestrator_error"], board["orchestrator_error"]);
     }
 
     #[tokio::test]

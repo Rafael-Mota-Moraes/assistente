@@ -3,6 +3,10 @@
 //!
 //! Dois tipos de card. `manual` (o padrão) só roda quando você manda (`Mandar` na UI). `agente`
 //! foi marcado para o agente implementar: o orquestrador e o modo dormir puxam sozinhos.
+//!
+//! O orquestrador automático (F11.11) é ligado no próprio quadro (`orchestrator`): o hubd abre
+//! trabalhadores para as tarefas `agente` até o limite, sem ninguém pedir. Tarefa que voltou do
+//! "fazendo" (`failures`) ele não puxa de novo: você decide com "Tentar de novo" ou "Mandar".
 
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub const FILE: &str = ".assistente/kanban.json";
 const MAX_TITLE: usize = 200;
 const MAX_DESCRIPTION: usize = 10_000;
+/// Trabalhadores simultâneos que o orquestrador automático abre por projeto, no máximo.
+pub const MAX_WORKERS: u32 = 4;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -59,7 +65,38 @@ pub struct Card {
     /// Commit que fechou a tarefa (`feito`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
+    /// Quantas vezes voltou do "fazendo" sem concluir (trabalhador desistiu ou sessão morreu).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub failures: u32,
     pub created_at: u64,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// Orquestrador automático do projeto (F11.11): desligado por padrão.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Orchestrator {
+    pub enabled: bool,
+    /// Tarefas em "fazendo" ao mesmo tempo (`1..=MAX_WORKERS`).
+    pub max_workers: u32,
+}
+
+impl Default for Orchestrator {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_workers: 1,
+        }
+    }
+}
+
+impl Orchestrator {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +105,8 @@ pub struct Board {
     /// Número da próxima tarefa (`T<next>`).
     pub next: u32,
     pub cards: Vec<Card>,
+    #[serde(skip_serializing_if = "Orchestrator::is_default")]
+    pub orchestrator: Orchestrator,
 }
 
 /// Dados de um card novo ou de uma edição (todos opcionais na edição).
@@ -79,6 +118,8 @@ pub struct Draft {
     pub priority: Option<Priority>,
     pub kind: Option<Kind>,
     pub column: Option<Column>,
+    /// `0` = "Tentar de novo": o orquestrador automático volta a puxar a tarefa.
+    pub failures: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +186,7 @@ impl Board {
             column: draft.column.unwrap_or_default(),
             holder: None,
             commit: None,
+            failures: 0,
             created_at: now,
         });
         Ok(self.cards.last().expect("acabou de ser empurrado"))
@@ -165,6 +207,9 @@ impl Board {
         }
         if let Some(kind) = draft.kind {
             card.kind = kind;
+        }
+        if let Some(failures) = draft.failures {
+            card.failures = failures;
         }
         if let Some(column) = draft.column
             && column != card.column
@@ -207,14 +252,39 @@ impl Board {
     /// `pull` da API dos agentes: a primeira tarefa `agente` do backlog (prioridade, depois
     /// criação, depois número), já presa a `holder`. `None` = quadro sem trabalho para agente.
     pub fn pull(&mut self, holder: &str) -> Option<&Card> {
-        let id = self
-            .cards
+        let id = self.first_agent_card(|_| true)?.id.clone();
+        self.claim(&id, holder).ok()
+    }
+
+    /// Próxima tarefa do orquestrador automático, na ordem do `pull`, sem as que já voltaram do
+    /// "fazendo": ele não insiste sozinho no que deu errado. Não prende nada.
+    pub fn next_auto(&self) -> Option<&Card> {
+        self.first_agent_card(|card| card.failures == 0)
+    }
+
+    fn first_agent_card(&self, extra: impl Fn(&Card) -> bool) -> Option<&Card> {
+        self.cards
             .iter()
             .filter(|card| card.column == Column::Backlog && card.kind == Kind::Agente)
-            .min_by_key(|card| (card.priority, card.created_at, number(&card.id)))?
-            .id
-            .clone();
-        self.claim(&id, holder).ok()
+            .filter(|card| extra(card))
+            .min_by_key(|card| (card.priority, card.created_at, number(&card.id)))
+    }
+
+    /// Tarefas em "fazendo": o que conta para o limite do orquestrador automático.
+    pub fn in_progress(&self) -> usize {
+        self.cards
+            .iter()
+            .filter(|card| card.column == Column::Fazendo)
+            .count()
+    }
+
+    /// Liga ou desliga o orquestrador automático; `max_workers` vai para `1..=MAX_WORKERS`.
+    pub fn set_orchestrator(&mut self, enabled: bool, max_workers: u32) -> Orchestrator {
+        self.orchestrator = Orchestrator {
+            enabled,
+            max_workers: max_workers.clamp(1, MAX_WORKERS),
+        };
+        self.orchestrator
     }
 
     /// Passa a posse de uma tarefa em andamento (orquestrador → trabalhador).
@@ -243,6 +313,7 @@ impl Board {
         let card = self.holding(id, holder)?;
         card.column = Column::Backlog;
         card.holder = None;
+        card.failures += 1;
         Ok(card)
     }
 
@@ -258,6 +329,7 @@ impl Board {
             {
                 card.column = Column::Backlog;
                 card.holder = None;
+                card.failures += 1;
                 released.push(card.id.clone());
             }
         }
@@ -441,6 +513,45 @@ mod tests {
         assert_eq!(released, vec!["T1".to_owned()]);
         assert_eq!(board.get("T1").unwrap().column, Column::Backlog);
         assert_eq!(board.get("T2").unwrap().column, Column::Fazendo);
+    }
+
+    #[test]
+    fn auto_skips_cards_that_came_back_until_you_retry() {
+        let mut board = Board::default();
+        board.create(agent_draft("a", Priority::Alta), 1).unwrap();
+        board.create(agent_draft("b", Priority::Normal), 2).unwrap();
+        board.create(draft("manual"), 3).unwrap();
+        assert_eq!(board.next_auto().unwrap().id, "T1");
+        board.claim("T1", "s1").unwrap();
+        assert_eq!(board.in_progress(), 1);
+        board.release("T1", "s1").unwrap();
+        board.claim("T2", "s2").unwrap();
+        board.release_dead(|_| false);
+        assert_eq!(board.get("T1").unwrap().failures, 1);
+        assert_eq!(board.get("T2").unwrap().failures, 1);
+        // O automático não insiste; o pull explícito (orquestrador Claude, dormir) continua.
+        assert!(board.next_auto().is_none());
+        assert_eq!(board.in_progress(), 0);
+        let retry = Draft {
+            failures: Some(0),
+            ..Draft::default()
+        };
+        board.update("T2", retry).unwrap();
+        assert_eq!(board.next_auto().unwrap().id, "T2");
+    }
+
+    #[test]
+    fn orchestrator_is_off_by_default_and_bounded() {
+        let mut board = Board::default();
+        assert!(!board.orchestrator.enabled);
+        assert!(!board.to_json().contains("orchestrator"));
+        assert_eq!(board.set_orchestrator(true, 0).max_workers, 1);
+        assert_eq!(board.set_orchestrator(true, 99).max_workers, MAX_WORKERS);
+        let text = board.to_json();
+        assert_eq!(
+            Board::parse(&text).unwrap().orchestrator,
+            board.orchestrator
+        );
     }
 
     #[test]

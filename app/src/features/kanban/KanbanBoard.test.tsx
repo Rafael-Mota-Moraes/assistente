@@ -40,6 +40,7 @@ function connect(board: Board) {
     restartWorker: vi.fn().mockResolvedValue(claude),
     explorarBacklog: vi.fn().mockResolvedValue(claude),
     deleteSession: vi.fn().mockResolvedValue(undefined),
+    setOrchestrator: vi.fn().mockResolvedValue(board),
   };
   useAppStore.setState({
     hub: hub as unknown as HubClient,
@@ -189,5 +190,51 @@ describe("KanbanBoard", () => {
       timeout: 4000,
     });
     expect(screen.getByText(/não consegui rodar/)).toBeInTheDocument();
+  });
+
+  it("liga o orquestrador e mostra o erro dele", async () => {
+    const hub = connect({ next: 2, cards: [card("T1", { kind: "agente" })] });
+    const toggle = await screen.findByRole("switch", { name: /Orquestrador desligado/ });
+    fireEvent.change(screen.getByRole("combobox", { name: "Trabalhadores ao mesmo tempo" }), {
+      target: { value: "3" },
+    });
+    await waitFor(() =>
+      expect(hub.setOrchestrator).toHaveBeenCalledWith("pessoal", "game", {
+        enabled: false,
+        max_workers: 3,
+      }),
+    );
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(hub.setOrchestrator).toHaveBeenLastCalledWith("pessoal", "game", {
+        enabled: true,
+        max_workers: 1,
+      }),
+    );
+    hub.kanban.mockResolvedValue({
+      next: 2,
+      cards: [card("T1", { kind: "agente" })],
+      orchestrator: { enabled: true, max_workers: 1 },
+      orchestrator_error: "T1: nenhum modelo grátis",
+    });
+    // O erro chega pelo poll seguinte (2 s).
+    expect(
+      await screen.findByText("Orquestrador: T1: nenhum modelo grátis", {}, { timeout: 4000 }),
+    ).toBeInTheDocument();
+  });
+
+  it("card que voltou do fazendo pede Tentar de novo", async () => {
+    const hub = connect({
+      next: 3,
+      cards: [card("T1", { kind: "agente", failures: 2 }), card("T2", { failures: 1 })],
+    });
+    const backlog = await column("Backlog");
+    expect(within(backlog).getAllByText(/Voltou .*× sem concluir/)).toHaveLength(2);
+    const retry = within(backlog).getAllByRole("button", { name: /Tentar de novo/ });
+    expect(retry).toHaveLength(1);
+    fireEvent.click(retry[0]);
+    await waitFor(() =>
+      expect(hub.updateCard).toHaveBeenCalledWith("pessoal", "game", "T1", { failures: 0 }),
+    );
   });
 });

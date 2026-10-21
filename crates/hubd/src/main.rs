@@ -82,6 +82,8 @@ async fn main() -> anyhow::Result<()> {
     let state = api::AppState::new(config, home, token, tunnel, sessions::Tmux::default())
         .with_ui_dir(ui_dir.is_dir().then_some(ui_dir))
         .with_exec_port(exec_port);
+    // Orquestrador automático (F11.11): só age nos quadros em que foi ligado.
+    api::spawn_orchestrator(state.clone());
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("não consegui escutar em {addr}"))?;

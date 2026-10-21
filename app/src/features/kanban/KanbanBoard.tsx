@@ -1,4 +1,5 @@
 import {
+  Bot,
   LayoutGrid,
   Pencil,
   Play,
@@ -26,6 +27,8 @@ import { CardDialog } from "./CardDialog";
 
 /** Quadro é lido de novo a cada 2 s (F11.3): o que os agentes puxam aparece sem recarregar. */
 const EVERY_MS = 2000;
+/** Limite de trabalhadores do orquestrador automático (hub_core::kanban::MAX_WORKERS). */
+const MAX_WORKERS = 4;
 
 const columns: { id: KanbanColumn; label: string }[] = [
   { id: "backlog", label: "Backlog" },
@@ -128,6 +131,16 @@ export function KanbanBoard() {
   }
 
   const cards = board?.cards ?? [];
+  const orchestrator = board?.orchestrator ?? { enabled: false, max_workers: 1 };
+
+  /** Liga/desliga o orquestrador automático (F11.11); ligado, o hubd já abre os primeiros. */
+  function setOrchestrator(enabled: boolean, maxWorkers: number) {
+    void act(async () =>
+      setBoard(
+        await client.setOrchestrator(profile, project, { enabled, max_workers: maxWorkers }),
+      ),
+    );
+  }
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={`Quadro de ${project}`}>
@@ -140,6 +153,40 @@ export function KanbanBoard() {
           </span>
         )}
         <div className="ml-auto flex gap-2">
+          <div className="flex items-center overflow-hidden rounded-lg border border-line">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={orchestrator.enabled}
+              disabled={board === null}
+              onClick={() => setOrchestrator(!orchestrator.enabled, orchestrator.max_workers)}
+              title="Ligado, o hubd abre trabalhadores sozinho para os cards de agente do backlog"
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm ${
+                orchestrator.enabled
+                  ? "bg-violet-500/25 text-violet-100 hover:bg-violet-500/35"
+                  : "bg-white/5 text-slate-200 hover:bg-white/10"
+              }`}
+            >
+              <Bot className="size-4" /> Orquestrador{" "}
+              {orchestrator.enabled ? "ligado" : "desligado"}
+            </button>
+            <select
+              aria-label="Trabalhadores ao mesmo tempo"
+              title="Quantas tarefas em fazendo ao mesmo tempo, no máximo"
+              value={orchestrator.max_workers}
+              disabled={board === null}
+              onChange={(event) =>
+                setOrchestrator(orchestrator.enabled, Number(event.target.value))
+              }
+              className="border-l border-line bg-surface-strong px-2 py-1.5 text-sm text-slate-200"
+            >
+              {Array.from({ length: MAX_WORKERS }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {n}×
+                </option>
+              ))}
+            </select>
+          </div>
           <button
             type="button"
             onClick={() =>
@@ -183,6 +230,11 @@ export function KanbanBoard() {
       {error && (
         <p className="border-b border-line bg-rose-950/40 px-5 py-2 font-mono text-xs text-rose-300">
           {error}
+        </p>
+      )}
+      {orchestrator.enabled && board?.orchestrator_error && (
+        <p className="border-b border-line bg-amber-950/40 px-5 py-2 font-mono text-xs text-amber-200">
+          Orquestrador: {board.orchestrator_error}
         </p>
       )}
       <div className="flex min-h-0 flex-1 flex-col">
@@ -268,6 +320,12 @@ export function KanbanBoard() {
                           em {holderLabel(card.holder, sessions)}
                         </p>
                       )}
+                      {column.id === "backlog" && (card.failures ?? 0) > 0 && (
+                        <p className="text-xs text-amber-300">
+                          Voltou {card.failures}× sem concluir: o orquestrador não puxa de novo
+                          sozinho.
+                        </p>
+                      )}
                       {card.commit && (
                         <p className="font-mono text-xs text-emerald-300">
                           {card.commit.slice(0, 7)}
@@ -286,6 +344,22 @@ export function KanbanBoard() {
                             <Play className="size-3.5" /> Mandar
                           </button>
                         )}
+                        {column.id === "backlog" &&
+                          card.kind === "agente" &&
+                          (card.failures ?? 0) > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void act(() =>
+                                  client.updateCard(profile, project, card.id, { failures: 0 }),
+                                )
+                              }
+                              title="Zera as voltas: o orquestrador automático pode puxar de novo"
+                              className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                            >
+                              <RotateCcw className="size-3.5" /> Tentar de novo
+                            </button>
+                          )}
                         {column.id === "fazendo" && card.holder && (
                           <button
                             type="button"

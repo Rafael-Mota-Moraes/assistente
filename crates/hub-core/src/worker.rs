@@ -282,6 +282,7 @@ mod tests {
             column: Column::Fazendo,
             holder: None,
             commit: None,
+            failures: 0,
             created_at: 1,
         }
     }

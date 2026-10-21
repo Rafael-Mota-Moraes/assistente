@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import type { KanbanCard, KanbanDraft, KanbanKind, KanbanPriority } from "../../bridge/types";
 
@@ -105,17 +105,21 @@ export function CardDialog({
 
         <label className="flex flex-col gap-1 text-sm text-slate-300">
           Prioridade
-          <select
-            value={priority}
-            onChange={(event) => setPriority(event.target.value as KanbanPriority)}
-            className="rounded-lg border border-line bg-black/30 px-3 py-2 text-white outline-none"
-          >
-            {priorities.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <span className="relative">
+            {/* Sem aparência nativa: a lista e a seta seguem o tema escuro do app. */}
+            <select
+              value={priority}
+              onChange={(event) => setPriority(event.target.value as KanbanPriority)}
+              className="w-full scheme-dark appearance-none rounded-lg border border-line bg-black/30 py-2 pr-9 pl-3 text-white outline-none focus:border-accent/60 [&>option]:bg-panel"
+            >
+              {priorities.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-slate-400" />
+          </span>
         </label>
 
         <fieldset className="flex flex-col gap-2 text-sm text-slate-300">

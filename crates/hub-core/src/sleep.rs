@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::path::Path;
 
 const PROMPT_TEMPLATE: &str = include_str!("sleep_prompt.md");
+const QUADRO_PROMPT_TEMPLATE: &str = include_str!("quadro_prompt.md");
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -14,6 +15,8 @@ pub struct ProjectConfig {
     pub sleep: SleepConfig,
     #[serde(default)]
     pub jail: JailConfig,
+    #[serde(default)]
+    pub workers: crate::worker::WorkersConfig,
 }
 
 /// Opções do ai-jail por projeto (spec 05). Hoje só Docker para `./dev`.
@@ -26,6 +29,9 @@ pub struct JailConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SleepConfig {
+    /// `backlog` (padrão: o primeiro `- [ ]` do arquivo) ou `quadro` (uma tarefa `agente` do
+    /// quadro por iteração, F11.4). Qualquer outro valor conta como `backlog`.
+    pub source: String,
     pub backlog: String,
     pub section: String,
     pub check: String,
@@ -39,6 +45,7 @@ pub struct SleepConfig {
 impl Default for SleepConfig {
     fn default() -> Self {
         Self {
+            source: "backlog".into(),
             backlog: "docs/FUNCIONALIDADES.md".into(),
             section: String::new(),
             check: "./dev just check".into(),
@@ -48,6 +55,13 @@ impl Default for SleepConfig {
             model: String::new(),
             extra_instructions: String::new(),
         }
+    }
+}
+
+impl SleepConfig {
+    /// O dorme tira as tarefas do quadro (F11.4), não do backlog.
+    pub fn uses_quadro(&self) -> bool {
+        self.source.trim() == "quadro"
     }
 }
 
@@ -66,6 +80,36 @@ pub fn jail_config_at(project_root: &Path) -> JailConfig {
     ProjectConfig::parse(&text)
         .map(|c| c.jail)
         .unwrap_or_default()
+}
+
+/// `[workers]` do `.assistente.toml`; ausente ou inválido → padrões (sem modelos: o botão
+/// "Mandar" pede o modelo na hora).
+pub fn workers_config_at(project_root: &Path) -> crate::worker::WorkersConfig {
+    let path = project_root.join(".assistente.toml");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return crate::worker::WorkersConfig::default();
+    };
+    ProjectConfig::parse(&text)
+        .map(|c| c.workers)
+        .unwrap_or_default()
+}
+
+/// Prompt do modo quadro: o contrato sem a escolha pelo backlog. O `dorme` anexa a tarefa de
+/// cada iteração (seção "TAREFA DO QUADRO").
+pub fn render_quadro_prompt(config: &SleepConfig, base: &str, briefing: &str) -> String {
+    let extra = match config.extra_instructions.trim() {
+        "" => String::new(),
+        text => format!("\nREGRAS DO PROJETO:\n{text}\n"),
+    };
+    let briefing = match briefing.trim() {
+        "" => String::new(),
+        text => format!("\nCONTEXTO DA MEMÓRIA (ai-memory, exportado ao iniciar):\n{text}\n"),
+    };
+    QUADRO_PROMPT_TEMPLATE
+        .replace("@CHECK@", &config.check)
+        .replace("@BASE@", base)
+        .replace("@EXTRA@", &extra)
+        .replace("@BRIEFING@", &briefing)
 }
 
 /// Formata o snapshot de briefing do ai-memory (`GET
@@ -151,6 +195,26 @@ mod tests {
     use super::*;
 
     const EXAMPLE: &str = include_str!("../../../config/projeto.exemplo.toml");
+
+    #[test]
+    fn quadro_is_opt_in_and_its_prompt_has_no_backlog_choice() {
+        let config = ProjectConfig::parse(EXAMPLE).unwrap();
+        assert_eq!(config.sleep.source, "backlog");
+        assert!(!config.sleep.uses_quadro());
+        let quadro = ProjectConfig::parse("[sleep]\nsource = \"quadro\"\n").unwrap();
+        assert!(quadro.sleep.uses_quadro());
+
+        let text = render_quadro_prompt(&quadro.sleep, "dorme/2026-01-01", "");
+        assert!(text.contains("TAREFA DO QUADRO"));
+        assert!(text.contains("agente/<id-minusculo>"));
+        assert!(
+            !text.contains("@BASE@") && !text.contains("@CHECK@"),
+            "sobrou placeholder"
+        );
+        assert!(!text.contains("PRIMEIRO item"));
+        assert!(!text.contains("docs/FUNCIONALIDADES.md"));
+        assert!(text.contains("./dev just check"));
+    }
 
     #[test]
     fn example_project_config_parses() {

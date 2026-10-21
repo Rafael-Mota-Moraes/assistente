@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Testes do vm/trabalhador (F11.6): opencode e fora-do-jail falsos, repo git temporário.
+# Roda no `just check`. Spec: docs/specs/10-kanban-e-trabalhadores.md
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TRAB="$ROOT/vm/trabalhador"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+falhas=0
+
+ok() { echo "ok: $*"; }
+falha() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
+
+# opencode falso: o modelo "bom" faz um commit; "sujo" commita e deixa lixo; os outros falham.
+cat >"$work/opencode" <<'FAKE'
+#!/usr/bin/env bash
+modelo=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = -m ]; then modelo="$2"; fi
+  shift
+done
+echo "$modelo" >>"$CHAMADAS"
+case "$modelo" in
+  bom) echo x >>arquivo.txt; git add arquivo.txt; git commit -qm "feito por bom"; exit 0 ;;
+  sujo) echo x >>arquivo.txt; git add arquivo.txt; git commit -qm "parcial"; echo y >lixo.txt; exit 0 ;;
+  *) exit 1 ;;
+esac
+FAKE
+# fora-do-jail falso: só grava a chamada.
+cat >"$work/fora" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >>"$CHAMADAS"
+FAKE
+chmod +x "$work/opencode" "$work/fora"
+
+repo_novo() { # <nome> → repo com um commit inicial
+  local dir="$work/$1"
+  mkdir -p "$dir"
+  git -C "$dir" init -q -b agente/T3
+  git -C "$dir" config user.email t@t
+  git -C "$dir" config user.name t
+  git -C "$dir" commit -q --allow-empty -m inicial
+  echo "$dir"
+}
+
+rodar() { # <repo> <modelos> <tentativas> → código de saída do trabalhador
+  local repo="$1"
+  echo "prompt da tarefa" >"$work/prompt.md"
+  rm -f "$work/chamadas" "$work/log"
+  (
+    cd "$repo"
+    AGENTE_TAREFA=T3 \
+    AGENTE_MODELOS="$2" \
+    AGENTE_TENTATIVAS="$3" \
+    AGENTE_ESPERA=0 \
+    AGENTE_MAX_MIN=1 \
+    AGENTE_PROMPT_FILE="$work/prompt.md" \
+    AGENTE_LOG="$work/log" \
+    AGENTE_OPENCODE="$work/opencode" \
+    ASSISTENTE_FORA_DO_JAIL="$work/fora" \
+    CHAMADAS="$work/chamadas" \
+      bash "$TRAB" >/dev/null 2>&1
+  ) && echo 0 || echo $?
+}
+
+# 1) O primeiro modelo esgota as tentativas; o reserva conclui: done com o commit dele.
+repo="$(repo_novo concluir)"
+rc="$(rodar "$repo" "ruim bom" 2)"
+sha="$(git -C "$repo" rev-parse HEAD)"
+if [ "$rc" = 0 ] && grep -qx "kanban done T3 --commit $sha" "$work/chamadas" \
+  && [ "$(grep -c '^ruim$' "$work/chamadas")" = 2 ] && grep -q 'ruim esgotou' "$work/log"; then
+  ok "modelo de reserva conclui e marca o commit"
+else
+  falha "reserva: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
+fi
+
+# 2) Tudo falha: a tarefa volta ao backlog e o trabalhador sai com erro.
+repo="$(repo_novo esgotar)"
+rc="$(rodar "$repo" "ruim pior" 1)"
+if [ "$rc" = 1 ] && grep -qx "kanban release T3" "$work/chamadas" \
+  && ! grep -q 'kanban done' "$work/chamadas"; then
+  ok "sem sucesso devolve a tarefa ao backlog"
+else
+  falha "esgotar: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
+fi
+
+# 3) Commit com lixo na árvore não conta como progresso.
+repo="$(repo_novo sujo)"
+rc="$(rodar "$repo" "sujo" 1)"
+if [ "$rc" = 1 ] && grep -qx "kanban release T3" "$work/chamadas"; then
+  ok "árvore suja não é progresso"
+else
+  falha "sujo: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
+fi
+
+if [ "$falhas" -gt 0 ]; then
+  echo "$falhas falha(s) em teste-trabalhador.sh" >&2
+  exit 1
+fi
+echo "teste-trabalhador.sh: tudo ok"

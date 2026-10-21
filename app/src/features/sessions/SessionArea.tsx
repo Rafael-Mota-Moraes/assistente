@@ -1,8 +1,17 @@
-import { Bot, FileCode2, RotateCcw, SquareChevronRight, TerminalSquare, X } from "lucide-react";
+import {
+  Bot,
+  FileCode2,
+  LayoutGrid,
+  RotateCcw,
+  SquareChevronRight,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { AgentKind, SessionInfo } from "../../bridge/types";
 import { useAppStore, visibleProjectSessions } from "../../store";
 import { EditorPanel } from "../editor/EditorPanel";
+import { KanbanBoard } from "../kanban/KanbanBoard";
 import { claudeLoginCommand, endSession, openSession } from "./actions";
 import { reopenTab } from "./shortcuts";
 import { TerminalView } from "./TerminalView";
@@ -53,6 +62,7 @@ export function SessionArea() {
   const profile = profiles.find((p) => p.id === activeProfile);
   const color = profile?.color ?? "#a78bfa";
   const [showEditor, setShowEditor] = useState(false);
+  const [showBoard, setShowBoard] = useState(false);
   const claudeWithoutLogin = profile?.claude_login === false;
 
   if (hubError) {
@@ -104,6 +114,18 @@ export function SessionArea() {
           ))}
           <button
             type="button"
+            onClick={() => setShowBoard((v) => !v)}
+            title="Quadro de tarefas do projeto: manual ou para o agente (F11)"
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+              showBoard
+                ? "border-accent/60 bg-accent/20 text-white"
+                : "border-line bg-white/5 text-slate-200 hover:bg-white/10"
+            }`}
+          >
+            <LayoutGrid className="size-4" /> Quadro
+          </button>
+          <button
+            type="button"
             onClick={() => setShowEditor((v) => !v)}
             title="Editar arquivos do projeto e ver diffs"
             className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
@@ -131,7 +153,9 @@ export function SessionArea() {
           {actionError}
         </p>
       )}
-      {showEditor ? (
+      {showBoard ? (
+        <KanbanBoard onClose={() => setShowBoard(false)} />
+      ) : showEditor ? (
         <EditorPanel onClose={() => setShowEditor(false)} />
       ) : projectSessions.length === 0 ? (
         <Empty title="Nenhuma sessão aberta">

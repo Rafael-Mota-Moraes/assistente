@@ -621,14 +621,16 @@ const JAIL_CONFIG_EXCLUDE: &str = "/.ai-jail";
 
 /// Põe `JAIL_CONFIG_EXCLUDE` no `info/exclude` do repo se ainda não estiver lá.
 pub async fn exclude_jail_config(project_dir: &Path) -> Result<()> {
+    exclude_line(project_dir, JAIL_CONFIG_EXCLUDE).await
+}
+
+/// Põe `line` no `info/exclude` do repo se ainda não estiver lá (F0.5 e os worktrees, F11.6).
+pub async fn exclude_line(project_dir: &Path, line: &str) -> Result<()> {
     // `--git-path` acerta também em worktrees (aí o caminho volta absoluto).
     let rel = git(project_dir, &["rev-parse", "--git-path", "info/exclude"]).await?;
     let path = project_dir.join(rel);
     let current = std::fs::read_to_string(&path).unwrap_or_default();
-    if current
-        .lines()
-        .any(|line| line.trim() == JAIL_CONFIG_EXCLUDE)
-    {
+    if current.lines().any(|existing| existing.trim() == line) {
         return Ok(());
     }
     if let Some(parent) = path.parent() {
@@ -639,7 +641,7 @@ pub async fn exclude_jail_config(project_dir: &Path) -> Result<()> {
     } else {
         "\n"
     };
-    std::fs::write(&path, format!("{current}{sep}{JAIL_CONFIG_EXCLUDE}\n"))
+    std::fs::write(&path, format!("{current}{sep}{line}\n"))
         .with_context(|| format!("gravando {}", path.display()))
 }
 
@@ -752,6 +754,8 @@ pub struct StartSleep<'a> {
     pub date: &'a str,
     pub prompt: &'a str,
     pub limits: SleepLimits,
+    /// Tarefas do quadro (F11.4): o `dorme` puxa uma por iteração em vez do backlog.
+    pub quadro: bool,
     /// Produção: `dorme` (PATH do notebook). Testes: caminho do script no repo.
     pub dorme_command: &'a str,
     /// Env extra do tmux (testes: `AGENTE_OPENCODE` falso, `AGENTE_JAIL=""`).
@@ -815,6 +819,9 @@ pub async fn start_sleep(opts: StartSleep<'_>) -> Result<StartedSleep, StartSlee
         // ~/.opencode/bin, fora do PATH de shells não interativos (spec 07).
         "-e \"PATH=$HOME/.local/bin:$HOME/.opencode/bin:$PATH\"".to_owned(),
     ];
+    if opts.quadro {
+        envs.push(format!("-e \"AGENTE_QUADRO={}\"", hub_core::kanban::FILE));
+    }
     if !opts.limits.model.is_empty() {
         validate(&opts.limits.model, "modelo").map_err(fail)?;
         envs.push(format!("-e \"AGENTE_MODEL={}\"", opts.limits.model));

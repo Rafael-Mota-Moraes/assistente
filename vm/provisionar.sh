@@ -186,6 +186,9 @@ echo "==> fora-do-jail (cliente da API dos agentes, F9.6)"
 install -d -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR/.local/lib/assistente"
 install -m755 -o "$USER_NAME" -g "$USER_NAME" /tmp/assistente/fora-do-jail \
   "$HOME_DIR/.local/lib/assistente/fora-do-jail"
+# Trabalhador do quadro (F11.6): roda dentro do jail, no worktree da tarefa.
+install -m755 -o "$USER_NAME" -g "$USER_NAME" /tmp/assistente/trabalhador \
+  "$HOME_DIR/.local/lib/assistente/trabalhador"
 
 echo "==> repo do Assistente para o atualizador (F8.5)"
 # Clone limpo do bundle enviado pelo `bin/assistente vm criar`. O atualizador roda deste repo.

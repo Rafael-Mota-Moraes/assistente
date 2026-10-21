@@ -48,6 +48,7 @@ export function ProjectList() {
                     .length
                 }
               />
+              <KanbanCount count={project.kanban_pendentes} />
               <PendingCount
                 count={
                   execRequests.filter(
@@ -106,6 +107,19 @@ function PendingCount({ count }: { count: number }) {
     <span
       className="rounded-full bg-amber-500/25 px-1.5 text-[10px] font-semibold text-amber-200"
       title={`${count} pedido(s) para rodar fora do jail`}
+    >
+      {count}
+    </span>
+  );
+}
+
+/** Tarefas do quadro ainda não feitas (F11.3). */
+function KanbanCount({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <span
+      className="rounded-full bg-violet-500/25 px-1.5 text-[10px] font-semibold text-violet-200"
+      title={`${count} tarefa(s) no quadro para fazer`}
     >
       {count}
     </span>

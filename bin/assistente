@@ -136,6 +136,7 @@ vm_provisionar() {
   incus file push -q "$ROOT/vm/provisionar.sh" "$name/tmp/assistente/provisionar.sh"
   incus file push -q "$ROOT/vm/ai-memory.service" "$name/tmp/assistente/ai-memory.service"
   incus file push -q "$ROOT/vm/fora-do-jail" "$name/tmp/assistente/fora-do-jail"
+  incus file push -q "$ROOT/vm/trabalhador" "$name/tmp/assistente/trabalhador"
   # O atualizador (F8.5) precisa do repo com git: manda um bundle com os commits e a VM clona.
   local bundle_dir
   bundle_dir="$(mktemp -d)"

@@ -22,6 +22,7 @@ check: deps
     just teste-dorme
     just teste-backup
     just teste-atualizar
+    just teste-trabalhador
     just idade-crates
 
 # Formata Rust e frontend
@@ -36,7 +37,7 @@ test: deps
 
 # Lint dos scripts bash
 shellcheck:
-    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh vm/atualizar.sh vm/teste-atualizar.sh vm/fora-do-jail notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
+    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh vm/atualizar.sh vm/teste-atualizar.sh vm/fora-do-jail vm/trabalhador vm/teste-trabalhador.sh notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
 
 # Loop do modo dormir com agentes falsos, sem IA (F6.1)
 teste-dorme:
@@ -45,6 +46,10 @@ teste-dorme:
 # Backup/restauração com incus falso, sem VM (F7.1)
 teste-backup:
     bash bin/teste-backup.sh
+
+# Trabalhador do quadro com opencode e fora-do-jail falsos (F11.6)
+teste-trabalhador:
+    bash vm/teste-trabalhador.sh
 
 # Atualizador da VM com repositório e serviço falsos, sem VM (F8.5)
 teste-atualizar:

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { openInCursor } from "../../bridge/host";
 import type { HubClient } from "../../bridge/hub";
@@ -11,10 +11,11 @@ vi.mock("../../bridge/host", () => ({
   openInCursor: vi.fn(async () => {}),
 }));
 
-const project = (name: string, has_project_config = false): Project => ({
+const project = (name: string, has_project_config = false, kanban_pendentes = 0): Project => ({
   name,
   path: `/raiz/${name}`,
   has_project_config,
+  kanban_pendentes,
 });
 
 const session = (project: string, profile = "pessoal"): SessionInfo => ({
@@ -141,5 +142,14 @@ describe("ProjectList", () => {
     await waitFor(() =>
       expect(useAppStore.getState().toast).toBe("não consegui abrir o Cursor: program not found"),
     );
+  });
+  it("mostra quantas tarefas do quadro faltam em cada projeto", async () => {
+    const { hub } = fakeHub({ pessoal: [project("game", false, 3), project("site")] });
+    connect(hub);
+    render(<ProjectList />);
+    const game = await screen.findByRole("button", { name: /game/ });
+    expect(within(game).getByTitle("3 tarefa(s) no quadro para fazer")).toHaveTextContent("3");
+    const site = screen.getByRole("button", { name: /site/ });
+    expect(within(site).queryByTitle(/no quadro/)).toBeNull();
   });
 });

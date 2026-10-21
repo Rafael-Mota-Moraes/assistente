@@ -5,6 +5,7 @@
 use crate::config::{Config, Profile, is_valid_id};
 use crate::project_settings::ProjectSettings;
 use crate::sleep::jail_config_at;
+use crate::worker::WorkerRun;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -94,6 +95,8 @@ struct JailOptions<'a> {
     full_network: bool,
     allow_hosts: &'a [String],
     exec_port: Option<u16>,
+    /// Comando que roda dentro do jail (o agente, ou o `trabalhador`).
+    command: &'a [String],
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -137,6 +140,30 @@ impl LaunchPlan {
         seq: u32,
         options: &LaunchOptions,
     ) -> Result<Self, LaunchError> {
+        Self::assemble(config, home, spec, seq, options, None)
+    }
+
+    /// Sessão de trabalhador (F11.6): o opencode roda `vm/trabalhador` no worktree da tarefa,
+    /// no mesmo jail de um agente. Os arquivos da execução ficam em `worker::files`.
+    pub fn build_worker(
+        config: &Config,
+        home: &Path,
+        spec: &SessionSpec,
+        seq: u32,
+        options: &LaunchOptions,
+        run: &WorkerRun,
+    ) -> Result<Self, LaunchError> {
+        Self::assemble(config, home, spec, seq, options, Some(run))
+    }
+
+    fn assemble(
+        config: &Config,
+        home: &Path,
+        spec: &SessionSpec,
+        seq: u32,
+        options: &LaunchOptions,
+        worker: Option<&WorkerRun>,
+    ) -> Result<Self, LaunchError> {
         let profile = config
             .profile(&spec.profile)
             .ok_or_else(|| LaunchError::UnknownProfile(spec.profile.clone()))?;
@@ -147,6 +174,7 @@ impl LaunchPlan {
             return Err(LaunchError::InvalidProjectName(spec.project.clone()));
         }
         let data_dir = profile_data_dir(home, &spec.profile);
+        let session = tmux_session_name(&spec.profile, &spec.project, spec.agent, seq);
         let mut env = profile_env(config, profile, &data_dir);
         let exec = options
             .exec
@@ -171,22 +199,37 @@ impl LaunchPlan {
                 env.push(("BASH_MAX_TIMEOUT_MS".to_owned(), "1800000".to_owned()));
             }
         }
-        let cwd = profile.root.join(&spec.project);
+        let mut cwd = profile.root.join(&spec.project);
         let argv = if spec.agent == AgentKind::Shell {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
             vec!["bash".to_owned(), "-l".to_owned()]
         } else {
+            let command = match worker {
+                Some(run) => {
+                    cwd = run.worktree.clone();
+                    let files = crate::worker::files(&data_dir, &session);
+                    env.extend(worker_env(run, &files));
+                    vec![
+                        exec_client_dir(home)
+                            .join("trabalhador")
+                            .display()
+                            .to_string(),
+                    ]
+                }
+                None => agent_command(spec.agent),
+            };
             let settings = &options.settings;
             let jail = JailOptions {
                 docker: settings.docker || jail_config_at(&cwd).docker,
                 full_network: settings.full_network,
                 allow_hosts: &settings.allow_hosts,
                 exec_port: exec.map(|e| e.port),
+                command: &command,
             };
             jail_argv(config, home, profile, &data_dir, &env, spec.agent, &jail)
         };
         Ok(Self {
-            tmux_session: tmux_session_name(&spec.profile, &spec.project, spec.agent, seq),
+            tmux_session: session,
             cwd,
             argv,
             env,
@@ -298,13 +341,34 @@ fn jail_argv(
         argv.push(key.clone());
     }
     argv.push("--".to_owned());
-    argv.push(agent.id().to_owned());
-    // O opencode 2 roda como cliente de um servidor em segundo plano compartilhado, que não
-    // sobrevive ao jail: com `--standalone` cada sessão sobe o seu.
-    if agent == AgentKind::Opencode {
-        argv.push("--standalone".to_owned());
-    }
+    argv.extend(jail.command.iter().cloned());
     argv
+}
+
+/// Comando do agente dentro do jail. O opencode 2 roda como cliente de um servidor em segundo
+/// plano compartilhado, que não sobrevive ao jail: com `--standalone` cada sessão sobe o seu.
+fn agent_command(agent: AgentKind) -> Vec<String> {
+    let mut command = vec![agent.id().to_owned()];
+    if agent == AgentKind::Opencode {
+        command.push("--standalone".to_owned());
+    }
+    command
+}
+
+/// Variáveis que o `vm/trabalhador` lê (env do tmux, passadas ao jail com `--env`).
+fn worker_env(run: &WorkerRun, files: &crate::worker::WorkerFiles) -> Vec<(String, String)> {
+    vec![
+        ("AGENTE_TAREFA".to_owned(), run.task.clone()),
+        ("AGENTE_MODELOS".to_owned(), run.models.join(" ")),
+        ("AGENTE_TENTATIVAS".to_owned(), run.attempts.to_string()),
+        ("AGENTE_MAX_MIN".to_owned(), run.max_minutes.to_string()),
+        ("AGENTE_ESPERA".to_owned(), run.wait_secs.to_string()),
+        (
+            "AGENTE_PROMPT_FILE".to_owned(),
+            files.prompt.display().to_string(),
+        ),
+        ("AGENTE_LOG".to_owned(), files.log.display().to_string()),
+    ]
 }
 
 fn profile_env(config: &Config, profile: &Profile, data_dir: &Path) -> Vec<(String, String)> {
@@ -609,6 +673,62 @@ mod tests {
             settings,
             exec: None,
         }
+    }
+
+    #[test]
+    fn worker_runs_the_trabalhador_in_the_worktree_inside_the_jail() {
+        let (config, home) = setup();
+        let options = LaunchOptions {
+            settings: ProjectSettings::default(),
+            exec: Some(ExecAccess {
+                port: 7879,
+                token: "f0f0segredo".into(),
+            }),
+        };
+        let run = WorkerRun {
+            task: "T7".into(),
+            models: vec!["x/a".into(), "x/b".into()],
+            attempts: 2,
+            max_minutes: 5,
+            wait_secs: 0,
+            worktree: PathBuf::from(
+                "/home/rafa/Documentos/pessoal/projetos/x/.assistente/worktrees/T7",
+            ),
+        };
+        let plan = LaunchPlan::build_worker(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Opencode),
+            1,
+            &options,
+            &run,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.cwd,
+            PathBuf::from("/home/rafa/Documentos/pessoal/projetos/x/.assistente/worktrees/T7")
+        );
+        assert_eq!(plan.tmux_session, "pessoal--x--opencode-1");
+        assert_eq!(
+            plan.argv.last().map(String::as_str),
+            Some("/home/rafa/.local/lib/assistente/trabalhador")
+        );
+        assert!(!plan.argv.iter().any(|arg| arg == "--standalone"));
+        assert_eq!(env(&plan, "AGENTE_TAREFA"), Some("T7"));
+        assert_eq!(env(&plan, "AGENTE_MODELOS"), Some("x/a x/b"));
+        assert_eq!(env(&plan, "AGENTE_TENTATIVAS"), Some("2"));
+        assert_eq!(
+            env(&plan, "AGENTE_PROMPT_FILE"),
+            Some("/home/rafa/.assistente/perfis/pessoal/trabalhadores/pessoal--x--opencode-1.md")
+        );
+        assert_eq!(
+            env(&plan, "AGENTE_LOG"),
+            Some("/home/rafa/.assistente/perfis/pessoal/trabalhadores/pessoal--x--opencode-1.log")
+        );
+        // Mesmo jail: o env do trabalhador passa com `--env`, e o token continua fora da linha.
+        let argv = plan.argv.join(" ");
+        assert!(argv.contains("--env AGENTE_MODELOS "), "{argv}");
+        assert!(!argv.contains("f0f0segredo"), "o token vazou: {argv}");
     }
 
     #[test]

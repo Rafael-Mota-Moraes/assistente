@@ -6,6 +6,9 @@
 docker = false
 
 [sleep]
+# De onde o modo dormir tira as tarefas: "backlog" (abaixo) ou "quadro" (cards `agente` do
+# .assistente/kanban.json, uma por iteração; docs/specs/10-kanban-e-trabalhadores.md).
+source = "backlog"
 # Lista de tarefas no formato de docs/FUNCIONALIDADES.md: itens "- [ ]" com ID, "Pronto quando"
 # e "Como testar". O agente pega o primeiro item [ ] da seção (ou do arquivo, se vazio).
 backlog = "docs/FUNCIONALIDADES.md"
@@ -22,3 +25,14 @@ model = ""
 # Regras extras do projeto que entram no prompt (além de ler CLAUDE.md/AGENTS.md).
 extra_instructions = """
 """
+
+[workers]
+# Trabalhadores do quadro (F11.6). Modelos do opencode, principal primeiro; os outros são reserva
+# quando o anterior falha. Nomes saem de `opencode models` (confira na VM).
+models = []
+# Tentativas por modelo antes de passar para o próximo.
+attempts = 3
+# Minutos máximos por tentativa.
+max_minutes = 60
+# Segundos de espera entre tentativas.
+wait_secs = 60

@@ -112,6 +112,25 @@ rodá-lo fora do jail:
   peça de novo.
 - Sem `ASSISTENTE_FORA_DO_JAIL` no ambiente, a sessão é de antes desse recurso: peça ao
   usuário para rodar o comando na aba Terminal do app.
+
+## Quadro do projeto (Assistente, F11)
+
+O quadro é `.assistente/kanban.json` no repo. Cada card tem um tipo: `manual` só roda quando o
+usuário manda (botão "Mandar"); `agente` foi marcado para o agente implementar.
+
+- `"$ASSISTENTE_FORA_DO_JAIL" kanban pull`: pega a próxima tarefa `agente` do backlog e a deixa
+  presa a esta sessão. Sem tarefa, responde `{"card": null}`: pare, não invente trabalho.
+  Termine a tarefa atual antes de puxar outra.
+- `"$ASSISTENTE_FORA_DO_JAIL" kanban done <id> --commit <sha>`: conclui uma tarefa que você
+  segura, com o commit que a fechou. `kanban release <id>` devolve ao backlog.
+- Orquestrador (só sessão do Claude): para uma tarefa que você puxou, abra um trabalhador com
+  `"$ASSISTENTE_FORA_DO_JAIL" kanban trabalhador <id> --modelos principal,reserva1,reserva2`.
+  O trabalhador roda o opencode no worktree da tarefa (`.assistente/worktrees/<id>`, branch
+  `agente/<id>`), troca para a reserva quando um modelo falha e devolve a tarefa se todos
+  falharem. Você acompanha pelas abas e não precisa reiniciar nada à mão. Os nomes dos modelos
+  saem de `opencode models`; confirme antes de usar.
+- Trabalhador: não marque a tarefa nem edite o quadro; o `trabalhador` faz isso pelo resultado
+  do git.
 MD
 )"
 BEGIN_MARK="<!-- assistente:fora-do-jail (gerado por vm/configurar-agentes.sh) -->"

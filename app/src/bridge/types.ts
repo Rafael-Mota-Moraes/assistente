@@ -48,7 +48,13 @@ export type ProfileView = {
   claude_login: boolean;
 };
 
-export type Project = { name: string; path: string; has_project_config: boolean };
+export type Project = {
+  name: string;
+  path: string;
+  has_project_config: boolean;
+  /** Tarefas do quadro ainda não feitas (backlog + fazendo), F11.3. */
+  kanban_pendentes: number;
+};
 
 export type ServiceStatus = {
   name: string;
@@ -148,6 +154,36 @@ export type ProjectSettingsView = {
   settings: ProjectSettings;
   /** `[jail] docker = true` no .assistente.toml do repo liga o Docker de qualquer jeito. */
   docker_from_project_file: boolean;
+};
+
+/** Quadro do projeto (F11): `.assistente/kanban.json` no repo, espelho de hubd `kanban`. */
+export type KanbanColumn = "backlog" | "fazendo" | "feito";
+/** `manual` só roda quando você manda; `agente` é puxado pelo orquestrador (F11.2). */
+export type KanbanKind = "manual" | "agente";
+export type KanbanPriority = "alta" | "normal" | "baixa";
+
+export type KanbanCard = {
+  id: string;
+  title: string;
+  description: string;
+  priority: KanbanPriority;
+  kind: KanbanKind;
+  column: KanbanColumn;
+  /** Sessão que segura a tarefa ("fazendo"). */
+  holder?: string;
+  commit?: string;
+  created_at: number;
+};
+
+export type KanbanBoard = { next: number; cards: KanbanCard[] };
+
+/** Campos de criar/editar; todos opcionais na edição. */
+export type KanbanDraft = {
+  title?: string;
+  description?: string;
+  priority?: KanbanPriority;
+  kind?: KanbanKind;
+  column?: KanbanColumn;
 };
 
 export type CollectedCommit = { hash: string; subject: string };

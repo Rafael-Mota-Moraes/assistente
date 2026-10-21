@@ -8,11 +8,85 @@
 # Roda na pasta atual (precisa ser dentro do projeto), com o env do perfil. Códigos de saída:
 # o do comando; 126 negado; 124 ninguém respondeu a tempo ou o comando estourou o timeout;
 # 125 o pedido se perdeu (hubd reiniciou) ou falhou ao iniciar; 2 uso errado / fora de sessão.
-# Spec: docs/specs/05-sandbox.md ("Fora do jail")
+# Spec: docs/specs/05-sandbox.md ("Fora do jail"); quadro e trabalhadores: docs/specs/10-kanban-e-trabalhadores.md
 set -euo pipefail
 
 die() { echo "fora-do-jail: $*" >&2; exit "${CODE:-2}"; }
 uso() { sed -n '4,5p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+# Quadro do projeto (F11.2): `fora-do-jail kanban pull|done|release|trabalhador`. Não passa pelo
+# app: é coordenação entre sessões (o que vai ao PC pede aprovação; isto não roda nada). Saída:
+# o JSON da resposta; erro, a mensagem do hubd no stderr e código 1 (2 = uso errado).
+kanban() {
+  local url="${ASSISTENTE_EXEC_URL:-}" token="${ASSISTENTE_EXEC_TOKEN:-}"
+  if [ -z "$url" ] || [ -z "$token" ]; then
+    die "fora de uma sessão do Assistente (sem ASSISTENTE_EXEC_URL/ASSISTENTE_EXEC_TOKEN)"
+  fi
+  local acao="${1:-}" id="" commit="" modelos=""
+  [ $# -gt 0 ] && shift
+  case "$acao" in
+    pull) ;;
+    done|release|trabalhador)
+      [ $# -gt 0 ] || die "$acao: falta o id da tarefa (ex.: T3)"
+      id="$1"
+      shift
+      ;;
+    *) uso_kanban ;;
+  esac
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --commit) [ $# -ge 2 ] || uso_kanban; commit="$2"; shift 2 ;;
+      --modelos) [ $# -ge 2 ] || uso_kanban; modelos="$2"; shift 2 ;;
+      *) uso_kanban ;;
+    esac
+  done
+  local path body
+  case "$acao" in
+    pull) path=/v1/kanban/pull ;;
+    done) path=/v1/kanban/done ;;
+    release) path=/v1/kanban/release ;;
+    trabalhador)
+      [ -n "$modelos" ] || die "trabalhador: informe --modelos principal,reserva1,reserva2"
+      path=/v1/workers
+      ;;
+  esac
+  body="$(python3 -c '
+import json, sys
+acao, task, commit, modelos = sys.argv[1:5]
+if acao == "done":
+    body = {"id": task, "commit": commit or None}
+elif acao == "release":
+    body = {"id": task}
+elif acao == "trabalhador":
+    body = {"task": task, "models": [m for m in modelos.split(",") if m]}
+else:
+    body = {}
+print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos")"
+  local response status json
+  response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+    --data-binary "$body" "$url$path")" || die "o hubd não respondeu em $url"
+  status="${response##*$'\n'}"
+  json="${response%$'\n'*}"
+  case "$status" in
+    200|201) echo "$json"; exit 0 ;;
+    401) CODE=1 die "token recusado: a sessão foi encerrada?" ;;
+    *) CODE=1 die "HTTP $status: $(python3 -c 'import json, sys
+try:
+    print(json.loads(sys.argv[1]).get("error", sys.argv[1]))
+except ValueError:
+    print(sys.argv[1])' "$json")" ;;
+  esac
+}
+uso_kanban() {
+  echo "uso: fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> --modelos m1,m2" >&2
+  exit 2
+}
+
+if [ "${1:-}" = kanban ]; then
+  shift
+  kanban "$@"
+fi
 
 timeout=""
 wait=1

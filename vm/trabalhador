@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# trabalhador — executa UMA tarefa do quadro (F11.6) num worktree próprio, dentro do ai-jail.
+# Quem roda é a sessão de trabalhador aberta pelo hubd; o env AGENTE_* vem de
+# crates/hub-core/src/session.rs (worker_env). Cada modelo de AGENTE_MODELOS (principal primeiro)
+# recebe AGENTE_TENTATIVAS tentativas. Progresso = commit novo com a árvore limpa: concluiu →
+# `kanban done` com o commit; esgotou todos os modelos → `kanban release` (volta ao backlog).
+# Spec: docs/specs/10-kanban-e-trabalhadores.md. Testado por vm/teste-trabalhador.sh (agente falso).
+set -u
+
+TAREFA="${AGENTE_TAREFA:?defina AGENTE_TAREFA (o hubd faz isso)}"
+MODELOS="${AGENTE_MODELOS:?defina AGENTE_MODELOS (o hubd faz isso)}"
+PROMPT_FILE="${AGENTE_PROMPT_FILE:?defina AGENTE_PROMPT_FILE (o hubd faz isso)}"
+LOG="${AGENTE_LOG:?defina AGENTE_LOG (o hubd faz isso)}"
+TENTATIVAS="${AGENTE_TENTATIVAS:-3}"
+MAX_MIN="${AGENTE_MAX_MIN:-60}"
+ESPERA="${AGENTE_ESPERA:-60}"
+OPENCODE="${AGENTE_OPENCODE:-opencode}"
+FORA="${ASSISTENTE_FORA_DO_JAIL:?sem o cliente fora-do-jail: a sessão não tem a API dos agentes}"
+PROMPT="$(cat "$PROMPT_FILE")"
+
+log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+
+# A tarefa é marcada pelo resultado do git, não pelo texto do agente (ver o prompt).
+antes="$(git rev-parse HEAD)"
+log "trabalhador na tarefa $TAREFA; modelos: $MODELOS"
+
+for modelo in $MODELOS; do
+  for tentativa in $(seq 1 "$TENTATIVAS"); do
+    log "tentativa $tentativa/$TENTATIVAS com $modelo (timeout ${MAX_MIN}m)"
+    timeout "${MAX_MIN}m" "$OPENCODE" run --auto -m "$modelo" "$PROMPT" >>"$LOG" 2>&1
+    rc=$?
+    log "opencode terminou com rc=$rc (124 = timeout)"
+    if [[ -z "$(git status --porcelain)" && "$(git rev-parse HEAD)" != "$antes" ]]; then
+      commit="$(git rev-parse HEAD)"
+      log "tarefa $TAREFA concluída em $commit"
+      "$FORA" kanban "done" "$TAREFA" --commit "$commit" >>"$LOG" 2>&1
+      exit 0
+    fi
+    log "sem commit novo com a árvore limpa; tentando de novo"
+    sleep "$ESPERA"
+  done
+  log "$modelo esgotou as $TENTATIVAS tentativas; próximo modelo"
+done
+
+log "todos os modelos falharam; devolvendo $TAREFA ao backlog"
+"$FORA" kanban release "$TAREFA" >>"$LOG" 2>&1
+exit 1

@@ -4,10 +4,12 @@
 //! Assim dá para testar tudo sem VM, tmux ou notebook.
 
 pub mod config;
+pub mod kanban;
 pub mod project;
 pub mod project_settings;
 pub mod session;
 pub mod sleep;
+pub mod worker;
 
 pub use config::{Config, ConfigError, Profile, expand_home};
 pub use project::{Project, discover_projects};
@@ -16,3 +18,4 @@ pub use session::{
     AgentKind, ExecAccess, LaunchOptions, LaunchPlan, SessionSpec, claude_logged_in,
     exec_client_dir, profile_data_dir,
 };
+pub use sleep::{jail_config_at, workers_config_at};

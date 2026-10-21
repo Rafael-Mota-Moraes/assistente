@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# dorme — modo "hora de dormir" no notebook: agente autônomo que roda tarefas do backlog
-# em loop, sem humano, até você intervir. Generalizado a partir do game/dorme.sh.
+# dorme — modo "hora de dormir" no notebook: agente autônomo que roda tarefas em loop, sem humano,
+# até você intervir. Generalizado a partir do game/dorme.sh.
 # Testado por notebook/teste-dorme.sh (agentes falsos no devenv). Spec: docs/specs/08-modo-dormir.md
 #
 # Quem chama é o hubd (via SSH, dentro de um tmux no notebook), já na raiz do clone do projeto
 # e na branch base `dorme/<data>`. O prompt vem pronto do hubd (hub-core/src/sleep_prompt.md).
 #   - Cada iteração = uma tarefa (`opencode run` com contexto limpo, dentro do ai-jail).
 #   - Progresso = merge na branch base; branches agente/* nunca são apagadas.
+#   - Modo quadro (AGENTE_QUADRO=.assistente/kanban.json, F11.4): cada iteração puxa a primeira
+#     tarefa `agente` do quadro. Com commit novo ela vira "feito" (com o commit); sem commit,
+#     volta ao backlog. Quadro sem tarefa para agente = para sem iterar.
 #
 # Parar (a qualquer momento, até pelo app):  touch "$AGENTE_STOP"
 # O loop também para sozinho se o agente escrever RELATORIO.md, deixar a árvore suja,
 # terminar fora da base ou não produzir progresso depois de N tentativas.
 #
 # Variáveis (o hubd preenche a partir do .assistente.toml do projeto):
-#   AGENTE_PROMPT_FILE obrigatório: prompt da iteração
+#   AGENTE_PROMPT_FILE obrigatório: prompt da iteração (o da tarefa vai junto no modo quadro)
+#   AGENTE_QUADRO      quadro do projeto na raiz do clone (vazio = backlog)
 #   AGENTE_STOP        arquivo de parada          (padrão ~/assistente/STOP)
 #   AGENTE_LOG         log                        (padrão ~/assistente/logs/<projeto>.log)
 #   AGENTE_MAX_MIN     minutos máx. por tarefa    (padrão 240)
@@ -32,20 +36,101 @@ TENTATIVAS="${AGENTE_TENTATIVAS:-3}"
 ESPERA="${AGENTE_ESPERA:-60}"
 JAIL="${AGENTE_JAIL-ai-jail}"
 OPENCODE="${AGENTE_OPENCODE:-opencode}"
+QUADRO="${AGENTE_QUADRO:-}"
+SESSAO="dorme"
 MODEL_ARG=()
 if [[ -n "${AGENTE_MODEL:-}" ]]; then MODEL_ARG=(-m "$AGENTE_MODEL"); fi
 RELATORIO="RELATORIO.md"
 BASE="$(git branch --show-current)"
-PROMPT="$(cat "$PROMPT_FILE")"
+# Ao lado do prompt base, sem depender da extensão do arquivo.
+ITER_FILE="$PROMPT_FILE.iter"
+TAREFA_FILE="$PROMPT_FILE.tarefa"
 
-RUN=("$OPENCODE" run --auto "${MODEL_ARG[@]}" "$PROMPT")
-if [[ -n "$JAIL" ]]; then RUN=("$JAIL" -- "${RUN[@]}"); fi
+# Quadro (F11.4): o JSON é editado aqui (python3 isolado, sem dependências) e cada mudança vira
+# um commit só do arquivo do quadro. Mesmas regras de hub-core/src/kanban.rs: a primeira tarefa
+# `agente` do backlog pela prioridade e depois pela criação; só quem segura conclui ou solta.
+read -r -d '' QUADRO_PY <<'PY' || true
+import json, os, sys
+op, path, sessao = sys.argv[1], sys.argv[2], sys.argv[3]
+ORDEM = {"alta": 0, "normal": 1, "baixa": 2}
+
+def carrega():
+    try:
+        with open(path) as f:
+            texto = f.read()
+    except FileNotFoundError:
+        return {"next": 1, "cards": []}
+    return json.loads(texto) if texto.strip() else {"next": 1, "cards": []}
+
+def grava(quadro):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(json.dumps(quadro, indent=2, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+
+quadro = carrega()
+cards = quadro.get("cards", [])
+if op == "pull":
+    candidatos = [c for c in cards if c.get("column") == "backlog" and c.get("kind") == "agente"]
+    if not candidatos:
+        sys.exit(0)
+    card = min(candidatos, key=lambda c: (ORDEM.get(c.get("priority", "normal"), 1),
+                                          c.get("created_at", 0), int(c["id"][1:])))
+    card["column"], card["holder"] = "fazendo", sessao
+    grava(quadro)
+    with open(sys.argv[4], "w") as f:
+        f.write(f"{card['id']}: {card['title']}\n\n{card.get('description', '')}\n")
+    print(card["id"])
+else:
+    task = sys.argv[4]
+    card = next((c for c in cards if c.get("id") == task), None)
+    if card is None or card.get("column") != "fazendo" or card.get("holder") != sessao:
+        sys.exit(f"quadro: {task} não está com {sessao}")
+    if op == "done":
+        card["column"], card["commit"] = "feito", sys.argv[5]
+    elif op == "release":
+        card["column"] = "backlog"
+    else:
+        sys.exit(f"operação desconhecida: {op}")
+    card.pop("holder", None)
+    grava(quadro)
+    print(task)
+PY
+
+log(){ echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+
+quadro_commit() { # <mensagem>: commita só o quadro, se ele mudou
+  [[ -f "$QUADRO" ]] || return 0
+  git add -- "$QUADRO"
+  if [[ -n "$(git status --porcelain -- "$QUADRO")" ]]; then
+    git commit -q -m "$1" -- "$QUADRO"
+  fi
+}
+
+quadro_pull() { # ecoa o id da tarefa desta iteração (vazio = quadro sem tarefa para agente)
+  local id
+  id="$(python3 -I -c "$QUADRO_PY" pull "$QUADRO" "$SESSAO" "$TAREFA_FILE")" || return 1
+  if [[ -n "$id" ]]; then quadro_commit "kanban: $id puxada por $SESSAO"; fi
+  printf '%s' "$id"
+}
+
+quadro_fecha() { # <done|release> <id> [commit]
+  if ! python3 -I -c "$QUADRO_PY" "$1" "$QUADRO" "$SESSAO" "$2" "${3:-}" >/dev/null; then
+    log "quadro: não consegui $1 a tarefa $2 (ela ainda está com $SESSAO?)"
+    return 1
+  fi
+  if [[ "$1" == "done" ]]; then
+    quadro_commit "kanban: $2 concluída"
+  else
+    quadro_commit "kanban: $2 devolvida ao backlog"
+  fi
+}
 
 mkdir -p "$(dirname "$LOG")"
-log(){ echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
 rm -f "$STOP"
 log "modo-dormir iniciado. projeto=$PROJETO base=$BASE"
+if [[ -n "$QUADRO" ]]; then log "fonte: quadro ($QUADRO)"; fi
 log "parar com: touch $STOP"
 
 TENTA=0
@@ -54,7 +139,20 @@ while [[ ! -f "$STOP" ]]; do
   if [[ -n "$(git status --porcelain)" ]]; then log "árvore suja — parando p/ revisão humana."; break; fi
   if [[ "$(git branch --show-current)" != "$BASE" ]]; then log "branch atual != $BASE — parando."; break; fi
 
+  PROMPT_ITER="$PROMPT_FILE"
+  ID=""
+  if [[ -n "$QUADRO" ]]; then
+    if ! ID="$(quadro_pull)"; then log "quadro: não consegui puxar uma tarefa — parando."; break; fi
+    if [[ -z "$ID" ]]; then log "quadro sem tarefas para agente — parando (nada para fazer)."; break; fi
+    { cat "$PROMPT_FILE"; printf '\n# TAREFA DO QUADRO\n\n'; cat "$TAREFA_FILE"; } >"$ITER_FILE"
+    PROMPT_ITER="$ITER_FILE"
+    log "tarefa do quadro: $ID"
+  fi
+
   antes=$(git rev-parse HEAD)
+  PROMPT="$(cat "$PROMPT_ITER")"
+  RUN=("$OPENCODE" run --auto "${MODEL_ARG[@]}" "$PROMPT")
+  if [[ -n "$JAIL" ]]; then RUN=("$JAIL" -- "${RUN[@]}"); fi
   log "tarefa: tentativa $((TENTA+1))/$TENTATIVAS (timeout ${MAX_MIN}m)"
   timeout "${MAX_MIN}m" "${RUN[@]}" >>"$LOG" 2>&1
   rc=$?
@@ -63,10 +161,19 @@ while [[ ! -f "$STOP" ]]; do
   if [[ -f "$RELATORIO" ]]; then log "agente sinalizou parada via RELATORIO.md."; break; fi
   if [[ -n "$(git status --porcelain)" ]]; then log "árvore suja após tarefa — parando."; break; fi
   if [[ "$(git branch --show-current)" != "$BASE" ]]; then log "agente terminou fora de $BASE — parando."; break; fi
-  if [[ "$(git rev-parse HEAD)" != "$antes" ]]; then TENTA=0; log "progresso registrado, próxima tarefa."; continue; fi
+  if [[ "$(git rev-parse HEAD)" != "$antes" ]]; then
+    TENTA=0
+    log "progresso registrado, próxima tarefa."
+    if [[ -n "$ID" ]]; then quadro_fecha "done" "$ID" "$(git rev-parse HEAD)" || break; fi
+    continue
+  fi
 
   # limpo e sem progresso: provável sorteio ruim do combo (erro do modelo/ferramenta).
   TENTA=$((TENTA+1))
+  if [[ -n "$ID" ]]; then
+    quadro_fecha release "$ID" || break
+    log "tarefa $ID sem commit: voltou ao backlog."
+  fi
   if [[ "$TENTA" -ge "$TENTATIVAS" ]]; then
     log "$TENTATIVAS tentativas sem progresso — desistindo p/ revisão."
     cat > "$RELATORIO" <<RELE

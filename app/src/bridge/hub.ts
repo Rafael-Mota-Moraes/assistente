@@ -7,6 +7,9 @@ import type {
   GitStatus,
   Health,
   HubConnection,
+  KanbanBoard,
+  KanbanCard,
+  KanbanDraft,
   MainApplyResult,
   MemoryStatus,
   NotebookStatus,
@@ -30,6 +33,10 @@ export class HubError extends Error {
   ) {
     super(message);
   }
+}
+
+function kanbanPath(profile: string, project: string): string {
+  return `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/kanban`;
 }
 
 function settingsPath(profile: string, project: string): string {
@@ -62,6 +69,52 @@ export class HubClient {
 
   projects(profile: string): Promise<Project[]> {
     return this.get(`/api/projects?profile=${encodeURIComponent(profile)}`);
+  }
+
+  /** Quadro do projeto (F11.1); soltar tarefas presas a sessões mortas acontece aqui. */
+  kanban(profile: string, project: string): Promise<KanbanBoard> {
+    return this.get(kanbanPath(profile, project));
+  }
+
+  createCard(profile: string, project: string, draft: KanbanDraft): Promise<KanbanCard> {
+    return this.request("POST", kanbanPath(profile, project), draft);
+  }
+
+  /** Edita um card ou move de coluna (`column`). */
+  updateCard(
+    profile: string,
+    project: string,
+    id: string,
+    draft: KanbanDraft,
+  ): Promise<KanbanCard> {
+    return this.request(
+      "PATCH",
+      `${kanbanPath(profile, project)}/${encodeURIComponent(id)}`,
+      draft,
+    );
+  }
+
+  async deleteCard(profile: string, project: string, id: string): Promise<void> {
+    await this.request("DELETE", `${kanbanPath(profile, project)}/${encodeURIComponent(id)}`);
+  }
+
+  /** Manda uma tarefa `manual` para um trabalhador (F11.6). `models` vazio = os do projeto. */
+  mandarCard(
+    profile: string,
+    project: string,
+    id: string,
+    models: string[] = [],
+  ): Promise<SessionInfo> {
+    return this.request(
+      "POST",
+      `${kanbanPath(profile, project)}/${encodeURIComponent(id)}/mandar`,
+      { models },
+    );
+  }
+
+  /** Relança um trabalhador com o mesmo modelo, no mesmo worktree (F11.6). */
+  restartWorker(session: string): Promise<SessionInfo> {
+    return this.request("POST", `/api/sessions/${encodeURIComponent(session)}/reiniciar`);
   }
 
   /** Configurações do projeto que afrouxam o jail (F9.2). */

@@ -3,6 +3,7 @@
 
 mod api;
 mod exec;
+mod kanban;
 mod memory;
 mod sessions;
 mod sleep;

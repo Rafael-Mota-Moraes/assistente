@@ -75,9 +75,7 @@ impl Tmux {
         let out = match self.run(&args(&["list-sessions", "-F", FORMAT])).await {
             Ok(out) => out,
             // Sem servidor tmux = nenhuma sessão.
-            Err(e) if e.contains("no server running") || e.contains("No such file") => {
-                return Ok(Vec::new());
-            }
+            Err(e) if no_server(&e) => return Ok(Vec::new()),
             Err(e) => return Err(e),
         };
         let mut sessions: Vec<SessionInfo> = out.lines().filter_map(parse_line).collect();
@@ -140,9 +138,7 @@ impl Tmux {
         let format = format!("#{{session_name}}{SEP}#{{@assistente_exec_token}}");
         let out = match self.run(&args(&["list-sessions", "-F", &format])).await {
             Ok(out) => out,
-            Err(e) if e.contains("no server running") || e.contains("No such file") => {
-                return Ok(None);
-            }
+            Err(e) if no_server(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
         let owner = out.lines().find_map(|line| {
@@ -160,6 +156,19 @@ impl Tmux {
             .await
             .map(|_| ())
     }
+}
+
+/// O erro do tmux que quer dizer "não há servidor": nenhum, ou um que acabou de encerrar (o
+/// socket ainda existe e recusa conexão, o que acontece ao matar a última sessão).
+fn no_server(error: &str) -> bool {
+    [
+        "no server running",
+        "No such file",
+        "Connection refused",
+        "server exited unexpectedly",
+    ]
+    .iter()
+    .any(|text| error.contains(text))
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {

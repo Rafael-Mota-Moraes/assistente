@@ -9,7 +9,7 @@ use axum::extract::{Path, Query, Request, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, delete, get, post};
+use axum::routing::{any, delete, get, patch, post};
 use axum::{Json, Router};
 use http_body_util::{BodyExt, Full};
 use hub_core::{
@@ -27,6 +27,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
+
+mod kanban;
 
 use crate::exec::{self, ExecError, ExecJob, ExecStore, ExecView, NewRequest};
 use crate::sessions::{SessionInfo, Tmux, new_exec_token, next_seq};
@@ -66,6 +68,8 @@ struct Inner {
     exec_port: Option<u16>,
     /// Valor do cookie da web UI do ai-memory (F5.5), sorteado a cada início do hubd.
     memory_session: String,
+    /// Serializa leitura-modificação-escrita do quadro de cada projeto (F11.1).
+    kanban_lock: tokio::sync::Mutex<()>,
     /// Só nos testes: troca o comando do atualizador (F8.5).
     update_command_override: Option<String>,
     /// Só nos testes: env extra do atualizador.
@@ -100,6 +104,7 @@ impl AppState {
             memory_session: new_exec_token().unwrap_or_default(),
             update_command_override: None,
             update_env_override: Vec::new(),
+            kanban_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -223,6 +228,19 @@ pub fn router(state: AppState) -> Router {
         .route("/api/exec", get(list_exec))
         .route("/api/exec/{id}/approve", post(approve_exec))
         .route("/api/exec/{id}/deny", post(deny_exec))
+        .route(
+            "/api/projects/{profile}/{project}/kanban",
+            get(kanban::list_cards).post(kanban::create_card),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/kanban/{id}",
+            patch(kanban::update_card).delete(kanban::delete_card),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/kanban/{id}/mandar",
+            post(kanban::mandar_card),
+        )
+        .route("/api/sessions/{id}/reiniciar", post(kanban::restart_worker))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     let mut public = Router::new()
@@ -248,6 +266,10 @@ pub fn agent_router(state: AppState) -> Router {
     Router::new()
         .route("/v1/exec", post(agent_submit))
         .route("/v1/exec/{id}", get(agent_result))
+        .route("/v1/kanban/pull", post(kanban::agent_pull))
+        .route("/v1/kanban/done", post(kanban::agent_done))
+        .route("/v1/kanban/release", post(kanban::agent_release))
+        .route("/v1/workers", post(kanban::agent_worker))
         .with_state(state)
 }
 
@@ -383,24 +405,46 @@ struct ProjectsQuery {
     profile: String,
 }
 
+/// Projeto na lista da UI: a descoberta (F1–F9) mais o que falta no quadro (F11.3).
+#[derive(Serialize)]
+struct ProjectView {
+    #[serde(flatten)]
+    project: Project,
+    /// Tarefas do quadro ainda não feitas (backlog + fazendo).
+    kanban_pendentes: usize,
+}
+
 async fn projects(
     State(state): State<AppState>,
     Query(query): Query<ProjectsQuery>,
-) -> Result<Json<Vec<Project>>, Response> {
+) -> Result<Json<Vec<ProjectView>>, Response> {
     let Some(profile) = state.0.config.profile(&query.profile) else {
         return Err(error(StatusCode::NOT_FOUND, "perfil desconhecido"));
     };
     let root = profile.root.clone();
-    tokio::task::spawn_blocking(move || discover_projects(&root))
-        .await
-        .map_err(|_| {
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "falha ao listar projetos",
-            )
-        })?
-        .map(Json)
-        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))
+    tokio::task::spawn_blocking(move || -> Result<Vec<ProjectView>, String> {
+        let projects = discover_projects(&root).map_err(|e| e.to_string())?;
+        Ok(projects
+            .into_iter()
+            .map(|project| {
+                // Quadro ilegível não derruba a lista: conta zero e o quadro mostra o erro.
+                let kanban_pendentes = crate::kanban::read_pending(&project.path);
+                ProjectView {
+                    project,
+                    kanban_pendentes,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|_| {
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "falha ao listar projetos",
+        )
+    })?
+    .map(Json)
+    .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))
 }
 
 #[derive(Serialize)]
@@ -885,9 +929,14 @@ async fn start_sleep(
         String::new()
     });
 
-    // 5. Prompt da iteração (template do hub-core).
-    let prompt =
-        hub_core::sleep::render_prompt(&project_config.sleep, &format!("dorme/{date}"), &briefing);
+    // 5. Prompt da iteração (template do hub-core): backlog, ou o quadro (F11.4).
+    let quadro = project_config.sleep.uses_quadro();
+    let base = format!("dorme/{date}");
+    let prompt = if quadro {
+        hub_core::sleep::render_quadro_prompt(&project_config.sleep, &base, &briefing)
+    } else {
+        hub_core::sleep::render_prompt(&project_config.sleep, &base, &briefing)
+    };
 
     // 5b. Sync da memória (wiki) para o notebook (F5.4), best-effort: o agente noturno
     //     consulta a réplica local; falha não trava o dormir.
@@ -919,6 +968,7 @@ async fn start_sleep(
         project: &request.project,
         date: &date,
         prompt: &prompt,
+        quadro,
         limits: SleepLimits {
             max_minutes: project_config.sleep.max_minutes,
             attempts: project_config.sleep.attempts,
@@ -1528,7 +1578,7 @@ fn apply_in_scratch(
 }
 
 /// Roda `git -C dir args`. Em falha, devolve a mensagem do git (stderr, ou stdout se vazio).
-fn git_out(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_out(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -2220,33 +2270,12 @@ async fn create_session(
     };
     let existing = inner.tmux.list().await.map_err(|e| internal(&e))?;
     let seq = next_seq(&existing, &spec);
-    // Arquivo inválido: a sessão nasce com o jail padrão (o mais fechado), não falha.
-    let settings = match load_settings(&inner.home) {
-        Ok(file) => file.get(&spec.profile, &spec.project),
-        Err(e) => {
-            tracing::warn!("configurações dos projetos ignoradas: {e}");
-            ProjectSettings::default()
-        }
-    };
-    // API dos agentes (F9.5): só com o `agent_listen` no ar e o cliente instalado (senão o
-    // `--map` do ai-jail apontaria para uma pasta que não existe). A aba Terminal não precisa.
-    let exec = match inner.exec_port {
-        Some(port)
-            if spec.agent != AgentKind::Shell
-                && exec_client_dir(&inner.home).join("fora-do-jail").exists() =>
-        {
-            match new_exec_token() {
-                Ok(token) => Some(ExecAccess { port, token }),
-                Err(e) => {
-                    tracing::warn!("sessão sem API dos agentes (token: {e})");
-                    None
-                }
-            }
-        }
-        _ => None,
-    };
+    let exec = exec_access_for(inner, spec.agent);
     let exec_token = exec.as_ref().map(|e| e.token.clone());
-    let options = LaunchOptions { settings, exec };
+    let options = LaunchOptions {
+        settings: project_settings_for(inner, &spec.profile, &spec.project),
+        exec,
+    };
     let mut plan = LaunchPlan::build_with(&inner.config, &inner.home, &spec, seq, &options)
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
     // Só projetos de verdade (repo git na raiz do perfil).
@@ -2270,6 +2299,37 @@ async fn create_session(
         .map_err(|e| internal(&e))?;
     tracing::info!("sessão criada: {}", info.id);
     Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// Configurações do projeto para o jail. Arquivo inválido: o padrão (o mais fechado), não falha.
+fn project_settings_for(inner: &Inner, profile: &str, project: &str) -> ProjectSettings {
+    match load_settings(&inner.home) {
+        Ok(file) => file.get(profile, project),
+        Err(e) => {
+            tracing::warn!("configurações dos projetos ignoradas: {e}");
+            ProjectSettings::default()
+        }
+    }
+}
+
+/// API dos agentes (F9.5) para uma sessão: só com o `agent_listen` no ar e o cliente instalado
+/// (senão o `--map` do ai-jail apontaria para uma pasta que não existe). A aba Terminal não usa.
+fn exec_access_for(inner: &Inner, agent: AgentKind) -> Option<ExecAccess> {
+    match inner.exec_port {
+        Some(port)
+            if agent != AgentKind::Shell
+                && exec_client_dir(&inner.home).join("fora-do-jail").exists() =>
+        {
+            match new_exec_token() {
+                Ok(token) => Some(ExecAccess { port, token }),
+                Err(e) => {
+                    tracing::warn!("sessão sem API dos agentes (token: {e})");
+                    None
+                }
+            }
+        }
+        _ => None,
+    }
 }
 
 async fn delete_session(

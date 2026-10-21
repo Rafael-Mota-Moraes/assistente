@@ -178,7 +178,12 @@ export type KanbanCard = {
 };
 
 /** Orquestrador automático do projeto (F11.11); ausente = desligado. */
-export type KanbanOrchestrator = { enabled: boolean; max_workers: number };
+export type KanbanOrchestrator = {
+  enabled: boolean;
+  max_workers: number;
+  /** Somadas às regras padrão no prompt de todo trabalhador do projeto. No `PUT`, ausente mantém. */
+  instructions?: string;
+};
 
 export type KanbanBoard = {
   next: number;
@@ -186,6 +191,8 @@ export type KanbanBoard = {
   orchestrator?: KanbanOrchestrator;
   /** Último erro do orquestrador automático (só em memória no hubd). */
   orchestrator_error?: string;
+  /** Só na resposta de `setOrchestrator`: tarefas que a volta abriu agora. */
+  started?: string[];
 };
 
 /** Campos de criar/editar; todos opcionais na edição. */

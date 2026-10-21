@@ -13,7 +13,8 @@ Colunas: `backlog` · `fazendo` · `feito`. Campos de um card: `id` (`T1`, nunca
 `title`, `description`, `priority` (`alta` · `normal` · `baixa`), `kind`, `column`, `holder` (a
 sessão que segura, só em "fazendo"), `commit` (só em "feito"), `failures` (vezes que voltou do
 "fazendo" sem concluir: `release` ou sessão morta; omitido quando zero). No nível do quadro,
-`orchestrator` (`enabled`, `max_workers`), omitido enquanto estiver no padrão (desligado, 1).
+`orchestrator` (`enabled`, `max_workers`, `instructions`), omitido enquanto estiver no padrão
+(desligado, 1, sem instruções).
 
 **Tipos de card** (F11.6):
 
@@ -104,6 +105,13 @@ decisão, porque o modelo já é escolhido sozinho (F11.10).
   o "Parar" da UI e a sessão que morreu (inclusive VM reiniciada) devolvem o card com `failures + 1`,
   e ele fica no backlog com "Voltou N× sem concluir". "Tentar de novo" (`PATCH {failures: 0}`) ou
   "Mandar" põem de volta. O `pull` explícito (orquestrador Claude, `dorme`) não olha `failures`.
+- **Instruções dos trabalhadores** (`orchestrator.instructions`, botão ao lado do limite): texto
+  livre que `worker::render_prompt` põe no fim do prompt, como "## Instruções do projeto", depois
+  das regras padrão. Vale para todo trabalhador do projeto (automático, Mandar, Reiniciar). `PUT`
+  sem `instructions` mantém as atuais.
+- **Aviso**: a resposta do `PUT` traz `started` (as tarefas que a primeira volta abriu) e a UI mostra
+  um toast com o resultado: o que foi para trabalhador, o erro, ou que não havia card livre.
+  Enquanto o `PUT` roda, o botão mostra "Ligando…"/"Desligando…".
 - Uma volta por vez (`orchestrator_lock`): o laço e o "ligar" da UI não disputam a mesma tarefa.
 - Erro (sem API dos agentes, sem modelo grátis…) não para o laço: fica em memória por projeto, vai
   no `GET …/kanban` como `orchestrator_error` (faixa amarela no quadro) e no log só quando muda.

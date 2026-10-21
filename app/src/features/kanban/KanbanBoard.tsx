@@ -1,10 +1,12 @@
 import {
   Bot,
+  ChevronDown,
   LayoutGrid,
   Pencil,
   Play,
   Plus,
   RotateCcw,
+  ScrollText,
   Sparkles,
   Square,
   Trash2,
@@ -16,6 +18,7 @@ import type {
   KanbanCard,
   KanbanColumn,
   KanbanDraft,
+  KanbanOrchestrator,
   KanbanPriority,
   SessionInfo,
 } from "../../bridge/types";
@@ -24,6 +27,7 @@ import { claudeLoginCommand } from "../sessions/actions";
 import { tabLabel } from "../sessions/SessionArea";
 import { TerminalView } from "../sessions/TerminalView";
 import { CardDialog } from "./CardDialog";
+import { OrchestratorDialog } from "./OrchestratorDialog";
 
 /** Quadro é lido de novo a cada 2 s (F11.3): o que os agentes puxam aparece sem recarregar. */
 const EVERY_MS = 2000;
@@ -44,6 +48,30 @@ const priorityStyle: Record<KanbanPriority, string> = {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Aviso depois de mexer no orquestrador: o que mudou e o que a primeira volta fez. */
+export function orchestratorNotice(before: KanbanOrchestrator, after: Board): string {
+  const now = after.orchestrator ?? { enabled: false, max_workers: 1 };
+  const started = after.started ?? [];
+  const opened = started.length
+    ? `${started.join(", ")} ${started.length === 1 ? "foi" : "foram"} para trabalhador.`
+    : after.orchestrator_error
+      ? `Não abriu nada: ${after.orchestrator_error}`
+      : "Nenhum card de agente livre no backlog agora; ele confere de novo a cada 20 s.";
+  if (before.enabled && !now.enabled) {
+    return "Orquestrador desligado: nada novo abre; os trabalhadores em andamento continuam.";
+  }
+  if (!before.enabled && now.enabled) {
+    return `Orquestrador ligado (até ${now.max_workers} em fazendo). ${opened}`;
+  }
+  if (before.max_workers !== now.max_workers) {
+    const limit = `Limite: até ${now.max_workers} em fazendo.`;
+    return now.enabled ? `${limit} ${opened}` : `${limit} Vale quando o orquestrador ligar.`;
+  }
+  return now.instructions
+    ? "Instruções salvas: valem para os próximos trabalhadores deste projeto."
+    : "Sem instruções extras: os trabalhadores usam só as regras padrão.";
 }
 
 /** Quem segura a tarefa: a aba da sessão, ou o id cru se a aba já não está aberta. */
@@ -70,6 +98,9 @@ export function KanbanBoard() {
   const [editing, setEditing] = useState<KanbanCard | "novo" | null>(null);
   const [dragging, setDragging] = useState<KanbanCard | null>(null);
   const [overColumn, setOverColumn] = useState<KanbanColumn | null>(null);
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  // Enquanto o PUT roda (ligar já abre os primeiros trabalhadores), o botão diz o que faz.
+  const [switching, setSwitching] = useState<"Ligando…" | "Desligando…" | null>(null);
 
   const refresh = useCallback(async () => {
     if (!hub || !activeProfile || !activeProject) return;
@@ -131,14 +162,24 @@ export function KanbanBoard() {
   }
 
   const cards = board?.cards ?? [];
-  const orchestrator = board?.orchestrator ?? { enabled: false, max_workers: 1 };
+  const orchestrator: KanbanOrchestrator = board?.orchestrator ?? {
+    enabled: false,
+    max_workers: 1,
+  };
 
-  /** Liga/desliga o orquestrador automático (F11.11); ligado, o hubd já abre os primeiros. */
+  /** Muda o orquestrador automático (F11.11) e avisa o que aconteceu; ligado, o hubd já abre
+   * os primeiros trabalhadores antes de responder. */
+  async function saveOrchestrator(change: Partial<KanbanOrchestrator>) {
+    const next = { ...orchestrator, ...change };
+    const after = await client.setOrchestrator(profile, project, next);
+    setBoard(after);
+    useAppStore.setState({ toast: orchestratorNotice(orchestrator, after) });
+  }
+
   function setOrchestrator(enabled: boolean, maxWorkers: number) {
-    void act(async () =>
-      setBoard(
-        await client.setOrchestrator(profile, project, { enabled, max_workers: maxWorkers }),
-      ),
+    if (enabled !== orchestrator.enabled) setSwitching(enabled ? "Ligando…" : "Desligando…");
+    void act(() => saveOrchestrator({ enabled, max_workers: maxWorkers })).finally(() =>
+      setSwitching(null),
     );
   }
 
@@ -153,7 +194,7 @@ export function KanbanBoard() {
           </span>
         )}
         <div className="ml-auto flex gap-2">
-          <div className="flex items-center overflow-hidden rounded-lg border border-line">
+          <div className="flex items-stretch overflow-hidden rounded-lg border border-line">
             <button
               type="button"
               role="switch"
@@ -167,25 +208,47 @@ export function KanbanBoard() {
                   : "bg-white/5 text-slate-200 hover:bg-white/10"
               }`}
             >
-              <Bot className="size-4" /> Orquestrador{" "}
-              {orchestrator.enabled ? "ligado" : "desligado"}
+              <Bot className="size-4" />{" "}
+              {switching ?? `Orquestrador ${orchestrator.enabled ? "ligado" : "desligado"}`}
             </button>
-            <select
-              aria-label="Trabalhadores ao mesmo tempo"
-              title="Quantas tarefas em fazendo ao mesmo tempo, no máximo"
-              value={orchestrator.max_workers}
+            {/* Mesmo padrão do select do CardDialog: sem aparência nativa, seta do tema. */}
+            <span className="relative h-full border-l border-line">
+              <select
+                aria-label="Trabalhadores ao mesmo tempo"
+                title="Quantas tarefas em fazendo ao mesmo tempo, no máximo"
+                value={orchestrator.max_workers}
+                disabled={board === null}
+                onChange={(event) =>
+                  setOrchestrator(orchestrator.enabled, Number(event.target.value))
+                }
+                className="h-full scheme-dark appearance-none bg-white/5 py-1.5 pr-7 pl-3 text-sm text-slate-200 outline-none hover:bg-white/10 focus:bg-white/10 [&>option]:bg-panel"
+              >
+                {Array.from({ length: MAX_WORKERS }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    {n}×
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-3.5 -translate-y-1/2 text-slate-400" />
+            </span>
+            <button
+              type="button"
               disabled={board === null}
-              onChange={(event) =>
-                setOrchestrator(orchestrator.enabled, Number(event.target.value))
+              onClick={() => setInstructionsOpen(true)}
+              title={
+                orchestrator.instructions
+                  ? "Instruções extras dos trabalhadores (definidas)"
+                  : "Instruções extras dos trabalhadores, somadas às regras padrão"
               }
-              className="border-l border-line bg-surface-strong px-2 py-1.5 text-sm text-slate-200"
+              aria-label="Instruções dos trabalhadores"
+              className={`border-l border-line px-2.5 hover:bg-white/10 ${
+                orchestrator.instructions
+                  ? "bg-violet-500/25 text-violet-100"
+                  : "bg-white/5 text-slate-300"
+              }`}
             >
-              {Array.from({ length: MAX_WORKERS }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
-                  {n}×
-                </option>
-              ))}
-            </select>
+              <ScrollText className="size-4" />
+            </button>
           </div>
           <button
             type="button"
@@ -431,6 +494,16 @@ export function KanbanBoard() {
           </div>
         )}
       </div>
+      {instructionsOpen && (
+        <OrchestratorDialog
+          instructions={orchestrator.instructions ?? ""}
+          onSave={async (instructions) => {
+            await saveOrchestrator({ instructions });
+            setInstructionsOpen(false);
+          }}
+          onClose={() => setInstructionsOpen(false)}
+        />
+      )}
       {editing && (
         <CardDialog
           target={editing === "novo" ? null : editing}

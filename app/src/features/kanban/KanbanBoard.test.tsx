@@ -192,35 +192,80 @@ describe("KanbanBoard", () => {
     expect(screen.getByText(/não consegui rodar/)).toBeInTheDocument();
   });
 
-  it("liga o orquestrador e mostra o erro dele", async () => {
-    const hub = connect({ next: 2, cards: [card("T1", { kind: "agente" })] });
-    const toggle = await screen.findByRole("switch", { name: /Orquestrador desligado/ });
+  it("liga o orquestrador, avisa o que abriu e mostra o erro dele", async () => {
+    const board: Board = { next: 2, cards: [card("T1", { kind: "agente" })] };
+    const hub = connect(board);
+    const on = { enabled: true, max_workers: 1 };
+    // O PUT demora (ligar já abre trabalhadores): o botão diz o que está fazendo.
+    let answer: (b: Board) => void = () => undefined;
+    hub.setOrchestrator.mockReturnValueOnce(new Promise<Board>((r) => (answer = r)));
+    fireEvent.click(await screen.findByRole("switch", { name: /Orquestrador desligado/ }));
+    expect(await screen.findByRole("switch", { name: /Ligando…/ })).toBeInTheDocument();
+    expect(hub.setOrchestrator).toHaveBeenCalledWith("pessoal", "game", {
+      enabled: true,
+      max_workers: 1,
+    });
+    hub.kanban.mockResolvedValue({ ...board, orchestrator: on });
+    answer({ ...board, orchestrator: on, started: ["T1"] });
+    await waitFor(() =>
+      expect(useAppStore.getState().toast).toBe(
+        "Orquestrador ligado (até 1 em fazendo). T1 foi para trabalhador.",
+      ),
+    );
+    expect(await screen.findByRole("switch", { name: /Orquestrador ligado/ })).toBeInTheDocument();
+
+    hub.setOrchestrator.mockResolvedValueOnce({
+      ...board,
+      orchestrator: { ...on, max_workers: 3 },
+    });
     fireEvent.change(screen.getByRole("combobox", { name: "Trabalhadores ao mesmo tempo" }), {
       target: { value: "3" },
     });
     await waitFor(() =>
-      expect(hub.setOrchestrator).toHaveBeenCalledWith("pessoal", "game", {
-        enabled: false,
-        max_workers: 3,
-      }),
+      expect(useAppStore.getState().toast).toBe(
+        "Limite: até 3 em fazendo. Nenhum card de agente livre no backlog agora; ele confere de novo a cada 20 s.",
+      ),
     );
-    fireEvent.click(toggle);
-    await waitFor(() =>
-      expect(hub.setOrchestrator).toHaveBeenLastCalledWith("pessoal", "game", {
-        enabled: true,
-        max_workers: 1,
-      }),
-    );
+
     hub.kanban.mockResolvedValue({
-      next: 2,
-      cards: [card("T1", { kind: "agente" })],
-      orchestrator: { enabled: true, max_workers: 1 },
+      ...board,
+      orchestrator: on,
       orchestrator_error: "T1: nenhum modelo grátis",
     });
     // O erro chega pelo poll seguinte (2 s).
     expect(
       await screen.findByText("Orquestrador: T1: nenhum modelo grátis", {}, { timeout: 4000 }),
     ).toBeInTheDocument();
+  });
+
+  it("instruções dos trabalhadores vão para o orquestrador sem mexer no resto", async () => {
+    const board: Board = {
+      next: 1,
+      cards: [],
+      orchestrator: { enabled: true, max_workers: 2 },
+    };
+    const hub = connect(board);
+    fireEvent.click(await screen.findByRole("button", { name: "Instruções dos trabalhadores" }));
+    const dialog = await screen.findByRole("dialog", { name: "Instruções dos trabalhadores" });
+    hub.setOrchestrator.mockResolvedValueOnce({
+      ...board,
+      orchestrator: { enabled: true, max_workers: 2, instructions: "Use pnpm." },
+    });
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Use pnpm." } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+    await waitFor(() =>
+      expect(hub.setOrchestrator).toHaveBeenCalledWith("pessoal", "game", {
+        enabled: true,
+        max_workers: 2,
+        instructions: "Use pnpm.",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Instruções dos trabalhadores" })).toBeNull(),
+    );
+    expect(useAppStore.getState().toast).toBe(
+      "Instruções salvas: valem para os próximos trabalhadores deste projeto.",
+    );
   });
 
   it("card que voltou do fazendo pede Tentar de novo", async () => {

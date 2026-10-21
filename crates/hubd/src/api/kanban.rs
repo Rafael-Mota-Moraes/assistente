@@ -88,6 +88,9 @@ pub(super) struct BoardView {
     board: Board,
     #[serde(skip_serializing_if = "Option::is_none")]
     orchestrator_error: Option<String>,
+    /// Só na resposta do `PUT …/orquestrador`: tarefas que a volta abriu agora, para o aviso.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    started: Vec<String>,
 }
 
 fn board_view(state: &AppState, profile: &str, project: &str, board: Board) -> BoardView {
@@ -95,6 +98,7 @@ fn board_view(state: &AppState, profile: &str, project: &str, board: Board) -> B
     BoardView {
         orchestrator_error: errors.get(&orchestrator_key(profile, project)).cloned(),
         board,
+        started: Vec::new(),
     }
 }
 
@@ -116,14 +120,18 @@ pub(super) struct OrchestratorBody {
     enabled: bool,
     #[serde(default = "one")]
     max_workers: u32,
+    /// Ausente = mantém as instruções atuais.
+    #[serde(default)]
+    instructions: Option<String>,
 }
 
 fn one() -> u32 {
     1
 }
 
-/// PUT /api/projects/{perfil}/{projeto}/kanban/orquestrador `{enabled, max_workers}`: liga ou
-/// desliga o orquestrador automático (F11.11). Ligado, já dá a primeira volta antes de responder.
+/// PUT /api/projects/{perfil}/{projeto}/kanban/orquestrador `{enabled, max_workers,
+/// instructions?}`: liga ou desliga o orquestrador automático (F11.11) e guarda as instruções dos
+/// trabalhadores. Ligado, já dá a primeira volta antes de responder (`started`).
 pub(super) async fn set_orchestrator(
     State(state): State<AppState>,
     Params((profile, project)): Params<(String, String)>,
@@ -133,23 +141,31 @@ pub(super) async fn set_orchestrator(
     {
         let _guard = state.0.kanban_lock.lock().await;
         let mut board = load(&state, &dir).await?;
-        let set = board.set_orchestrator(body.enabled, body.max_workers);
-        let message = if set.enabled {
+        let before = board.orchestrator.clone();
+        let set = board
+            .set_orchestrator(body.enabled, body.max_workers, body.instructions)
+            .map_err(kanban_error)?
+            .clone();
+        let message = if set.enabled && (!before.enabled || set.max_workers != before.max_workers) {
             format!(
                 "kanban: orquestrador ligado (até {} em fazendo)",
                 set.max_workers
             )
-        } else {
+        } else if before.enabled && !set.enabled {
             "kanban: orquestrador desligado".to_owned()
+        } else {
+            "kanban: instruções dos trabalhadores".to_owned()
         };
         persist(&dir, &board, &message)?;
     }
-    orchestrate_project(&state, &profile, &project).await;
+    let started = orchestrate_project(&state, &profile, &project).await;
     let board = {
         let _guard = state.0.kanban_lock.lock().await;
         load(&state, &dir).await?
     };
-    Ok(Json(board_view(&state, &profile, &project, board)))
+    let mut view = board_view(&state, &profile, &project, board);
+    view.started = started;
+    Ok(Json(view))
 }
 
 /// POST /api/projects/{perfil}/{projeto}/kanban: card novo nasce no backlog.
@@ -255,7 +271,7 @@ pub(super) async fn restart_worker(
         &old.profile,
         &old.project,
         &run,
-        &worker::render_prompt(&card, &branch),
+        &worker::render_prompt(&card, &branch, &board.orchestrator.instructions),
     )
     .await?;
     let holds_it = card.holder.as_deref() == Some(old.id.as_str());
@@ -337,7 +353,7 @@ async fn start_worker(
         profile,
         project,
         &run,
-        &worker::render_prompt(&card, &branch),
+        &worker::render_prompt(&card, &branch, &board.orchestrator.instructions),
     )
     .await?;
     let moved = match holder {
@@ -668,22 +684,25 @@ async fn orchestrate_all(state: &AppState) {
 }
 
 /// Uma volta num projeto, com o erro guardado para o quadro mostrar (e o log só quando muda).
-async fn orchestrate_project(state: &AppState, profile: &str, project: &str) {
+/// Devolve as tarefas que começaram.
+async fn orchestrate_project(state: &AppState, profile: &str, project: &str) -> Vec<String> {
     let result = orchestrate(state, profile, project).await;
     let key = orchestrator_key(profile, project);
     let mut errors = state.0.orchestrator_errors.lock().expect("lock dos erros");
     match result {
         Ok(started) => {
-            for id in started {
+            for id in &started {
                 tracing::info!("orquestrador: {key} {id} com trabalhador");
             }
             errors.remove(&key);
+            started
         }
         Err(e) => {
             if errors.get(&key) != Some(&e) {
                 tracing::warn!("orquestrador: {key}: {e}");
             }
             errors.insert(key, e);
+            Vec::new()
         }
     }
 }
@@ -1296,13 +1315,16 @@ mod tests {
             hub.app.clone(),
             "PUT",
             &uri,
-            Some(r#"{"enabled":true,"max_workers":2}"#),
+            Some(r#"{"enabled":true,"max_workers":2,"instructions":" Use pnpm. "}"#),
             None,
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{board}");
         assert_eq!(board["orchestrator"]["enabled"], true);
         assert_eq!(board["orchestrator"]["max_workers"], 2);
+        assert_eq!(board["orchestrator"]["instructions"], "Use pnpm.");
+        // A resposta diz o que a volta abriu, para o aviso da UI.
+        assert_eq!(board["started"], json!(["T2", "T1"]), "{board}");
         // Ligar já dá a primeira volta: as duas primeiras pela ordem do pull, a manual nunca.
         assert_eq!(column(&board, "T2"), "fazendo", "{board}");
         assert_eq!(column(&board, "T1"), "fazendo", "{board}");
@@ -1324,6 +1346,13 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
+        // As instruções do projeto vão no fim das regras padrão do trabalhador.
+        let files = worker::files(&hub.home.join(".assistente/perfis/pessoal"), &worker);
+        let prompt = std::fs::read_to_string(&files.prompt).unwrap();
+        assert!(
+            prompt.ends_with("## Instruções do projeto\n\nUse pnpm.\n"),
+            "{prompt}"
+        );
         let token = exec_token(&t, &worker).await;
         let (status, _) = send(
             hub.agents.clone(),
@@ -1365,17 +1394,23 @@ mod tests {
         )
         .await;
         assert_eq!(column(&board, "T2"), "fazendo", "{board}");
+        assert_eq!(board["started"], json!(["T2"]));
+        assert_eq!(
+            board["orchestrator"]["instructions"], "Use pnpm.",
+            "mantidas"
+        );
 
         // Desligado, nada novo abre e o quadro fica como está.
         let (_, board) = send(
             hub.app.clone(),
             "PUT",
             &uri,
-            Some(r#"{"enabled":false}"#),
+            Some(r#"{"enabled":false,"instructions":""}"#),
             None,
         )
         .await;
         assert!(board.get("orchestrator").is_none(), "{board}");
+        assert!(board.get("started").is_none(), "{board}");
         assert_eq!(last_subject(&hub.proj), "kanban: orquestrador desligado");
     }
 

@@ -16,6 +16,7 @@ const MAX_TITLE: usize = 200;
 const MAX_DESCRIPTION: usize = 10_000;
 /// Trabalhadores simultâneos que o orquestrador automático abre por projeto, no máximo.
 pub const MAX_WORKERS: u32 = 4;
+const MAX_INSTRUCTIONS: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -76,12 +77,16 @@ fn is_zero(n: &u32) -> bool {
 }
 
 /// Orquestrador automático do projeto (F11.11): desligado por padrão.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Orchestrator {
     pub enabled: bool,
     /// Tarefas em "fazendo" ao mesmo tempo (`1..=MAX_WORKERS`).
     pub max_workers: u32,
+    /// Somadas às regras padrão no prompt de todo trabalhador do projeto (automático, Mandar e
+    /// reinício). Vazio = só as regras padrão.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub instructions: String,
 }
 
 impl Default for Orchestrator {
@@ -89,6 +94,7 @@ impl Default for Orchestrator {
         Self {
             enabled: false,
             max_workers: 1,
+            instructions: String::new(),
         }
     }
 }
@@ -279,12 +285,28 @@ impl Board {
     }
 
     /// Liga ou desliga o orquestrador automático; `max_workers` vai para `1..=MAX_WORKERS`.
-    pub fn set_orchestrator(&mut self, enabled: bool, max_workers: u32) -> Orchestrator {
+    /// `instructions` `None` mantém as atuais.
+    pub fn set_orchestrator(
+        &mut self,
+        enabled: bool,
+        max_workers: u32,
+        instructions: Option<String>,
+    ) -> Result<&Orchestrator, KanbanError> {
+        let instructions = match instructions {
+            Some(text) => text.trim().to_owned(),
+            None => self.orchestrator.instructions.clone(),
+        };
+        if instructions.chars().count() > MAX_INSTRUCTIONS {
+            return Err(KanbanError::Invalid(format!(
+                "instruções com mais de {MAX_INSTRUCTIONS} caracteres"
+            )));
+        }
         self.orchestrator = Orchestrator {
             enabled,
             max_workers: max_workers.clamp(1, MAX_WORKERS),
+            instructions,
         };
-        self.orchestrator
+        Ok(&self.orchestrator)
     }
 
     /// Passa a posse de uma tarefa em andamento (orquestrador → trabalhador).
@@ -545,8 +567,27 @@ mod tests {
         let mut board = Board::default();
         assert!(!board.orchestrator.enabled);
         assert!(!board.to_json().contains("orchestrator"));
-        assert_eq!(board.set_orchestrator(true, 0).max_workers, 1);
-        assert_eq!(board.set_orchestrator(true, 99).max_workers, MAX_WORKERS);
+        let set = |board: &mut Board, max, text: Option<&str>| {
+            board
+                .set_orchestrator(true, max, text.map(str::to_owned))
+                .cloned()
+        };
+        assert_eq!(set(&mut board, 0, None).unwrap().max_workers, 1);
+        assert_eq!(set(&mut board, 99, None).unwrap().max_workers, MAX_WORKERS);
+        // Instruções: aparadas, mantidas quando não vêm, e com limite.
+        assert_eq!(
+            set(&mut board, 2, Some("  use pnpm  "))
+                .unwrap()
+                .instructions,
+            "use pnpm"
+        );
+        assert_eq!(set(&mut board, 2, None).unwrap().instructions, "use pnpm");
+        let long = "x".repeat(MAX_INSTRUCTIONS + 1);
+        assert!(matches!(
+            set(&mut board, 2, Some(&long)),
+            Err(KanbanError::Invalid(_))
+        ));
+        assert_eq!(board.orchestrator.instructions, "use pnpm");
         let text = board.to_json();
         assert_eq!(
             Board::parse(&text).unwrap().orchestrator,

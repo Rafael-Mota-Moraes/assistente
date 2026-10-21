@@ -264,7 +264,9 @@ hubd); F11.2 antes de F11.4.
   tarefas em "fazendo"): ligado, o hubd puxa sozinho as tarefas `agente` do backlog, a cada 20 s, e
   abre um trabalhador para cada uma pelo mesmo caminho do "Mandar", sem sessão do Claude. Card que
   volta do "fazendo" sem concluir (trabalhador desistiu, "Parar", sessão morta) conta `failures` e o
-  automático não puxa de novo até "Tentar de novo". Erro do laço aparece no quadro. Rota `PUT
+  automático não puxa de novo até "Tentar de novo". Erro do laço aparece no quadro. Ligar, desligar
+  e mudar o limite avisam o resultado (o que abriu ou por que não). Instruções extras, somadas às
+  regras padrão do prompt de todo trabalhador do projeto, num diálogo ao lado. Rota `PUT
   …/kanban/orquestrador`. Pronto quando: ligar abre trabalhadores até o limite, uma vaga liberada é
   preenchida pela próxima, e o card que falhou fica no backlog. Como testar:
   `api::kanban::tests::orchestrator_fills_up_to_the_limit…`, `…orchestrator_error_shows_on_the_board`,

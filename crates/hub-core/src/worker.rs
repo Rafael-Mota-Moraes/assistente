@@ -244,7 +244,7 @@ pub fn read_outcomes(profile_data: &Path) -> Outcomes {
 }
 
 /// Prompt da execução: a tarefa, as regras do trabalhador e o que não fazer.
-pub fn render_prompt(card: &Card, branch: &str) -> String {
+pub fn render_prompt(card: &Card, branch: &str, instructions: &str) -> String {
     let description = if card.description.is_empty() {
         "(sem descrição: o título é o pedido)".to_owned()
     } else {
@@ -261,9 +261,14 @@ pub fn render_prompt(card: &Card, branch: &str) -> String {
          - Ao terminar, deixe a árvore limpa: tudo commitado. Se não der para concluir, deixe\n  \
            o que avançou commitado e explique no fim da resposta o que falta.\n\
          - Não marque a tarefa como feita nem mexa em `.assistente/kanban.json`: quem marca é o\n  \
-           trabalhador, pelo resultado do git.\n",
+           trabalhador, pelo resultado do git.\n\
+         {extra}",
         id = card.id,
         title = card.title,
+        extra = match instructions.trim() {
+            "" => String::new(),
+            text => format!("\n## Instruções do projeto\n\n{text}\n"),
+        },
     )
 }
 
@@ -403,13 +408,19 @@ mod tests {
 
     #[test]
     fn prompt_carries_the_task_and_the_rules() {
-        let text = render_prompt(&card("Pedir e-mail e senha."), "agente/T7");
+        let text = render_prompt(&card("Pedir e-mail e senha."), "agente/T7", "");
         assert!(text.starts_with("# Tarefa T7: Tela de login"));
         assert!(text.contains("Pedir e-mail e senha."));
         assert!(text.contains("branch `agente/T7`"));
         assert!(text.contains("Não faça push"));
-        let empty = render_prompt(&card(""), "agente/T7");
+        assert!(!text.contains("Instruções do projeto"));
+        let empty = render_prompt(&card(""), "agente/T7", "");
         assert!(empty.contains("sem descrição"));
+        let extra = render_prompt(&card("x"), "agente/T7", "  Use pnpm, nunca npm.\n");
+        assert!(
+            extra.ends_with("\n## Instruções do projeto\n\nUse pnpm, nunca npm.\n"),
+            "{extra}"
+        );
     }
 
     #[test]

@@ -43,6 +43,12 @@ data_dir = "~/.local/share/assistente/ai-memory"
 mirror_every_minutes = 60
 port = 49374
 
+# Aba Assistente (F8.6): projeto do próprio Assistente que o agente da aba edita. O painel
+# mostra os commits recentes e aplica um deles sem fechar o app (F8.5).
+# [self_update]
+# profile = "pessoal"
+# project = "assistente"
+
 # Um bloco por perfil. A chave (pessoal, trabalho) é o id usado na API e nos caminhos.
 [profiles.pessoal]
 label = "Pessoal"

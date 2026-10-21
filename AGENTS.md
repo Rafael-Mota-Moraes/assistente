@@ -51,3 +51,4 @@ entra em `devenv/Dockerfile`. Nunca rode `bin/assistente vm …`, `instalar.sh` 
 - Rota nova começa como `not_yet("Fx.y")` e aponta para o item do backlog.
 - Scripts bash passam no `shellcheck` (está no `just check`).
 - Terminou um item do backlog? Marque `[x]` em `docs/FUNCIONALIDADES.md` no mesmo commit.
+- **Próxima tarefa do backlog:** ao puxar a próxima, ignore itens marcados `*(humano)*` (dependem da VM/notebook real do usuário) e itens cujo "Pronto quando" é validação humana; só fale sobre eles se o usuário pedir explicitamente. Pegue o primeiro `- [ ]` não-humano na ordem do arquivo.

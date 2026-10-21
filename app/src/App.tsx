@@ -1,3 +1,4 @@
+import { AssistantButton } from "./features/assistente/AssistantPanel";
 import { ExecApprovals } from "./features/exec/ExecApprovals";
 import { MemoryButton } from "./features/memory/MemoryButton";
 import { MemoryPanel } from "./features/memory/MemoryPanel";
@@ -25,6 +26,7 @@ export function App() {
             <span className="size-2.5 rounded-full bg-gradient-to-br from-violet-400 to-sky-400" />
             Assistente
           </h1>
+          <AssistantButton />
           <ProfileSwitcher />
           <nav className="min-h-0 flex-1 overflow-y-auto">
             <ProjectList />

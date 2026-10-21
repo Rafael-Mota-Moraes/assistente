@@ -4,7 +4,10 @@
   --font-sans: "Inter", "Cantarell", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
   --color-surface: rgb(15 18 32 / 0.72);
-  --color-surface-strong: rgb(22 26 44 / 0.9);
+  --color-surface-strong: rgb(22 26 44);
+  /* Fundo opaco para janelas/modais: o `surface` translúcido deixa o terminal aparecer atrás. */
+  --color-panel: rgb(13 16 28);
+  --color-panel-soft: rgb(22 27 45);
   --color-line: rgb(148 163 184 / 0.14);
 }
 

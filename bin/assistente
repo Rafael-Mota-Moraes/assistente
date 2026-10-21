@@ -136,6 +136,12 @@ vm_provisionar() {
   incus file push -q "$ROOT/vm/provisionar.sh" "$name/tmp/assistente/provisionar.sh"
   incus file push -q "$ROOT/vm/ai-memory.service" "$name/tmp/assistente/ai-memory.service"
   incus file push -q "$ROOT/vm/fora-do-jail" "$name/tmp/assistente/fora-do-jail"
+  # O atualizador (F8.5) precisa do repo com git: manda um bundle com os commits e a VM clona.
+  local bundle_dir
+  bundle_dir="$(mktemp -d)"
+  git -C "$ROOT" bundle create -q "$bundle_dir/repo.bundle" --all
+  incus file push -q "$bundle_dir/repo.bundle" "$name/tmp/assistente/repo.bundle"
+  rm -rf "$bundle_dir"
   incus exec "$name" -- bash /tmp/assistente/provisionar.sh "$(id -un)"
   echo "VM pronta. Próximo: assistente login claude pessoal"
 }
@@ -155,9 +161,32 @@ cmd_vm() {
       vm_push_logins
       ;;
     recriar)
-      read -r -p "Apagar a VM $name e criar de novo? Logins dentro dela se perdem (faça backup). [s/N] " ok
+      read -r -p "Apagar a VM $name e criar de novo? Os logins atuais são preservados automaticamente. [s/N] " ok
       [ "$ok" = "s" ] || exit 1
-      incus delete --force "$name"
+      # Preserva os logins (e as configurações dos projetos) da VM atual antes de
+      # apagá-la, para que `vm_criar` os restaure (F7.3). Se a VM estiver parada
+      # ou ausente, segue sem preservar (nada a puxar).
+      if incus info "$name" >/dev/null 2>&1; then
+        if [ "$(incus list "^$name\$" -c s -f csv 2>/dev/null)" = "RUNNING" ]; then
+          local stage=""
+          stage="$(mktemp -d)"
+          TMP_DIR="$stage"
+          if vm_pull_logins "$stage" >/dev/null 2>&1; then
+            if [ -d "$stage/vm-perfis" ]; then
+              rm -rf "$RESTORE_LOGINS_DIR"
+              mkdir -p "$RESTORE_LOGINS_DIR"
+              cp -a "$stage/vm-perfis/." "$RESTORE_LOGINS_DIR/"
+            fi
+            if [ -f "$stage/vm-projetos.toml" ]; then
+              mkdir -p "$(dirname "$RESTORE_PROJECTS_FILE")"
+              (umask 077; cp "$stage/vm-projetos.toml" "$RESTORE_PROJECTS_FILE")
+            fi
+          fi
+          TMP_DIR=""
+          rm -rf "$stage"
+        fi
+        incus delete --force "$name"
+      fi
       vm_criar
       ;;
     status) incus list "^$name\$" ;;

@@ -19,6 +19,7 @@ import type {
   SleepStartRequest,
   SleepStatus,
   StartedSleep,
+  UpdateStatus,
 } from "./types";
 
 export class HubError extends Error {
@@ -163,6 +164,21 @@ export class HubClient {
 
   async denyExec(id: string): Promise<void> {
     await this.request("POST", `/api/exec/${encodeURIComponent(id)}/deny`);
+  }
+
+  /** Status do atualizador (F8.5/F8.6). */
+  updateStatus(): Promise<UpdateStatus> {
+    return this.get("/api/update");
+  }
+
+  /** Aplica um commit (dispara o atualizador). */
+  applyUpdate(commit: string): Promise<{ commit: string; started: boolean }> {
+    return this.request("POST", "/api/update/apply", { commit });
+  }
+
+  /** Volta para a versão anterior. */
+  async rollbackUpdate(): Promise<void> {
+    await this.request("POST", "/api/update/rollback");
   }
 
   /** URL do WebSocket do terminal; o token vai na query (WebSocket não manda header). */

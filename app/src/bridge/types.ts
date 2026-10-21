@@ -6,6 +6,27 @@ export type Health = {
   uptime_seconds: number;
   /** Commit do binário do hubd e da UI servida (`null` quando o hubd não serve UI). */
   commit: { hubd: string; ui: string | null };
+  /** Aba/painel Assistente (F8.6): projeto do próprio Assistente a ser editado pelo agente. */
+  self_update: { profile: string; project: string } | null;
+};
+
+export type UpdateCommit = { hash: string; subject: string };
+
+export type UpdateStatus = {
+  running: boolean;
+  status: string;
+  commit: string | null;
+  current_ui: string | null;
+  previous_commit: string | null;
+  error: string | null;
+  log_tail: string | null;
+  log: string | null;
+  /** HEAD do projeto do próprio Assistente. */
+  head: string | null;
+  head_commit: string | null;
+  /** Commits recentes (mais novo primeiro), para escolher o que aplicar. */
+  commits: UpdateCommit[];
+  pending_commits: UpdateCommit[];
 };
 
 export type ProfileView = {

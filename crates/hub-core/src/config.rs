@@ -14,6 +14,9 @@ pub struct Config {
     pub memory: MemoryConfig,
     /// Ordenado pelo id (`BTreeMap`) para a UI listar sempre na mesma ordem.
     pub profiles: BTreeMap<String, Profile>,
+    /// Aba/painel Assistente (F8.6): projeto do próprio Assistente a ser editado pelo agente.
+    #[serde(default)]
+    pub self_update: Option<SelfUpdateConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -39,6 +42,13 @@ impl HubConfig {
             .map(|a| a.port())
             .unwrap_or(7879)
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelfUpdateConfig {
+    pub profile: String,
+    pub project: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

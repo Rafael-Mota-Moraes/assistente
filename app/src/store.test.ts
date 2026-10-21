@@ -37,7 +37,7 @@ describe("estado persistido (F8.2)", () => {
         version: "0.1.0",
         uptime_seconds: 1,
         commit: { hubd: "abc1234", ui: null },
-      },
+        self_update: null,      },
       toast: "algum aviso",
     });
     const state = saved().state ?? {};

@@ -9,8 +9,9 @@ User=@USER@
 Environment=HOME=/home/@USER@
 # Sessões tmux herdam este PATH: claude, opencode e ai-memory moram em ~/.local/bin.
 Environment=PATH=/home/@USER@/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/local/bin/hubd --config /home/@USER@/.config/assistente/assistente.toml
-Restart=on-failure
+# Caminho absoluto: em serviço de sistema o %h é o home do root, não o do User= (203/EXEC).
+ExecStart=/home/@USER@/.assistente/versoes/atual/hubd --config /home/@USER@/.config/assistente/assistente.toml
+Restart=always
 # O servidor tmux (com as sessões dos agentes) nasce como filho do hubd: só o hubd reinicia,
 # as sessões continuam (F1.4).
 KillMode=process

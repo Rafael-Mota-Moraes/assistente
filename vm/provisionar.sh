@@ -187,8 +187,26 @@ install -d -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR/.local/lib/assistente"
 install -m755 -o "$USER_NAME" -g "$USER_NAME" /tmp/assistente/fora-do-jail \
   "$HOME_DIR/.local/lib/assistente/fora-do-jail"
 
+echo "==> repo do Assistente para o atualizador (F8.5)"
+# Clone limpo do bundle enviado pelo `bin/assistente vm criar`. O atualizador roda deste repo.
+repo="$HOME_DIR/.local/share/assistente/repo"
+rm -rf "$repo"
+install -d -o "$USER_NAME" -g "$USER_NAME" "$(dirname "$repo")"
+sudo -u "$USER_NAME" -H git clone -q /tmp/assistente/repo.bundle "$repo"
+
+echo "==> versão inicial do hubd (F8.5)"
+# A unidade roda ~/.assistente/versoes/atual/hubd (F8.5). A primeira versão nasce aqui; o
+# atualizador troca `atual` depois. Se `atual` já existe (reprovisionamento), ele não é mexido.
+versoes="$HOME_DIR/.assistente/versoes"
+install -d -o "$USER_NAME" -g "$USER_NAME" "$versoes/inicial/ui"
+install -m755 -o "$USER_NAME" -g "$USER_NAME" /tmp/assistente/hubd "$versoes/inicial/hubd"
+chown -R "$USER_NAME:" "$versoes"
+if [ ! -e "$versoes/atual" ] && [ ! -L "$versoes/atual" ]; then
+  ln -s inicial "$versoes/atual"
+  chown -h "$USER_NAME:" "$versoes/atual"
+fi
+
 echo "==> hubd"
-install -m755 /tmp/assistente/hubd /usr/local/bin/hubd
 sed "s/@USER@/$USER_NAME/g" /tmp/assistente/hubd.service > /etc/systemd/system/hubd.service
 systemctl daemon-reload
 systemctl enable --now hubd

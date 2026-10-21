@@ -65,6 +65,10 @@ struct Inner {
     exec_port: Option<u16>,
     /// Valor do cookie da web UI do ai-memory (F5.5), sorteado a cada início do hubd.
     memory_session: String,
+    /// Só nos testes: troca o comando do atualizador (F8.5).
+    update_command_override: Option<String>,
+    /// Só nos testes: env extra do atualizador.
+    update_env_override: Vec<(String, String)>,
 }
 
 impl AppState {
@@ -93,6 +97,8 @@ impl AppState {
             exec: ExecStore::default(),
             exec_port: None,
             memory_session: new_exec_token().unwrap_or_default(),
+            update_command_override: None,
+            update_env_override: Vec::new(),
         }))
     }
 
@@ -120,6 +126,18 @@ impl AppState {
             .ok()
             .expect("estado ainda não compartilhado");
         inner.ui_dir = dir;
+        Self(Arc::new(inner))
+    }
+
+    /// Só nos testes: troca o comando do atualizador (F8.5).
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn with_update_command(self, command: String, env: Vec<(String, String)>) -> Self {
+        let mut inner = Arc::try_unwrap(self.0)
+            .ok()
+            .expect("estado ainda não compartilhado");
+        inner.update_command_override = Some(command);
+        inner.update_env_override = env;
         Self(Arc::new(inner))
     }
 
@@ -197,6 +215,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sleep/stop", post(stop_sleep))
         .route("/api/sleep/collect", post(collect_sleep))
         .route("/api/sleep/merge", post(merge_sleep))
+        .route("/api/update", get(update_status))
+        .route("/api/update/apply", post(apply_update))
+        .route("/api/update/rollback", post(rollback_update))
         .route("/api/exec", get(list_exec))
         .route("/api/exec/{id}/approve", post(approve_exec))
         .route("/api/exec/{id}/deny", post(deny_exec))
@@ -293,6 +314,14 @@ struct Health {
     uptime_seconds: u64,
     /// F8.7 compara com o commit que o app já tem para saber se precisa recarregar.
     commit: Commits,
+    /// F8.6: projeto do próprio Assistente editado pela aba Assistente.
+    self_update: Option<SelfUpdateView>,
+}
+
+#[derive(Serialize)]
+struct SelfUpdateView {
+    profile: String,
+    project: String,
 }
 
 async fn health(State(state): State<AppState>) -> Json<Health> {
@@ -304,6 +333,10 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
             hubd: env!("HUBD_COMMIT"),
             ui: ui_commit(state.0.ui_dir.as_deref()),
         },
+        self_update: state.0.config.self_update.as_ref().map(|s| SelfUpdateView {
+            profile: s.profile.clone(),
+            project: s.project.clone(),
+        }),
     })
 }
 
@@ -960,6 +993,295 @@ async fn merge_sleep(
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(|e| error(StatusCode::CONFLICT, &format!("merge recusado: {e}")))
+}
+
+// ---- Atualizador (F8.5) ----
+
+#[derive(Deserialize)]
+struct ApplyUpdateRequest {
+    commit: String,
+}
+
+#[derive(Serialize, Clone)]
+struct UpdateCommitView {
+    hash: String,
+    subject: String,
+}
+
+#[derive(Serialize)]
+struct UpdateStatusView {
+    running: bool,
+    status: String,
+    commit: Option<String>,
+    current_ui: Option<String>,
+    previous_commit: Option<String>,
+    error: Option<String>,
+    log_tail: Option<String>,
+    log: Option<String>,
+    head: Option<String>,
+    commits: Vec<UpdateCommitView>,
+    pending_commits: Vec<UpdateCommitView>,
+    head_commit: Option<String>,
+}
+
+fn read_update_state(
+    home: &std::path::Path,
+) -> (bool, String, Option<String>, Option<String>, Option<String>) {
+    // (running, status, commit, error, log_tail)
+    let base = home.join(".assistente/atualizacoes");
+    let mut running = false;
+    let mut status = "idle".to_string();
+    let mut commit = None;
+    let mut error = None;
+    let mut log_tail = None;
+    let mut latest_mtime = std::time::SystemTime::UNIX_EPOCH;
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let estado = path.join("estado.json");
+            if !estado.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&estado).unwrap_or_default();
+            let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            let st = parsed
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("idle")
+                .to_string();
+            let mt = std::fs::metadata(&estado)
+                .and_then(|m| m.modified())
+                .unwrap_or(latest_mtime);
+            if mt >= latest_mtime {
+                latest_mtime = mt;
+                status = st.clone();
+                commit = parsed
+                    .get("commit")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned);
+                error = parsed
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned);
+                let log = path.join("log");
+                if log.is_file() {
+                    let text = std::fs::read_to_string(&log).unwrap_or_default();
+                    let tail: String = text
+                        .chars()
+                        .rev()
+                        .take(2000)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect();
+                    log_tail = Some(tail);
+                }
+            }
+            if st == "running" {
+                running = true;
+            }
+        }
+    }
+    if status == "running" {
+        running = true;
+    }
+    (running, status, commit, error, log_tail)
+}
+
+async fn update_status(State(state): State<AppState>) -> Json<UpdateStatusView> {
+    let (running, status, commit, error, log_tail) = read_update_state(&state.0.home);
+    let versions = state.0.home.join(".assistente/versoes");
+    let previous_commit = std::fs::read_link(versions.join("anterior"))
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .or_else(|| {
+            let dir = versions.join("anterior");
+            dir.read_dir().ok()?;
+            dir.file_name().map(|n| n.to_string_lossy().to_string())
+        });
+    // Se `anterior` for diretório (não symlink), tenta ler commit.txt
+    let previous_commit = previous_commit.or_else(|| {
+        let p = versions.join("anterior/commit.txt");
+        std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned())
+    });
+    let current_ui = ui_commit(state.0.ui_dir.as_deref());
+
+    // F8.6: commits recentes do projeto do próprio Assistente, para o painel mostrar só o que
+    // ainda não foi aplicado. Versões já instaladas (e a que está rodando) ficam de fora.
+    let applied: Vec<String> = std::fs::read_dir(&versions)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let path = entry.path();
+                    (path.is_dir() && !path.is_symlink() && name != "atual" && name != "anterior")
+                        .then_some(name)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut applied = applied;
+    // O histórico de atualizações fica em `atualizacoes/<commit>/estado.json`; versões antigas
+    // podem ter sido podadas de `versoes/`, mas continuam "finalizadas" e não devem voltar à lista.
+    if let Ok(entries) = std::fs::read_dir(state.0.home.join(".assistente/atualizacoes")) {
+        for entry in entries.flatten() {
+            let Ok(text) = std::fs::read_to_string(entry.path().join("estado.json")) else {
+                continue;
+            };
+            let Ok(estado) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            if estado.get("status").and_then(|v| v.as_str()) == Some("success")
+                && let Some(done) = estado.get("commit").and_then(|v| v.as_str())
+            {
+                applied.push(done.to_owned());
+            }
+        }
+    }
+    if status == "success"
+        && let Some(done) = &commit
+    {
+        applied.push(done.clone());
+    }
+    if let Some(ui) = &current_ui {
+        applied.push(ui.clone());
+    }
+    applied.push(env!("HUBD_COMMIT").to_owned());
+
+    let (head, commits) = match &state.0.config.self_update {
+        Some(self_update) => {
+            match sleep_project_dir(&state, &self_update.profile, &self_update.project) {
+                Ok(dir) => tokio::task::spawn_blocking(move || {
+                    let log = |args: &[&str]| -> Option<String> {
+                        let output = std::process::Command::new("git")
+                            .arg("-C")
+                            .arg(&dir)
+                            .args(args)
+                            .output()
+                            .ok()?;
+                        output
+                            .status
+                            .success()
+                            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                            .filter(|s| !s.is_empty())
+                    };
+                    let head = log(&["rev-parse", "--short", "HEAD"]);
+                    let already_applied = |hash: &str| {
+                        applied
+                            .iter()
+                            .any(|done| done.starts_with(hash) || hash.starts_with(done))
+                    };
+                    let commits = log(&["log", "-50", "--format=%h%x1f%s"])
+                        .map(|text| {
+                            text.lines()
+                                .filter_map(|line| {
+                                    let (hash, subject) = line.split_once('\u{1f}')?;
+                                    (!already_applied(hash)).then(|| UpdateCommitView {
+                                        hash: hash.to_owned(),
+                                        subject: subject.to_owned(),
+                                    })
+                                })
+                                .take(8)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    (head, commits)
+                })
+                .await
+                .unwrap_or((None, Vec::new())),
+                Err(_) => (None, Vec::new()),
+            }
+        }
+        None => (None, Vec::new()),
+    };
+
+    Json(UpdateStatusView {
+        running,
+        status,
+        commit,
+        current_ui,
+        previous_commit,
+        error,
+        log: log_tail.clone(),
+        log_tail,
+        head: head.clone(),
+        commits: commits.clone(),
+        pending_commits: commits,
+        head_commit: head,
+    })
+}
+
+async fn apply_update(
+    State(state): State<AppState>,
+    Json(request): Json<ApplyUpdateRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), Response> {
+    let commit = request.commit.trim().to_owned();
+    if commit.is_empty() {
+        return Err(error(StatusCode::BAD_REQUEST, "commit obrigatório"));
+    }
+    // O commit vai para o atualizador: só hexadecimal, para não abrir injeção de shell.
+    if !(7..=40).contains(&commit.len()) || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(error(StatusCode::BAD_REQUEST, "commit inválido"));
+    }
+    let mut command = match state.0.update_command_override.clone() {
+        Some(cmd) => {
+            let mut command = tokio::process::Command::new("setsid");
+            command
+                .arg("bash")
+                .arg("-c")
+                .arg(format!("{cmd} \"$1\""))
+                .arg("bash")
+                .arg(&commit);
+            command
+        }
+        None => {
+            let script = state
+                .0
+                .home
+                .join(".local/share/assistente/repo/vm/atualizar.sh");
+            if !script.is_file() {
+                return Err(error(
+                    StatusCode::CONFLICT,
+                    "atualizador não instalado na VM (vm/atualizar.sh)",
+                ));
+            }
+            let mut command = tokio::process::Command::new("setsid");
+            command.arg("bash").arg(script).arg(&commit);
+            command
+        }
+    };
+    for (k, v) in &state.0.update_env_override {
+        command.env(k, v);
+    }
+    command.current_dir(&state.0.home);
+    if let Err(e) = command.spawn() {
+        return Err(internal(&format!(
+            "não consegui iniciar o atualizador: {e}"
+        )));
+    }
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "commit": commit, "started": true })),
+    ))
+}
+
+async fn rollback_update(State(state): State<AppState>) -> Result<StatusCode, Response> {
+    let versions = state.0.home.join(".assistente/versoes");
+    let atual = versions.join("atual");
+    let anterior = versions.join("anterior");
+    if !anterior.exists() {
+        return Err(error(StatusCode::CONFLICT, "sem versão anterior"));
+    }
+    let tmp = versions.join("atual.rollback-tmp");
+    if atual.exists() || atual.is_symlink() {
+        let _ = std::fs::rename(&atual, &tmp);
+    }
+    std::fs::rename(&anterior, &atual).map_err(|e| internal(&e.to_string()))?;
+    if tmp.exists() || tmp.is_symlink() {
+        let _ = std::fs::rename(&tmp, &anterior);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize)]

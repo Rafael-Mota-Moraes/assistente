@@ -168,7 +168,7 @@ export function KanbanBoard() {
         {board === null ? (
           <p className="p-6 text-sm text-slate-400">Lendo o quadro…</p>
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 overflow-y-auto p-4">
+          <div className="grid min-h-0 flex-1 grid-cols-3 grid-rows-[minmax(0,1fr)] gap-3 p-4">
             {columns.map((column) => {
               const inColumn = cards.filter((card) => card.column === column.id);
               const target = overColumn === column.id;
@@ -188,7 +188,7 @@ export function KanbanBoard() {
                     if (dragging) moveTo(dragging, column.id);
                     setDragging(null);
                   }}
-                  className={`flex min-h-0 flex-col gap-2 rounded-xl border p-3 transition-colors ${
+                  className={`flex min-h-0 flex-col gap-2 overflow-y-auto rounded-xl border p-3 transition-colors ${
                     target ? "border-accent/60 bg-accent/10" : "border-line bg-black/20"
                   }`}
                 >

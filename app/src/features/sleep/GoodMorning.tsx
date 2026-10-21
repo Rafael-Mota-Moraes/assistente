@@ -1,10 +1,14 @@
-import { Check, GitMerge, RefreshCw, Sunrise, X } from "lucide-react";
+import { Check, GitCompare, GitMerge, RefreshCw, Sunrise, X } from "lucide-react";
+import { useState } from "react";
 import { useAppStore } from "../../store";
 import { closeMorning, mergeMorning, refreshMorning, setMorningDate } from "./morning";
+import { DiffView } from "../editor/DiffView";
 
 /** Tela "Bom dia" (F6.6): revisar o que o agente fez à noite e mesclar com um clique. */
 export function GoodMorning() {
   const morning = useAppStore((s) => s.morning);
+  const [diffCommit, setDiffCommit] = useState<string | null>(null);
+  const [diffFile, setDiffFile] = useState("a.txt");
   if (!morning) return null;
   const { report, error, busy, merged } = morning;
 
@@ -82,8 +86,39 @@ export function GoodMorning() {
                 <ul className="mt-2 flex flex-col gap-1">
                   {report.commits.map((commit) => (
                     <li key={commit.hash} className="font-mono text-xs text-slate-300">
-                      <span className="text-slate-500">{commit.hash.slice(0, 7)}</span>{" "}
-                      {commit.subject}
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500">{commit.hash.slice(0, 7)}</span>{" "}
+                        {commit.subject}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDiffCommit((v) => (v === commit.hash ? null : commit.hash))
+                          }
+                          className="ml-auto flex items-center gap-1 rounded border border-line bg-white/5 px-2 py-0.5 text-slate-300 hover:bg-white/10"
+                        >
+                          <GitCompare className="size-3" /> Ver diff
+                        </button>
+                      </div>
+                      {diffCommit === commit.hash && (
+                        <div className="mt-2 flex flex-col gap-2">
+                          <input
+                            type="text"
+                            value={diffFile}
+                            onChange={(e) => setDiffFile(e.target.value)}
+                            placeholder="caminho do arquivo"
+                            className="rounded border border-line bg-black/30 px-2 py-1 font-mono text-xs text-slate-200"
+                          />
+                          <div className="h-64 rounded-lg border border-line">
+                            <DiffView
+                              profile={morning.profile}
+                              project={morning.project}
+                              path={diffFile}
+                              from={`${commit.hash}^`}
+                              to={commit.hash}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

@@ -15,6 +15,14 @@ body,
   margin: 0;
 }
 
+/* CodeMirror: garante altura e scroll dentro do editor (F10.2). */
+.cm-editor {
+  height: 100%;
+}
+.cm-scroller {
+  overflow: auto !important;
+}
+
 body {
   overflow: hidden;
   color: #e2e8f0;

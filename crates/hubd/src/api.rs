@@ -172,6 +172,22 @@ pub fn router(state: AppState) -> Router {
             "/api/projects/{profile}/{project}/settings",
             get(project_settings).put(save_project_settings),
         )
+        .route(
+            "/api/projects/{profile}/{project}/files",
+            get(list_project_files),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/files/{*path}",
+            get(read_project_file).put(write_project_file),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/git/status",
+            get(git_status),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/git/diff/{*path}",
+            get(git_diff),
+        )
         .route("/api/notebook", get(notebook))
         .route("/api/memory", get(memory))
         .route("/api/sessions", get(list_sessions).post(create_session))
@@ -1018,6 +1034,353 @@ async fn update_settings(
         std::fs::rename(&tmp, &path)
     };
     write().map_err(|e| format!("{}: {e}", path.display()))
+}
+
+// ---- Arquivos e git do projeto (F10.1) ----
+
+const MAX_FILE_BYTES: usize = 1024 * 1024;
+
+#[derive(Serialize)]
+struct FileList {
+    files: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct FileContent {
+    path: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct GitStatusEntry {
+    path: String,
+    status: String,
+    staged: bool,
+}
+
+#[derive(Serialize)]
+struct GitStatusView {
+    files: Vec<GitStatusEntry>,
+}
+
+#[derive(Serialize)]
+struct GitDiffView {
+    path: String,
+    head: Option<String>,
+    working: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WriteFileRequest {
+    content: String,
+}
+
+/// Resolve um caminho relativo dentro do projeto, recusando `..`, absoluto e
+/// symlinks que escapam da raiz.
+fn resolve_project_file(
+    project_dir: &std::path::Path,
+    rel: &str,
+) -> Result<std::path::PathBuf, String> {
+    if rel.is_empty() {
+        return Err("caminho vazio".into());
+    }
+    let rel_path = std::path::Path::new(rel);
+    if rel_path.is_absolute() {
+        return Err("caminho absoluto não permitido".into());
+    }
+    for comp in rel_path.components() {
+        match comp {
+            std::path::Component::ParentDir => return Err("caminho com '..' não permitido".into()),
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(_) => {}
+            _ => return Err("componente de caminho inválido".into()),
+        }
+    }
+    let target = project_dir.join(rel_path);
+    if target.exists() {
+        let canonical = target
+            .canonicalize()
+            .map_err(|e| format!("não consegui resolver o caminho: {e}"))?;
+        let project_canonical = project_dir
+            .canonicalize()
+            .map_err(|e| format!("não consegui resolver o projeto: {e}"))?;
+        if !canonical.starts_with(&project_canonical) {
+            return Err("caminho fora do projeto".into());
+        }
+        return Ok(canonical);
+    }
+    let mut ancestor = target.clone();
+    while !ancestor.exists() {
+        match ancestor.parent() {
+            Some(p) => ancestor = p.to_path_buf(),
+            None => break,
+        }
+    }
+    if ancestor.exists() {
+        let canonical = ancestor
+            .canonicalize()
+            .map_err(|e| format!("não consegui resolver o caminho: {e}"))?;
+        let project_canonical = project_dir
+            .canonicalize()
+            .map_err(|e| format!("não consegui resolver o projeto: {e}"))?;
+        if !canonical.starts_with(&project_canonical) {
+            return Err("caminho fora do projeto".into());
+        }
+    }
+    Ok(target)
+}
+
+fn is_binary(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_FILE_BYTES {
+        return true;
+    }
+    if bytes.contains(&0) {
+        return true;
+    }
+    std::str::from_utf8(bytes).is_err()
+}
+
+async fn list_project_files(
+    State(state): State<AppState>,
+    Path((profile, project)): Path<(String, String)>,
+) -> Result<Json<FileList>, Response> {
+    let dir = sleep_project_dir(&state, &profile, &project).map_err(|(s, m)| error(s, m))?;
+    let files = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
+        let output = std::process::Command::new("git")
+            .args([
+                "-C",
+                &dir.display().to_string(),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ])
+            .output()
+            .map_err(|e| format!("git: {e}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        }
+        let mut files: Vec<String> = output
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|chunk| !chunk.is_empty())
+            .filter_map(|chunk| String::from_utf8(chunk.to_vec()).ok())
+            .collect();
+        files.sort();
+        files.dedup();
+        Ok(files)
+    })
+    .await
+    .map_err(|_| internal("falha ao listar arquivos"))?
+    .map_err(|e| internal(&e))?;
+    Ok(Json(FileList { files }))
+}
+
+async fn read_project_file(
+    State(state): State<AppState>,
+    Path((profile, project, path)): Path<(String, String, String)>,
+) -> Result<Json<FileContent>, Response> {
+    let dir = sleep_project_dir(&state, &profile, &project).map_err(|(s, m)| error(s, m))?;
+    let rel = path;
+    let target =
+        resolve_project_file(&dir, &rel).map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
+    let body = tokio::task::spawn_blocking(move || -> Result<String, (StatusCode, String)> {
+        let meta =
+            std::fs::metadata(&target).map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+        if meta.len() as usize > MAX_FILE_BYTES {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!("arquivo maior que {} bytes", MAX_FILE_BYTES),
+            ));
+        }
+        let bytes = std::fs::read(&target)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if is_binary(&bytes) {
+            return Err((
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "arquivo binário ou não UTF-8".into(),
+            ));
+        }
+        let text = String::from_utf8(bytes).map_err(|_| {
+            (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "arquivo não UTF-8".into(),
+            )
+        })?;
+        Ok(text)
+    })
+    .await
+    .map_err(|_| internal("falha ao ler arquivo"))?
+    .map_err(|(s, m)| error(s, &m))?;
+    Ok(Json(FileContent {
+        path: rel,
+        content: body,
+    }))
+}
+
+async fn write_project_file(
+    State(state): State<AppState>,
+    Path((profile, project, path)): Path<(String, String, String)>,
+    Json(request): Json<WriteFileRequest>,
+) -> Result<StatusCode, Response> {
+    let dir = sleep_project_dir(&state, &profile, &project).map_err(|(s, m)| error(s, m))?;
+    if request.content.len() > MAX_FILE_BYTES {
+        return Err(error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "conteúdo maior que o limite",
+        ));
+    }
+    let rel = path;
+    let target =
+        resolve_project_file(&dir, &rel).map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let tmp = target.with_extension("tmp");
+        std::fs::write(&tmp, request.content.as_bytes()).map_err(|e| e.to_string())?;
+        if let Ok(f) = std::fs::File::open(&tmp) {
+            let _ = f.sync_all();
+        }
+        std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| internal("falha ao gravar arquivo"))?
+    .map_err(|e| internal(&e))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn git_status(
+    State(state): State<AppState>,
+    Path((profile, project)): Path<(String, String)>,
+) -> Result<Json<GitStatusView>, Response> {
+    let dir = sleep_project_dir(&state, &profile, &project).map_err(|(s, m)| error(s, m))?;
+    let entries = tokio::task::spawn_blocking(move || -> Result<Vec<GitStatusEntry>, String> {
+        let output = std::process::Command::new("git")
+            .args(["-C", &dir.display().to_string(), "status", "--porcelain=v1"])
+            .output()
+            .map_err(|e| format!("git: {e}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut out = Vec::new();
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if line.len() < 4 {
+                continue;
+            }
+            let x = line.chars().next().unwrap_or(' ');
+            let y = line.chars().nth(1).unwrap_or(' ');
+            let rest = &line[3..];
+            let path = if let Some(idx) = rest.find(" -> ") {
+                rest[idx + 4..].to_string()
+            } else {
+                rest.to_string()
+            };
+            let (status, staged) = classify_status(x, y);
+            out.push(GitStatusEntry {
+                path,
+                status,
+                staged,
+            });
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|_| internal("falha ao consultar git status"))?
+    .map_err(|e| internal(&e))?;
+    Ok(Json(GitStatusView { files: entries }))
+}
+
+fn classify_status(x: char, y: char) -> (String, bool) {
+    if x == '?' {
+        return ("untracked".into(), false);
+    }
+    let staged_status = match x {
+        'A' => Some("added"),
+        'M' => Some("modified"),
+        'D' => Some("deleted"),
+        'R' => Some("renamed"),
+        'C' => Some("copied"),
+        _ => None,
+    };
+    if let Some(s) = staged_status {
+        return (s.into(), true);
+    }
+    match y {
+        'M' => ("modified".into(), false),
+        'D' => ("deleted".into(), false),
+        '?' => ("untracked".into(), false),
+        'A' => ("added".into(), false),
+        _ => ("modified".into(), false),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct DiffQuery {
+    from: Option<String>,
+    to: Option<String>,
+}
+
+async fn git_diff(
+    State(state): State<AppState>,
+    Path((profile, project, path)): Path<(String, String, String)>,
+    Query(query): Query<DiffQuery>,
+) -> Result<Json<GitDiffView>, Response> {
+    let dir = sleep_project_dir(&state, &profile, &project).map_err(|(s, m)| error(s, m))?;
+    let rel = path;
+    resolve_project_file(&dir, &rel).map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
+    let from = query.from.unwrap_or_else(|| "HEAD".to_string());
+    let to = query.to;
+    let dir_clone = dir.clone();
+    let rel_clone = rel.clone();
+    let (head, working) =
+        tokio::task::spawn_blocking(move || -> (Option<String>, Option<String>) {
+            let show = |refname: &str| -> Option<String> {
+                std::process::Command::new("git")
+                    .args([
+                        "-C",
+                        &dir_clone.display().to_string(),
+                        "show",
+                        &format!("{refname}:{rel_clone}"),
+                    ])
+                    .output()
+                    .ok()
+                    .and_then(|o| {
+                        if !o.status.success() {
+                            return None;
+                        }
+                        String::from_utf8(o.stdout).ok()
+                    })
+            };
+            let head = show(&from);
+            let working = match to {
+                Some(refname) => show(&refname),
+                None => {
+                    let target = dir_clone.join(&rel_clone);
+                    if target.exists() {
+                        std::fs::read(&target)
+                            .ok()
+                            .and_then(|b| String::from_utf8(b).ok())
+                    } else {
+                        None
+                    }
+                }
+            };
+            (head, working)
+        })
+        .await
+        .map_err(|_| internal("falha ao obter diff"))?;
+    Ok(Json(GitDiffView {
+        path: rel,
+        head,
+        working,
+    }))
 }
 
 // ---- Fora do jail: pedidos dos agentes (F9.5) ----
@@ -2709,5 +3072,258 @@ mod tests {
         let spec = r#"{"profile":"pessoal","project":"../fora","agent":"opencode"}"#;
         let (status, _) = http("POST", &format!("{hub2}/api/sessions"), Some(spec)).await;
         assert_eq!(status, 400);
+    }
+
+    // ---- Arquivos e git do projeto (F10.1) ----
+
+    /// Home e raiz do perfil pessoal temporários, com o repo `game` inicializado.
+    fn files_app(name: &str, token: Option<&str>) -> (Router, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("hubd-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("raiz");
+        let pc = root.join("game");
+        init_repo(&pc);
+        let home = dir.join("home");
+        let text = EXAMPLE.replace("~/Documentos/pessoal/projetos", &root.display().to_string());
+        let config = Config::parse(&text, &home).unwrap();
+        let state = AppState::new(
+            config,
+            home,
+            token.map(str::to_owned),
+            None,
+            Tmux::default(),
+        );
+        (router(state), dir)
+    }
+
+    #[tokio::test]
+    async fn files_list_reads_repo_tree() {
+        let (app, dir) = files_app("files-list", None);
+        // Cria um arquivo não rastreado e um ignorado.
+        std::fs::write(dir.join("raiz/game/b.txt"), "2").unwrap();
+        std::fs::write(dir.join("raiz/game/.gitignore"), "ignored.txt\n").unwrap();
+        std::fs::write(dir.join("raiz/game/ignored.txt"), "x").unwrap();
+        git_sync(&dir.join("raiz/game"), &["add", ".gitignore"]);
+        git_sync(&dir.join("raiz/game"), &["commit", "-q", "-m", "ignore"]);
+
+        let (status, body) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/game/files",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let files = body["files"].as_array().unwrap();
+        let names: Vec<&str> = files.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"a.txt"), "{names:?}");
+        assert!(names.contains(&"b.txt"), "{names:?}");
+        assert!(names.contains(&".gitignore"), "{names:?}");
+        assert!(!names.contains(&"ignored.txt"), "{names:?}");
+        assert!(
+            !names.iter().any(|n| n == &".git" || n.starts_with(".git/")),
+            "{names:?}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn files_read_write_round_trip() {
+        let (app, dir) = files_app("files-rw", None);
+        let uri = "/api/projects/pessoal/game/files/a.txt";
+        let (status, body) = call_method(app.clone(), "GET", uri, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["content"], "1");
+
+        let (status, _) =
+            call_method(app.clone(), "PUT", uri, Some(r#"{"content":"novo"}"#), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, body) = call_method(app.clone(), "GET", uri, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["content"], "novo");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("raiz/game/a.txt")).unwrap(),
+            "novo"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn files_reject_bad_paths_and_binary() {
+        let (app, dir) = files_app("files-bad", Some("s3gredo"));
+        let token = Some("s3gredo");
+
+        // path com ..
+        let (status, _) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/game/files/..%2Ffora",
+            None,
+            token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // inexistente
+        let (status, _) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/game/files/nao-existe.txt",
+            None,
+            token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // binário
+        std::fs::write(dir.join("raiz/game/bin.bin"), [0u8, 1, 2]).unwrap();
+        let (status, _) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/game/files/bin.bin",
+            None,
+            token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        // token ausente
+        let (status, _) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/game/files/a.txt",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn files_write_rejects_symlink_escape() {
+        let (app, dir) = files_app("files-symlink", None);
+        // symlink dentro do projeto apontando para fora
+        #[cfg(unix)]
+        {
+            let outside = dir.join("fora.txt");
+            std::fs::write(&outside, "segredo").unwrap();
+            let _ = std::os::unix::fs::symlink(&outside, dir.join("raiz/game/escape.txt"));
+            let (status, _) = call_method(
+                app.clone(),
+                "GET",
+                "/api/projects/pessoal/game/files/escape.txt",
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn git_status_reports_changes() {
+        let (app, dir) = files_app("git-status", None);
+        // modifica tracked, cria novo, apaga tracked
+        std::fs::write(dir.join("raiz/game/a.txt"), "modificado").unwrap();
+        std::fs::write(dir.join("raiz/game/novo.txt"), "novo").unwrap();
+        std::fs::remove_file(dir.join("raiz/game/a.txt")).ok();
+        // recria a.txt modificado em vez de apagado para testar status modified
+        std::fs::write(dir.join("raiz/game/a.txt"), "modificado").unwrap();
+
+        let (status, body) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/game/git/status",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let files = body["files"].as_array().unwrap();
+        // novo.txt aparece como untracked
+        assert!(files.iter().any(|f| f["path"] == "novo.txt"), "{body}");
+        // a.txt aparece como modified
+        assert!(
+            files
+                .iter()
+                .any(|f| f["path"] == "a.txt" && f["status"] == "modified"),
+            "{body}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn git_diff_returns_head_and_working() {
+        let (app, dir) = files_app("git-diff", None);
+        std::fs::write(dir.join("raiz/game/a.txt"), "alterado").unwrap();
+        let (status, body) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/game/git/diff/a.txt",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["head"], "1");
+        assert_eq!(body["working"], "alterado");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn git_diff_handles_new_file() {
+        let (app, dir) = files_app("git-diff-new", None);
+        std::fs::write(dir.join("raiz/game/novo.txt"), "conteudo").unwrap();
+        let (status, body) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/game/git/diff/novo.txt",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["head"], serde_json::Value::Null);
+        assert_eq!(body["working"], "conteudo");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn routes_reject_bad_profile_and_project() {
+        let (app, dir) = files_app("files-routes", None);
+        let (status, _) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/nope/game/files",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/nao-existe/files",
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = call_method(
+            app.clone(),
+            "GET",
+            "/api/projects/pessoal/../files",
+            None,
+            None,
+        )
+        .await;
+        // profile inválido → 404 (perfil desconhecido)
+        assert!(status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

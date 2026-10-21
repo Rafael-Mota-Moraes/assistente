@@ -143,3 +143,21 @@ export type StartedSleep = {
 };
 
 export type SleepStatus = { sleeping: boolean; log_tail: string | null };
+
+/** F10.1: árvore de arquivos do projeto (sem .git nem ignorados). */
+export type FileList = { files: string[] };
+
+/** F10.1: conteúdo de um arquivo (texto UTF-8). */
+export type FileContent = { path: string; content: string };
+
+/** F10.1: status git de um arquivo. */
+export type GitFileStatus = {
+  path: string;
+  status: "modified" | "added" | "deleted" | "renamed" | "copied" | "untracked";
+  staged: boolean;
+};
+
+export type GitStatus = { files: GitFileStatus[] };
+
+/** F10.1: diff de um arquivo (HEAD × árvore de trabalho). */
+export type GitDiff = { path: string; head: string | null; working: string | null };

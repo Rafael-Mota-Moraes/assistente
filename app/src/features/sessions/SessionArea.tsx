@@ -1,10 +1,11 @@
-import { Bot, RotateCcw, SquareChevronRight, TerminalSquare, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { Bot, FileCode2, RotateCcw, SquareChevronRight, TerminalSquare, X } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import type { AgentKind, SessionInfo } from "../../bridge/types";
 import { useAppStore, visibleProjectSessions } from "../../store";
 import { claudeLoginCommand, endSession, openSession } from "./actions";
 import { reopenTab } from "./shortcuts";
 import { TerminalView } from "./TerminalView";
+import { EditorPanel } from "../editor/EditorPanel";
 
 const agents: { id: AgentKind; label: string; icon: typeof Bot; title: string }[] = [
   { id: "claude", label: "Claude", icon: Bot, title: "Nova sessão do Claude (no ai-jail da VM)" },
@@ -51,6 +52,7 @@ export function SessionArea() {
   } = useAppStore();
   const profile = profiles.find((p) => p.id === activeProfile);
   const color = profile?.color ?? "#a78bfa";
+  const [showEditor, setShowEditor] = useState(false);
   const claudeWithoutLogin = profile?.claude_login === false;
 
   if (hubError) {
@@ -100,6 +102,18 @@ export function SessionArea() {
               <Icon className="size-4" /> {label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setShowEditor((v) => !v)}
+            title="Editar arquivos do projeto e ver diffs"
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+              showEditor
+                ? "border-accent/60 bg-accent/20 text-white"
+                : "border-line bg-white/5 text-slate-200 hover:bg-white/10"
+            }`}
+          >
+            <FileCode2 className="size-4" /> Editor
+          </button>
         </div>
       </header>
       {claudeWithoutLogin && !actionError && (
@@ -117,7 +131,9 @@ export function SessionArea() {
           {actionError}
         </p>
       )}
-      {projectSessions.length === 0 ? (
+      {showEditor ? (
+        <EditorPanel onClose={() => setShowEditor(false)} />
+      ) : projectSessions.length === 0 ? (
         <Empty title="Nenhuma sessão aberta">
           Clique em Claude ou OpenCode para abrir um agente neste projeto, ou em Terminal para um
           bash fora do jail. A sessão continua viva na VM mesmo se você fechar o app.

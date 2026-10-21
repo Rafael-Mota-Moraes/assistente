@@ -168,6 +168,22 @@ pub fn branch(task: &str) -> String {
     format!("agente/{task}")
 }
 
+/// Pasta do binário do opencode na VM: o provisionamento põe em `~/.opencode/bin` (F1.3). Fica
+/// fora do PATH e fora do jail, então o trabalhador precisa dela montada e do caminho absoluto.
+pub fn opencode_dir(home: &Path) -> PathBuf {
+    home.join(".opencode/bin")
+}
+
+/// Binário do opencode que o trabalhador roda: o do instalador se existir, senão o do PATH.
+pub fn opencode_bin(home: &Path) -> PathBuf {
+    let installed = opencode_dir(home).join("opencode");
+    if installed.exists() {
+        installed
+    } else {
+        PathBuf::from("opencode")
+    }
+}
+
 /// Linha do `info/exclude` que mantém os worktrees fora do `git status` do projeto.
 pub const WORKTREES_EXCLUDE: &str = "/.assistente/worktrees/";
 

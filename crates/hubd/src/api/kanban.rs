@@ -292,22 +292,12 @@ async fn start_worker(
     Ok(info)
 }
 
-/// Binário do opencode na VM: o instalador põe em `~/.opencode/bin` (F1.3), fora do PATH do hubd.
-fn opencode_bin(home: &Path) -> PathBuf {
-    let installed = home.join(".opencode/bin/opencode");
-    if installed.exists() {
-        installed
-    } else {
-        PathBuf::from("opencode")
-    }
-}
-
 /// Modelos grátis do opencode (`opencode models` com a config do perfil), na ordem do histórico
 /// de sucesso do perfil (F11.10). Sem nenhum grátis, responde erro com o que fazer.
 async fn auto_models(state: &AppState, profile: &str) -> Reply<Vec<String>> {
     let inner = &state.0;
     let data = profile_data_dir(&inner.home, profile);
-    let listing = tokio::process::Command::new(opencode_bin(&inner.home))
+    let listing = tokio::process::Command::new(worker::opencode_bin(&inner.home))
         .arg("models")
         .env("OPENCODE_CONFIG", data.join("opencode/opencode.json"))
         .kill_on_drop(true)

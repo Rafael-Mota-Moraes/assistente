@@ -97,6 +97,8 @@ struct JailOptions<'a> {
     exec_port: Option<u16>,
     /// Comando que roda dentro do jail (o agente, ou o `trabalhador`).
     command: &'a [String],
+    /// Pastas do host montadas em leitura dentro do jail (o `trabalhador` precisa do opencode).
+    extra_maps: &'a [PathBuf],
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -213,6 +215,7 @@ impl LaunchPlan {
             }
         }
         let mut cwd = profile.root.join(&spec.project);
+        let mut extra_maps: Vec<PathBuf> = Vec::new();
         let argv = if spec.agent == AgentKind::Shell {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
             vec!["bash".to_owned(), "-l".to_owned()]
@@ -224,7 +227,8 @@ impl LaunchPlan {
                 Mode::Worker(run) => {
                     cwd = run.worktree.clone();
                     let files = crate::worker::files(&data_dir, &session);
-                    env.extend(worker_env(run, &files));
+                    env.extend(worker_env(run, &files, &crate::worker::opencode_bin(home)));
+                    extra_maps.push(crate::worker::opencode_dir(home));
                     vec![
                         exec_client_dir(home)
                             .join("trabalhador")
@@ -241,6 +245,7 @@ impl LaunchPlan {
                 allow_hosts: &settings.allow_hosts,
                 exec_port: exec.map(|e| e.port),
                 command: &command,
+                extra_maps: &extra_maps,
             };
             jail_argv(config, home, profile, &data_dir, &env, spec.agent, &jail)
         };
@@ -341,6 +346,10 @@ fn jail_argv(
     argv.push(home.join(".local/lib/ai-memory").display().to_string());
     argv.push("--rw-map".to_owned());
     argv.push(home.join(".local/share/ai-memory").display().to_string());
+    for dir in jail.extra_maps {
+        argv.push("--map".to_owned());
+        argv.push(dir.display().to_string());
+    }
     // O marcador do workspace mora na raiz do perfil, fora do projeto: sem ele a memória
     // cai no workspace "default" (criado por vm/configurar-agentes.sh).
     argv.push("--map".to_owned());
@@ -380,9 +389,14 @@ fn agent_command(agent: AgentKind) -> Vec<String> {
 }
 
 /// Variáveis que o `vm/trabalhador` lê (env do tmux, passadas ao jail com `--env`).
-fn worker_env(run: &WorkerRun, files: &crate::worker::WorkerFiles) -> Vec<(String, String)> {
+fn worker_env(
+    run: &WorkerRun,
+    files: &crate::worker::WorkerFiles,
+    opencode: &Path,
+) -> Vec<(String, String)> {
     vec![
         ("AGENTE_TAREFA".to_owned(), run.task.clone()),
+        ("AGENTE_OPENCODE".to_owned(), opencode.display().to_string()),
         ("AGENTE_MODELOS".to_owned(), run.models.join(" ")),
         ("AGENTE_TENTATIVAS".to_owned(), run.attempts.to_string()),
         ("AGENTE_MAX_MIN".to_owned(), run.max_minutes.to_string()),
@@ -763,6 +777,17 @@ mod tests {
             Some("/home/rafa/.local/lib/assistente/trabalhador")
         );
         assert!(!plan.argv.iter().any(|arg| arg == "--standalone"));
+        // O opencode do instalador não está no PATH do jail: vai montado e com caminho absoluto.
+        let opencode_dir = "/home/rafa/.opencode/bin";
+        assert!(
+            plan.argv
+                .windows(2)
+                .any(|w| w[0] == "--map" && w[1] == opencode_dir),
+            "{:?}",
+            plan.argv
+        );
+        // Sem o binário instalado no home do teste, cai no `opencode` do PATH.
+        assert_eq!(env(&plan, "AGENTE_OPENCODE"), Some("opencode"));
         assert_eq!(env(&plan, "AGENTE_TAREFA"), Some("T7"));
         assert_eq!(env(&plan, "AGENTE_MODELOS"), Some("x/a x/b"));
         assert_eq!(env(&plan, "AGENTE_TENTATIVAS"), Some("2"));

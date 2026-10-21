@@ -42,6 +42,11 @@ Uma sessão do opencode no jail, rodando `vm/trabalhador`, no worktree da tarefa
 - `[workers]` do `.assistente.toml`: `models` (principal primeiro, depois reservas), `attempts`
   (tentativas por modelo), `max_minutes` e `wait_secs`. `models` é opcional (F11.10).
 
+O opencode do instalador (`~/.opencode/bin`, fora do PATH) vai para o jail só de leitura (`--map`) e o
+trabalhador recebe o caminho absoluto em `AGENTE_OPENCODE`. Sem isso o trabalhador falha com
+`opencode: not found` em todas as tentativas e o card fica parado em "fazendo" (corrigido junto com
+F11.10, achado por reprodução com o hubd de verdade).
+
 Escolha dos modelos (F11.10), na ordem: pedido (`--modelos` ou o "Mandar" com modelos) > `[workers]
 models` do projeto > automática. A automática roda `opencode models` com a config do perfil
 (`OPENCODE_CONFIG`), fica com os grátis (provedor `opencode` ou "free" no nome) e ordena pela taxa de

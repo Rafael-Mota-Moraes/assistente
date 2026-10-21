@@ -207,6 +207,39 @@ hubd); F11.2 antes de F11.4.
 - [ ] **F11.5 Validação na VM real** *(humano)*. Quadro com 3 tarefas e 2 sessões abertas: cada sessão puxa uma distinta; mover um card pelo app; fechar uma das abas e ver a tarefa voltar ao backlog; `dorme` de noite alimentado pelo quadro, com revisão no "Bom dia".
   Pronto quando: os itens acima conferem. Como testar: sessão real.
 
+## F12 — Apontar e pedir na tela
+
+Enquanto o sistema roda, aponte para o que quer mudar. O app abre o projeto numa webview filha
+(o mesmo padrão do painel da memória, F5.5) com um modo de seleção: o elemento sob o mouse ganha
+contorno, o clique o congela e abre a caixa de pedido; o agente recebe componente,
+`arquivo:linha` (quando o build expõe), seletor, texto e o seu recado, edita o código e o hot
+reload mostra o resultado na própria webview. O pedido vai para a sessão que está trabalhando no
+projeto ou vira card no quadro (F11). Depende de F9.2 (URL do preview por projeto) e, para o
+quadro, de F11.1–F11.3. Rotas novas em `not_yet("F12.x")`.
+
+O dev server precisa ser alcançável de fora do jail: a webview carrega a URL direto, então escute
+na interface da VM (ex.: `vite --host 0.0.0.0`) e rode-o na aba Terminal (F9.1, fora do jail) ou
+ligue rede completa (F9.2) — com a rede filtrada, o loopback é só do sandbox. A URL fica em
+`~/.assistente/projetos.toml` (só `http`/`https`, sem credenciais), nunca no repo. Como no painel
+da memória, a webview do preview fica fora das capabilities: a página apontada não alcança os
+comandos do app.
+
+- [ ] **F12.1 Preview do projeto.** `preview_url` opcional em `ProjectSettings` (F9.2) e no espelho `app/src/bridge/types.ts`, editável na engrenagem (F9.3), com a dica de que o endereço é visto do PC (projeto rodando na VM usa o IP dela). Comandos Tauri no molde de F5.5: `open_preview_panel`, `update_preview_panel_bounds`, `preview_panel_visible` (esconde ao abrir o modal), `preview_picker` (liga/desliga o modo por `eval` no script) e `close_preview_panel`, validando `http`/`https` e recusando credenciais. Botão "Visualizar" junto dos agentes; o chrome (URL, recarregar, apontar, fechar) é React e a webview preenche o retângulo, inclusive ao redimensionar a janela. Testes: `project_settings_round_trip` com `preview_url`, validação da URL e caso em `ProjectSettingsDialog.test.tsx`.
+  Pronto quando: colar a URL do dev server na engrenagem e clicar em Visualizar abre o app dentro do Assistente, sem fechar a sessão.
+  Como testar: `./dev just hubd` + `vite --host` de um projeto de teste e o painel no app.
+- [ ] **F12.2 Modo apontar.** Script injetado na webview do preview (`initialization_script`, fora do bundle do projeto): botão flutuante "Apontar", contorno no elemento sob o mouse, clique capturado na fase de captura (sem disparar o clique da página), Esc cancela e um novo clique troca a seleção. O pick leva tag, id, classes, `role`/`aria`, texto curto, trecho de HTML curto, seletor CSS estável, caminho no DOM, retângulo, viewport/scroll e URL; chega ao app por uma navegação `assistente-pick:` interceptada com `on_navigation` no Rust, que descarta payload acima do limite, anexa a URL real da webview (não confia na URL do payload), emite o evento e cancela a navegação — sem IPC e sem CORS na página remota. Testes: parser do pick e interceptação em Rust; `PickDialog.test.tsx` com pick fake; manual com app de teste.
+  Pronto quando: apontar um botão no app rodando abre a caixa de pedido com o elemento certo, e o botão da página não dispara a ação.
+  Como testar: app de teste com um botão que muda de cor; apontar e conferir que nada mudou antes de enviar.
+- [ ] **F12.3 Contexto de código.** No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.
+  Pronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.
+  Como testar: vitest com DOM fake + um build de produção.
+- [ ] **F12.4 Enviar ao agente.** `POST /api/projects/{perfil}/{projeto}/picks`: escreve `.assistente/picks/<data-hora>.md` com o detalhe do pick (fora do git via `.git/info/exclude`, como o `.ai-jail` da F0.5), monta o prompt curto (URL, onde, seletor, texto, pedido) e entrega no alvo escolhido no modal: **sessão** (só de agente, nunca a aba Terminal; confere que é do projeto e está viva, cola no prompt com `set-buffer` + `paste-buffer` **sem Enter** — Enter é seu, para não aprovar pergunta pendente nem executar texto no shell) ou **quadro** (card no backlog da F11.1, autossuficiente: o clone do notebook não tem o arquivo local). O modal mostra o prompt que será enviado, deixa editar o texto e escolher a sessão (padrão: a aba ativa do projeto); ao colar, a UI leva para a aba e avisa "confirme no terminal". Testes: rota com tmux real (colar e ler de volta, sem o pedido rodar sozinho), card fake, guards (texto vazio, sessão de outro projeto ou tipo shell, sessão/projeto inexistente), `PickDialog.test.tsx` (envio, erro, troca de alvo).
+  Pronto quando: apontar um botão, escrever "deixa verde" e enviar faz o texto aparecer no prompt da sessão; depois do seu Enter, o agente edita o arquivo certo.
+  Como testar: rota com tmux real + manual.
+- [ ] **F12.5 Validação na VM real** *(humano)*. Dev server na aba Terminal (F9.1), preview aberto e dois apontamentos (um botão e um texto); enviar para a sessão e conferir o hot reload depois do Enter; repetir com o agente ocupado e com a sessão fechada (erro claro + card no quadro); build de produção sem `_debugSource`; conferir que a página do preview não chama comando do app (nenhuma capability aponta para a origem dela).
+  Pronto quando: o ciclo apontar → descrever → confirmar no terminal → ver a mudança leva menos de um minuto e a webview do preview continua sem comandos do app.
+  Como testar: manual *(humano)*.
+
 ## Depois
 
 - Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.

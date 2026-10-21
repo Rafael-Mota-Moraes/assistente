@@ -1,5 +1,5 @@
 {
-  "next": 3,
+  "next": 4,
   "cards": [
     {
       "id": "T1",
@@ -18,6 +18,15 @@
       "kind": "manual",
       "column": "backlog",
       "created_at": 1792614071
+    },
+    {
+      "id": "T3",
+      "title": "F9.11 Cuidados do modo PC",
+      "description": "Card em vermelho com \"vai rodar no seu PC\", comando e pasta por inteiro; sem \"aprovar e sempre permitir\" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).\nPronto quando: nenhum caminho aprova pedido `host` sem clique (fora da lista exata) e todo pedido executado fica no registro. Como testar: vitest do card e da lista; revisão da spec 05.",
+      "priority": "normal",
+      "kind": "manual",
+      "column": "backlog",
+      "created_at": 1792614072
     }
   ]
 }

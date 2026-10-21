@@ -21,6 +21,7 @@ use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -1149,47 +1150,17 @@ async fn update_status(State(state): State<AppState>) -> Json<UpdateStatusView> 
     }
     applied.push(env!("HUBD_COMMIT").to_owned());
 
+    let em_uso: Vec<String> = std::iter::once(env!("HUBD_COMMIT").to_owned())
+        .chain(current_ui.clone())
+        .collect();
     let (head, commits) = match &state.0.config.self_update {
         Some(self_update) => {
             match sleep_project_dir(&state, &self_update.profile, &self_update.project) {
-                Ok(dir) => tokio::task::spawn_blocking(move || {
-                    let log = |args: &[&str]| -> Option<String> {
-                        let output = std::process::Command::new("git")
-                            .arg("-C")
-                            .arg(&dir)
-                            .args(args)
-                            .output()
-                            .ok()?;
-                        output
-                            .status
-                            .success()
-                            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-                            .filter(|s| !s.is_empty())
-                    };
-                    let head = log(&["rev-parse", "--short", "HEAD"]);
-                    let already_applied = |hash: &str| {
-                        applied
-                            .iter()
-                            .any(|done| done.starts_with(hash) || hash.starts_with(done))
-                    };
-                    let commits = log(&["log", "-50", "--format=%h%x1f%s"])
-                        .map(|text| {
-                            text.lines()
-                                .filter_map(|line| {
-                                    let (hash, subject) = line.split_once('\u{1f}')?;
-                                    (!already_applied(hash)).then(|| UpdateCommitView {
-                                        hash: hash.to_owned(),
-                                        subject: subject.to_owned(),
-                                    })
-                                })
-                                .take(8)
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    (head, commits)
-                })
-                .await
-                .unwrap_or((None, Vec::new())),
+                Ok(dir) => {
+                    tokio::task::spawn_blocking(move || update_repo_state(&dir, &em_uso, &applied))
+                        .await
+                        .unwrap_or((None, Vec::new()))
+                }
                 Err(_) => (None, Vec::new()),
             }
         }
@@ -1210,6 +1181,59 @@ async fn update_status(State(state): State<AppState>) -> Json<UpdateStatusView> 
         pending_commits: commits,
         head_commit: head,
     })
+}
+
+/// HEAD curto e commits do repo `dir` que ainda não rodam. Saem os já aplicados (`applied`, hashes
+/// exatos) e tudo que é ancestral de um commit em uso (`running`): o código deles já está no que
+/// roda, e aplicar um deles seria um downgrade. Sem o repo, nada.
+fn update_repo_state(
+    dir: &std::path::Path,
+    running: &[String],
+    applied: &[String],
+) -> (Option<String>, Vec<UpdateCommitView>) {
+    let git = |args: &[&str]| -> Option<String> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .filter(|s| !s.is_empty())
+    };
+    let head = git(&["rev-parse", "--short", "HEAD"]);
+    // O build.rs marca `-sujo` quando a árvore estava suja; `rev-list` não aceita esse sufixo.
+    let running_history: HashSet<String> = running
+        .iter()
+        .filter_map(|commit| git(&["rev-list", commit.trim_end_matches("-sujo")]))
+        .flat_map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
+        .collect();
+    let already_applied = |hash: &str| {
+        applied
+            .iter()
+            .any(|done| done.starts_with(hash) || hash.starts_with(done))
+    };
+    let commits = git(&["log", "-50", "--format=%H%x1f%h%x1f%s"])
+        .map(|text| {
+            text.lines()
+                .filter_map(|line| {
+                    let mut parts = line.splitn(3, '\u{1f}');
+                    let (full, hash, subject) = (parts.next()?, parts.next()?, parts.next()?);
+                    (!running_history.contains(full) && !already_applied(hash)).then(|| {
+                        UpdateCommitView {
+                            hash: hash.to_owned(),
+                            subject: subject.to_owned(),
+                        }
+                    })
+                })
+                .take(8)
+                .collect()
+        })
+        .unwrap_or_default();
+    (head, commits)
 }
 
 async fn apply_update(
@@ -3646,6 +3670,44 @@ mod tests {
         .await;
         // profile inválido → 404 (perfil desconhecido)
         assert!(status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pending_update_skips_commits_already_running() {
+        let dir = std::env::temp_dir().join(format!("hubd-pendentes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(["-c", "user.name=teste", "-c", "user.email=teste@teste"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        for subject in ["feat: um", "feat: dois", "feat: tres"] {
+            git(&["commit", "-q", "--allow-empty", "-m", subject]);
+        }
+        let dois = git(&["rev-parse", "--short", "HEAD~1"]);
+
+        // Rodando `dois`: `um` é ancestral (já tem o código), só `tres` está pendente.
+        let (head, pending) = update_repo_state(&dir, std::slice::from_ref(&dois), &[]);
+        assert!(head.is_some());
+        let subjects: Vec<&str> = pending.iter().map(|c| c.subject.as_str()).collect();
+        assert_eq!(subjects, ["feat: tres"]);
+
+        // Build com árvore suja (`-sujo`) não muda o resultado.
+        let (_, pending) = update_repo_state(&dir, &[format!("{dois}-sujo")], &[]);
+        assert_eq!(pending.len(), 1);
+
+        // Sem commit em uso conhecido (ex.: "desconhecido"), tudo que não foi aplicado aparece.
+        let (_, pending) = update_repo_state(&dir, &["desconhecido".to_owned()], &[]);
+        assert_eq!(pending.len(), 3);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -122,7 +122,7 @@ Spec 09. Ordem sugerida: F8.1 e F8.2 valem sozinhas; F8.4 começa por uma prova 
   Pronto quando: o app abre com a UI do hubd; com o hubd parado, abre a reserva com o erro. Como testar: app real com a VM.
 - [ ] **F8.5 Atualizador na VM.** `vm/atualizar.sh` (worktree do commit, `just check`, build, `versoes/atual`, restart com volta automática); `GET /api/update`, `POST /api/update/apply`, `POST /api/update/rollback`; `hubd.service` com `ExecStart=%h/.assistente/versoes/atual/hubd` e `Restart=always`.
   Pronto quando: aplicar um commit que quebra o `/api/health` volta sozinho para a versão anterior. Como testar: script com repo de teste no devenv + manual na VM.
-- [x] **F8.6 Aba e painel Assistente.** `[self_update]` na config; botão fixo; painel com commit em uso, pendentes, camadas tocadas, Aplicar, log e Voltar.
+- [ ] **F8.6 Aba e painel Assistente.** `[self_update]` na config; botão fixo; painel com commit em uso, pendentes, camadas tocadas, Aplicar, log e Voltar. A fila de pendentes agora exclui os ancestrais do commit em uso; falta o teste manual de Aplicar e Voltar na VM real.
   Pronto quando: dá para aplicar e voltar sem sair do app. Como testar: vitest com dados fake + manual.
 - [ ] **F8.7 Recarregar ao aplicar.** O app nota o commit novo da UI no `/api/health` e recarrega; commit que toca `app/src-tauri` mostra "reinstale o app".
   Pronto quando: aplicar uma mudança de texto na UI aparece sem fechar o app e com os terminais vivos. Como testar: manual na VM.

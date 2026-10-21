@@ -143,16 +143,17 @@ impl LaunchPlan {
         Self::assemble(config, home, spec, seq, options, Mode::Agent)
     }
 
-    /// Claude que já começa explorando (F11.9): o prompt é o arquivo de `explore_file`, que o
-    /// chamador grava antes de criar a sessão. Só faz sentido para `AgentKind::Claude`.
+    /// Claude que já começa explorando (F11.9): o prompt vai como argumento do `claude`, igual
+    /// ao agente comum. Só faz sentido para `AgentKind::Claude`.
     pub fn build_explore(
         config: &Config,
         home: &Path,
         spec: &SessionSpec,
         seq: u32,
         options: &LaunchOptions,
+        prompt: &str,
     ) -> Result<Self, LaunchError> {
-        Self::assemble(config, home, spec, seq, options, Mode::Explore)
+        Self::assemble(config, home, spec, seq, options, Mode::Explore(prompt))
     }
 
     /// Sessão de trabalhador (F11.6): o opencode roda `vm/trabalhador` no worktree da tarefa,
@@ -217,16 +218,9 @@ impl LaunchPlan {
             vec!["bash".to_owned(), "-l".to_owned()]
         } else {
             let command = match mode {
-                Mode::Explore => {
-                    env.push((
-                        "ASSISTENTE_PROMPT_FILE".to_owned(),
-                        explore_file(&data_dir, &session).display().to_string(),
-                    ));
-                    EXPLORE_COMMAND
-                        .iter()
-                        .map(|part| (*part).to_owned())
-                        .collect()
-                }
+                // Sem `bash`: dentro do jail o PATH não acha o `claude` (a home é privada,
+                // e ~/.local/bin fica de fora). O ai-jail resolve o binário, como no agente.
+                Mode::Explore(prompt) => vec!["claude".to_owned(), prompt.to_owned()],
                 Mode::Worker(run) => {
                     cwd = run.worktree.clone();
                     let files = crate::worker::files(&data_dir, &session);
@@ -367,28 +361,12 @@ fn jail_argv(
     argv
 }
 
-/// A sessão de exploração recebe o prompt como primeiro argumento do Claude, lido do arquivo
-/// (sem quoting no tmux). `-l`: o `claude` fica em `~/.local/bin`, que só o perfil de login põe
-/// no PATH (sem ele, o painel morre com `claude: not found`).
-const EXPLORE_COMMAND: [&str; 5] = [
-    "bash",
-    "-l",
-    "-c",
-    "exec claude \"$(cat \"$ASSISTENTE_PROMPT_FILE\")\"",
-    "claude",
-];
-
-/// Arquivo do prompt de exploração da sessão `session` (`<data>/explorar/<session>.md`).
-pub fn explore_file(profile_data: &Path, session: &str) -> PathBuf {
-    profile_data.join("explorar").join(format!("{session}.md"))
-}
-
 /// Como a sessão foi montada: agente comum, trabalhador do quadro (F11.6) ou exploração (F11.9).
 #[derive(Clone, Copy)]
 enum Mode<'a> {
     Agent,
     Worker(&'a WorkerRun),
-    Explore,
+    Explore(&'a str),
 }
 
 /// Comando do agente dentro do jail. O opencode 2 roda como cliente de um servidor em segundo
@@ -722,7 +700,7 @@ mod tests {
     }
 
     #[test]
-    fn explore_starts_claude_reading_the_prompt_file() {
+    fn explore_starts_claude_with_the_prompt_as_its_argument() {
         let (config, home) = setup();
         let options = LaunchOptions::default();
         let plan = LaunchPlan::build_explore(
@@ -731,22 +709,15 @@ mod tests {
             &spec("pessoal", "x", AgentKind::Claude),
             1,
             &options,
+            "monte o quadro",
         )
         .unwrap();
+        // O `claude` roda direto pelo ai-jail (sem bash): o PATH do jail não o acharia.
         assert_eq!(
-            env(&plan, "ASSISTENTE_PROMPT_FILE"),
-            Some("/home/rafa/.assistente/perfis/pessoal/explorar/pessoal--x--claude-1.md")
+            plan.argv[plan.argv.len() - 2..],
+            ["claude", "monte o quadro"]
         );
-        let tail = &plan.argv[plan.argv.len() - 5..];
-        assert_eq!(tail[0], "bash");
-        assert_eq!(tail[1], "-l", "sem login o claude não está no PATH");
-        assert_eq!(tail[2], "-c");
-        assert!(tail[3].contains("$ASSISTENTE_PROMPT_FILE"), "{tail:?}");
-        assert_eq!(tail[4], "claude");
-        assert_eq!(
-            explore_file(&profile_data_dir(&home, "pessoal"), "pessoal--x--claude-1"),
-            PathBuf::from("/home/rafa/.assistente/perfis/pessoal/explorar/pessoal--x--claude-1.md")
-        );
+        assert_eq!(env(&plan, "ASSISTENTE_PROMPT_FILE"), None);
     }
 
     #[test]

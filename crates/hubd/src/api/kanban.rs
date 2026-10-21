@@ -1017,13 +1017,14 @@ mod tests {
         let (status, info) = send(hub.app.clone(), "POST", uri, None, None).await;
         assert_eq!(status, StatusCode::CREATED, "{info}");
         assert_eq!(info["agent"], "claude");
-        let file = hub_core::explore_file(
-            &hub_core::profile_data_dir(&hub.home, "pessoal"),
-            info["id"].as_str().unwrap(),
+        // O prompt vai no argv do claude (testado em hub-core); aqui só confere a sessão viva.
+        assert!(
+            t.tmux
+                .find(info["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .is_some()
         );
-        let prompt = std::fs::read_to_string(&file).unwrap();
-        assert!(prompt.contains("kanban listar"), "{prompt}");
-        assert!(prompt.contains("Não use --tipo agente"), "{prompt}");
     }
 
     #[tokio::test]

@@ -14,8 +14,8 @@ use axum::{Json, Router};
 use http_body_util::{BodyExt, Full};
 use hub_core::{
     AgentKind, Config, ExecAccess, LaunchOptions, LaunchPlan, Project, ProjectSettings,
-    SessionSpec, claude_logged_in, discover_projects, exec_client_dir, explore_file, load_settings,
-    profile_data_dir, settings_path,
+    SessionSpec, claude_logged_in, discover_projects, exec_client_dir, load_settings,
+    settings_path,
 };
 use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
@@ -2300,20 +2300,12 @@ pub(super) async fn launch_session(
         exec,
     };
     let mut plan = match prompt {
-        Some(_) => LaunchPlan::build_explore(&inner.config, &inner.home, spec, seq, &options),
+        Some(prompt) => {
+            LaunchPlan::build_explore(&inner.config, &inner.home, spec, seq, &options, prompt)
+        }
         None => LaunchPlan::build_with(&inner.config, &inner.home, spec, seq, &options),
     }
     .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
-    if let Some(prompt) = prompt {
-        let file = explore_file(
-            &profile_data_dir(&inner.home, &spec.profile),
-            &plan.tmux_session,
-        );
-        if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| internal(&e.to_string()))?;
-        }
-        std::fs::write(&file, prompt).map_err(|e| internal(&e.to_string()))?;
-    }
     // Só projetos de verdade (repo git na raiz do perfil).
     if !plan.cwd.join(".git").exists() || !plan.cwd.starts_with(&profile.root) {
         return Err(error(

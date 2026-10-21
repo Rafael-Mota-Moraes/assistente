@@ -275,6 +275,16 @@ comandos do app.
   Pronto quando: o ciclo apontar → descrever → confirmar no terminal → ver a mudança leva menos de um minuto e a webview do preview continua sem comandos do app.
   Como testar: manual *(humano)*.
 
+## F13 — Git remoto
+
+- [ ] **F13.1 Push para o GitHub a partir deste PC** *(humano)*. `git push origin main` falhou com
+  "Host key verification failed": o PC não tem chave SSH (`~/.ssh` inexistente) nem `known_hosts` com
+  o GitHub, e o `gh` não está instalado. Escolher um dos caminhos: (a) chave SSH na conta do GitHub +
+  aceitar a chave do host (`ssh -T git@github.com`); ou (b) `gh auth login` e trocar o remote para
+  HTTPS. Não aceitar a chave do host sem conferir a impressão digital.
+  Pronto quando: `git push origin main` envia os commits pendentes da `main` (`b7c80ca`, `b1234fa`).
+  Como testar: `git push --dry-run origin main` sem erro.
+
 ## Depois
 
 - Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.

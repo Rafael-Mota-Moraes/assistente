@@ -1599,6 +1599,24 @@ pub(crate) fn git_out(dir: &std::path::Path, args: &[&str]) -> Result<String, St
     Err(if stderr.is_empty() { stdout } else { stderr })
 }
 
+/// `-c user.name/-c user.email` para um commit do hubd, só para as chaves que o git do usuário não
+/// tem (a VM não tem identidade). Com a identidade dele configurada, nada é passado.
+pub(crate) fn hubd_identity_args(dir: &std::path::Path) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    for (key, fallback) in [
+        ("user.name", "user.name=Assistente"),
+        ("user.email", "user.email=assistente@localhost"),
+    ] {
+        if git_out(dir, &["config", key])
+            .unwrap_or_default()
+            .is_empty()
+        {
+            args.extend(["-c".to_owned(), fallback.to_owned()]);
+        }
+    }
+    args
+}
+
 #[derive(Serialize)]
 struct ProjectSettingsView {
     settings: ProjectSettings,

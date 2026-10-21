@@ -659,12 +659,10 @@ pub async fn ensure_clean_tree(project_dir: &Path, wip: bool) -> Result<bool> {
         bail!("árvore suja — commite as mudanças ou autorize o commit WIP antes de dormir");
     }
     git(project_dir, &["add", "-A"]).await?;
-    git(
-        project_dir,
-        &["commit", "-q", "-m", "wip: hora de dormir (auto)"],
-    )
-    .await
-    .context("commit WIP")?;
+    let mut args = crate::api::hubd_identity_args(project_dir);
+    args.extend(["commit", "-q", "-m", "wip: hora de dormir (auto)"].map(str::to_owned));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    git(project_dir, &args).await.context("commit WIP")?;
     Ok(true)
 }
 

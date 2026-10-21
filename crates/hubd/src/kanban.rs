@@ -39,6 +39,27 @@ pub fn save(dir: &Path, board: &Board, message: &str) -> Result<(), String> {
     if crate::api::git_out(dir, &["status", "--porcelain", "--", FILE])?.is_empty() {
         return Ok(());
     }
-    crate::api::git_out(dir, &["commit", "-q", "-m", message, "--", FILE])?;
+    let mut args = crate::api::hubd_identity_args(dir);
+    args.extend(["commit", "-q", "-m", message, "--", FILE].map(str::to_owned));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    crate::api::git_out(dir, &args)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_commits_without_any_git_identity() {
+        let dir =
+            std::env::temp_dir().join(format!("kanban-sem-identidade-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::api::git_out(&dir, &["init", "-q", "-b", "main"]).unwrap();
+        save(&dir, &Board::default(), "kanban: primeira escrita").unwrap();
+        let subject = crate::api::git_out(&dir, &["log", "-1", "--format=%s"]).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(subject, "kanban: primeira escrita");
+    }
 }

@@ -1,5 +1,5 @@
 {
-  "next": 6,
+  "next": 7,
   "cards": [
     {
       "id": "T1",
@@ -41,6 +41,15 @@
       "id": "T5",
       "title": "F12.2 Modo apontar",
       "description": "Script injetado na webview do preview (`initialization_script`, fora do bundle do projeto): botão flutuante \"Apontar\", contorno no elemento sob o mouse, clique capturado na fase de captura (sem disparar o clique da página), Esc cancela e um novo clique troca a seleção. O pick leva tag, id, classes, `role`/`aria`, texto curto, trecho de HTML curto, seletor CSS estável, caminho no DOM, retângulo, viewport/scroll e URL; chega ao app por uma navegação `assistente-pick:` interceptada com `on_navigation` no Rust, que descarta payload acima do limite, anexa a URL real da webview (não confia na URL do payload), emite o evento e cancela a navegação — sem IPC e sem CORS na página remota. Testes: parser do pick e interceptação em Rust; `PickDialog.test.tsx` com pick fake; manual com app de teste.\nPronto quando: apontar um botão no app rodando abre a caixa de pedido com o elemento certo, e o botão da página não dispara a ação.\nComo testar: app de teste com um botão que muda de cor; apontar e conferir que nada mudou antes de enviar.",
+      "priority": "normal",
+      "kind": "manual",
+      "column": "backlog",
+      "created_at": 1792614072
+    },
+    {
+      "id": "T6",
+      "title": "F12.3 Contexto de código",
+      "description": "No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.\nPronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.\nComo testar: vitest com DOM fake + um build de produção.",
       "priority": "normal",
       "kind": "manual",
       "column": "backlog",

@@ -197,17 +197,31 @@ rm -rf "$repo"
 install -d -o "$USER_NAME" -g "$USER_NAME" "$(dirname "$repo")"
 sudo -u "$USER_NAME" -H git clone -q /tmp/assistente/repo.bundle "$repo"
 
-echo "==> versão inicial do hubd (F8.5)"
-# A unidade roda ~/.assistente/versoes/atual/hubd (F8.5). A primeira versão nasce aqui; o
-# atualizador troca `atual` depois. Se `atual` já existe (reprovisionamento), ele não é mexido.
+echo "==> versão do hubd (F8.5)"
+# A unidade roda ~/.assistente/versoes/atual/hubd (F8.5). O hubd novo vira uma versão própria
+# (provisionado-<hash do binário>) e `atual` passa a apontar para ela. A versão que estava em
+# `atual` vira `anterior`, o alvo do "Voltar". Antes, `atual` ficava na versão antiga e o
+# restart reiniciava o binário velho: o update não tinha efeito nenhum.
 versoes="$HOME_DIR/.assistente/versoes"
-install -d -o "$USER_NAME" -g "$USER_NAME" "$versoes/inicial/ui"
-install -m755 -o "$USER_NAME" -g "$USER_NAME" /tmp/assistente/hubd "$versoes/inicial/hubd"
-chown -R "$USER_NAME:" "$versoes"
-if [ ! -e "$versoes/atual" ] && [ ! -L "$versoes/atual" ]; then
-  ln -s inicial "$versoes/atual"
-  chown -h "$USER_NAME:" "$versoes/atual"
+install -d -o "$USER_NAME" -g "$USER_NAME" "$versoes"
+antiga=""
+if [ -e "$versoes/atual" ] || [ -L "$versoes/atual" ]; then
+  antiga="$(readlink -f "$versoes/atual")"
 fi
+nova="$versoes/provisionado-$(sha256sum /tmp/assistente/hubd | cut -c1-12)"
+install -d -o "$USER_NAME" -g "$USER_NAME" "$nova/ui"
+install -m755 -o "$USER_NAME" -g "$USER_NAME" /tmp/assistente/hubd "$nova/hubd"
+# A UI segue a versão anterior: o build dela não vem do provisionamento (o atualizador da F8.5 faz).
+if [ -n "$antiga" ] && [ -d "$antiga/ui" ]; then
+  cp -a "$antiga/ui/." "$nova/ui/"
+fi
+chown -R "$USER_NAME:" "$versoes"
+if [ -n "$antiga" ] && [ "$antiga" != "$(readlink -f "$nova")" ]; then
+  ln -sfn "$(basename "$antiga")" "$versoes/anterior"
+  chown -h "$USER_NAME:" "$versoes/anterior"
+fi
+ln -sfn "$(basename "$nova")" "$versoes/atual"
+chown -h "$USER_NAME:" "$versoes/atual"
 
 echo "==> hubd"
 sed "s/@USER@/$USER_NAME/g" /tmp/assistente/hubd.service > /etc/systemd/system/hubd.service

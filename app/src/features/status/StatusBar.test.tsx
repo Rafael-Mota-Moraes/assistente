@@ -31,10 +31,14 @@ describe("StatusBar", () => {
       },
       memory: {
         port: 49374,
+        data_dir: "/home/rafa/.local/share/assistente/ai-memory",
         mirror_dir: "/home/rafa/.local/share/assistente/memoria-copia",
         up: true,
         last_error: null,
         checked_at: 0,
+        server_version: null,
+        last_commit: null,
+        web_url: "/web",
       },
       notebook: {
         ssh_host: "notebook",

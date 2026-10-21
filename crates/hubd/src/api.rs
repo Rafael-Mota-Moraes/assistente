@@ -454,10 +454,14 @@ async fn notebook(State(state): State<AppState>) -> Json<NotebookStatus> {
 #[derive(Serialize)]
 struct MemoryStatus {
     port: u16,
+    data_dir: String,
     mirror_dir: String,
     up: bool,
     last_error: Option<String>,
     checked_at: u64,
+    server_version: Option<String>,
+    last_commit: Option<String>,
+    web_url: String,
 }
 
 /// Servidor ai-memory local na VM (F5.0), independente do notebook.
@@ -475,13 +479,60 @@ async fn memory(State(state): State<AppState>) -> Json<MemoryStatus> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    let server_version = read_ai_memory_version();
+    let last_commit = read_wiki_last_commit(&memory.mirror_dir);
     Json(MemoryStatus {
         port,
+        data_dir: memory.data_dir.display().to_string(),
         mirror_dir: memory.mirror_dir.display().to_string(),
         up,
         last_error,
         checked_at,
+        server_version,
+        last_commit,
+        web_url: "/web".to_string(),
     })
+}
+
+/// Versão do binário `ai-memory` no PATH (F5.6). `None` se ausente ou ilegível.
+fn read_ai_memory_version() -> Option<String> {
+    let output = std::process::Command::new("ai-memory")
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let first = text.lines().next()?.trim();
+    if first.is_empty() {
+        None
+    } else {
+        Some(first.to_string())
+    }
+}
+
+/// Último commit do wiki git em `mirror_dir` (ou `mirror_dir/wiki`) (F5.6).
+fn read_wiki_last_commit(mirror_dir: &std::path::Path) -> Option<String> {
+    let wiki = sleep::wiki_repo(mirror_dir);
+    if !wiki.join(".git").exists() {
+        return None;
+    }
+    let output = std::process::Command::new("git")
+        .args([
+            "-C",
+            &wiki.display().to_string(),
+            "log",
+            "-1",
+            "--format=%H %s",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
 }
 
 /// Cookie da web UI do ai-memory (F5.5). O valor é `Inner::memory_session`, não o token do hub.

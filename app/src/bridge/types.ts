@@ -46,10 +46,14 @@ export type NotebookStatus = {
 /** Servidor ai-memory local na VM (F5.0). */
 export type MemoryStatus = {
   port: number;
+  data_dir: string;
   mirror_dir: string;
   up: boolean;
   last_error: string | null;
   checked_at: number;
+  server_version: string | null;
+  last_commit: string | null;
+  web_url: string;
 };
 
 export type HubConnection = { url: string; token: string | null };

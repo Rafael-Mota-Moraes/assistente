@@ -3,6 +3,7 @@ import { vmStart, vmStatus, vmStop } from "../../bridge/host";
 import type { MemoryStatus, ServiceStatus, TunnelStatus, VmState } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { StatusDot, type Tone } from "../../ui/StatusDot";
+import { MemoryStatusPanel } from "../memory/MemoryStatusPanel";
 
 const vmTone: Record<VmState, Tone> = {
   running: "ok",
@@ -52,6 +53,7 @@ export function memoryTitle(memory: MemoryStatus): string {
 export function StatusBar() {
   const { vm, health, hubError, notebook, memory } = useAppStore();
   const [vmBusy, setVmBusy] = useState(false);
+  const [memoryStatusOpen, setMemoryStatusOpen] = useState(false);
 
   async function toggleVm(action: "start" | "stop") {
     setVmBusy(true);
@@ -109,7 +111,18 @@ export function StatusBar() {
         />
       )}
       {memory && (
-        <StatusDot tone={memory.up ? "ok" : "off"} label="ai-memory" title={memoryTitle(memory)} />
+        <button
+          type="button"
+          onClick={() => setMemoryStatusOpen(true)}
+          className="flex items-center"
+          title={memoryTitle(memory)}
+          data-tone={memory.up ? "ok" : "off"}
+        >
+          <StatusDot tone={memory.up ? "ok" : "off"} label="ai-memory" />
+        </button>
+      )}
+      {memory && memoryStatusOpen && (
+        <MemoryStatusPanel memory={memory} onClose={() => setMemoryStatusOpen(false)} />
       )}
       {notebook?.services
         .filter((service) => service.name !== "ai_memory")

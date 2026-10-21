@@ -1,5 +1,5 @@
 {
-  "next": 8,
+  "next": 9,
   "cards": [
     {
       "id": "T1",
@@ -59,6 +59,15 @@
       "id": "T7",
       "title": "F12.4 Enviar ao agente",
       "description": "`POST /api/projects/{perfil}/{projeto}/picks`: escreve `.assistente/picks/<data-hora>.md` com o detalhe do pick (fora do git via `.git/info/exclude`, como o `.ai-jail` da F0.5), monta o prompt curto (URL, onde, seletor, texto, pedido) e entrega no alvo escolhido no modal: **sessão** (só de agente, nunca a aba Terminal; confere que é do projeto e está viva, cola no prompt com `set-buffer` + `paste-buffer` **sem Enter** — Enter é seu, para não aprovar pergunta pendente nem executar texto no shell) ou **quadro** (card no backlog da F11.1, autossuficiente: o clone do notebook não tem o arquivo local). O modal mostra o prompt que será enviado, deixa editar o texto e escolher a sessão (padrão: a aba ativa do projeto); ao colar, a UI leva para a aba e avisa \"confirme no terminal\". Testes: rota com tmux real (colar e ler de volta, sem o pedido rodar sozinho), card fake, guards (texto vazio, sessão de outro projeto ou tipo shell, sessão/projeto inexistente), `PickDialog.test.tsx` (envio, erro, troca de alvo).\nPronto quando: apontar um botão, escrever \"deixa verde\" e enviar faz o texto aparecer no prompt da sessão; depois do seu Enter, o agente edita o arquivo certo.\nComo testar: rota com tmux real + manual.",
+      "priority": "normal",
+      "kind": "manual",
+      "column": "backlog",
+      "created_at": 1792614072
+    },
+    {
+      "id": "T8",
+      "title": "F14.1 Leitura de diagnóstico sem aprovação",
+      "description": "Rota nova na API dos agentes (`127.0.0.1:7879`,\ntoken da sessão, como o `fora-do-jail`): `POST /v1/diagnostico` com `{\"comando\": \"...\"}`. Só aceita\numa lista fixa de comandos de leitura, escrita no Rust (não é shell livre): `journal-hubd` (últimas N\nlinhas de `journalctl -u hubd`), `tmux-ls`, `tmux-pane` (`capture-pane` de uma sessão do projeto,\ncom `-S -200`), `explorar` (lista e tamanho dos prompts em `explorar/`) e `claude-login`\n(`bash -l -c 'command -v claude'`). A saída é cortada em 64 KiB e comando fora da lista responde 400.\nNão passa pelo `ExecApprovals` (F9.7) porque não escreve nada. Testes: parser e recusa de comando\nfora da lista em Rust; chamada com token errado responde 401.\nPronto quando: um agente dentro de uma sessão do projeto lê o journal do hubd e a saída de uma sessão\nmorta sem pedir aprovação. Como testar: `cargo test` das rotas + uma sessão de agente que chama a rota.",
       "priority": "normal",
       "kind": "manual",
       "column": "backlog",

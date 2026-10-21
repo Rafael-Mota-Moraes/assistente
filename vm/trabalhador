@@ -19,7 +19,10 @@ OPENCODE="${AGENTE_OPENCODE:-opencode}"
 RESULTADOS="${AGENTE_RESULTADOS:-/dev/null}"
 # Intervalo em que a saída é vigiada, e o que nela quer dizer "o provedor recusou o modelo".
 VIGIA="${AGENTE_VIGIA:-5}"
-ERRO_PROVEDOR='rate.?limit|too many requests|quota exceeded|overloaded|ECONNRESET|ETIMEDOUT|ProviderModelNotFound|model not found|model unavailable|has been deprecated|status(code)?[:=] ?(429|5[0-9][0-9])'
+ERRO_PROVEDOR='rate.?limit|too many requests|quota exceeded|overloaded|ECONNRESET|ETIMEDOUT|ProviderModelNotFound|model not found|model unavailable|has been deprecated|upstream request failed|status(code)?[:=] ?(429|5[0-9][0-9])'
+# Erro antes disto (segundos) = o opencode nem chegou a trabalhar: falha do modelo ou do provedor,
+# seja qual for a mensagem. Troca de modelo em vez de repetir. 0 desliga.
+RAPIDO="${AGENTE_RAPIDO:-60}"
 SAIDA="$LOG.tentativa"
 FORA="${ASSISTENTE_FORA_DO_JAIL:?sem o cliente fora-do-jail: a sessão não tem a API dos agentes}"
 PROMPT="$(cat "$PROMPT_FILE")"
@@ -30,7 +33,7 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 # grupo na hora (125), em vez de esperar a tentativa acabar. Senão, devolve o rc do opencode.
 # A saída também vai para a tela (o `tee`): a aba do trabalhador mostra o agente trabalhando.
 executa() { # <modelo>
-  local fim="$SAIDA.fim" pid rc
+  local fim="$SAIDA.fim" pid rc inicio=$SECONDS
   rm -f "$fim"
   : >"$SAIDA"
   set -m
@@ -58,6 +61,10 @@ executa() { # <modelo>
   # Um opencode que morre antes da primeira vigia (ex.: modelo indisponível) não passou pelo loop
   # acima: a saída inteira é conferida aqui também.
   if [ "$rc" != 0 ] && grep -qiE "$ERRO_PROVEDOR" "$SAIDA"; then
+    return 125
+  fi
+  if [ "$rc" != 0 ] && [ "$RAPIDO" -gt 0 ] && [ $((SECONDS - inicio)) -lt "$RAPIDO" ]; then
+    log "opencode saiu com rc=$rc em $((SECONDS - inicio))s, antes de trabalhar"
     return 125
   fi
   return "$rc"

@@ -37,6 +37,8 @@ case "$modelo" in
   # indisponível: morre logo, antes de qualquer vigia (caso real do opencode, F11.10).
   indisponivel) echo "Error: Model unavailable: opencode/$modelo"; exit 1 ;;
   descontinuado) echo "Error: Model $modelo has been deprecated."; exit 1 ;;
+  # erro que nenhum padrão conhece, logo de cara: só a regra do "morreu rápido" pega.
+  mudo) echo "Error: algo que ninguém previu"; exit 1 ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -69,6 +71,7 @@ rodar() { # <repo> <modelos> <tentativas> → código de saída do trabalhador
     AGENTE_ESPERA=0 \
     AGENTE_MAX_MIN=1 \
     AGENTE_VIGIA=1 \
+    AGENTE_RAPIDO="${RAPIDO:-0}" \
     AGENTE_PROMPT_FILE="$work/prompt.md" \
     AGENTE_LOG="$work/log" \
     AGENTE_RESULTADOS="$work/resultados" \
@@ -140,6 +143,17 @@ if [ "$rc" = 0 ] && [ "$(grep -c '^indisponivel$' "$work/chamadas")" = 1 ] \
   ok "modelo indisponível troca para a reserva sem repetir"
 else
   falha "indisponivel: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
+fi
+
+# 6) Erro desconhecido em poucos segundos: o opencode nem trabalhou, então troca de modelo na hora.
+repo="$(repo_novo rapido)"
+rc="$(RAPIDO=30 rodar "$repo" "mudo bom" 3)"
+sha="$(git -C "$repo" rev-parse HEAD)"
+if [ "$rc" = 0 ] && [ "$(grep -c '^mudo$' "$work/chamadas")" = 1 ] \
+  && grep -qx "kanban done T3 --commit $sha" "$work/chamadas" && grep -q 'antes de trabalhar' "$work/log"; then
+  ok "erro rápido desconhecido troca para a reserva sem repetir"
+else
+  falha "rapido: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
 fi
 
 if [ "$falhas" -gt 0 ]; then

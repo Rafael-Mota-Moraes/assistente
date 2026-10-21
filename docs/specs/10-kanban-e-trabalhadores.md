@@ -66,10 +66,13 @@ A saída do `opencode run` vai para a tela da sessão (`tee`) e para o `.log`: a
 mostra o agente trabalhando, não só as linhas do loop.
 
 Vigia (F11.10): cada tentativa roda o opencode num grupo próprio e olha a saída a cada
-`AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`, `model unavailable`, `has been deprecated`,
+`AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`, `model unavailable`, `has been deprecated`, `upstream request failed`,
 `ECONNRESET`, …) mata o grupo e troca de modelo sem esperar o resto da tentativa (código 125). A
 lista de padrões fica em `ERRO_PROVEDOR` no script; o risco é casar texto que o agente imprimiu por
-acaso, então a lista é estreita de propósito.
+acaso, então a lista é estreita de propósito. Para as mensagens que a lista não conhece, vale o tempo:
+o opencode que sai com erro em menos de `AGENTE_RAPIDO` segundos (padrão 60; 0 desliga) nem chegou a
+trabalhar, e também troca de modelo (os grátis falham de jeitos variados: `Endpoint is unavailable`,
+`Model unavailable`, `deprecated`).
 
 ## Orquestrador
 

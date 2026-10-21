@@ -7,6 +7,7 @@ import type {
   GitStatus,
   Health,
   HubConnection,
+  MainApplyResult,
   MemoryStatus,
   NotebookStatus,
   ProfileView,
@@ -197,6 +198,11 @@ export class HubClient {
   /** Volta para a versão anterior. */
   async rollbackUpdate(): Promise<void> {
     await this.request("POST", "/api/update/rollback");
+  }
+
+  /** Leva commits escolhidos para a `main` do projeto do Assistente (F8.8). */
+  applyToMain(commits: string[]): Promise<MainApplyResult> {
+    return this.request("POST", "/api/update/main", { commits });
   }
 
   /** URL do WebSocket do terminal; o token vai na query (WebSocket não manda header). */

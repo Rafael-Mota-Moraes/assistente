@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   Code2,
+  GitMerge,
   History,
   Loader2,
   RefreshCw,
@@ -111,6 +112,9 @@ export function AssistantPanel({ onClose }: { onClose?: () => void }) {
   const [manual, setManual] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // F8.8: commits marcados para juntar na main, na ordem em que foram marcados.
+  const [picked, setPicked] = useState<string[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hub) return;
@@ -144,6 +148,8 @@ export function AssistantPanel({ onClose }: { onClose?: () => void }) {
     (commit) => !runningVersion.some((done) => sameCommit(commit.hash, done)),
   );
   const headAlreadyInUse = runningVersion.some((done) => sameCommit(head, done));
+  // Marcados que ainda aparecem na lista (um commit aplicado sai dela sozinho).
+  const selection = picked.filter((hash) => commits.some((commit) => commit.hash === hash));
 
   // Sem escolha manual, sugere o HEAD — mas não sugere um commit que já está rodando.
   const effective = manual ? selected : selected || (headAlreadyInUse ? "" : head || "");
@@ -168,6 +174,29 @@ export function AssistantPanel({ onClose }: { onClose?: () => void }) {
       const next = await hub.updateStatus();
       setStatus(next);
     } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function togglePicked(hash: string) {
+    setNotice(null);
+    setPicked((list) =>
+      list.includes(hash) ? list.filter((done) => done !== hash) : [...list, hash],
+    );
+  }
+
+  async function joinMain() {
+    if (!hub || selection.length === 0) return;
+    setBusy(true);
+    try {
+      const result = await hub.applyToMain(selection);
+      setError(null);
+      setPicked([]);
+      setNotice(`main agora em ${result.main}: ${result.applied.length} commit(s) aplicado(s).`);
+    } catch (e) {
+      setNotice(null);
       setError(message(e));
     } finally {
       setBusy(false);
@@ -375,6 +404,54 @@ export function AssistantPanel({ onClose }: { onClose?: () => void }) {
                 )}
               </span>
             </div>
+          </div>
+        </Section>
+
+        <Section
+          title="Juntar commits na main"
+          description="Marque os commits que devem estar na main do projeto do Assistente. Entram na ordem do histórico; se algum conflitar, nada muda. Isto não instala nada: para usar, aplique um commit acima."
+        >
+          {commits.length === 0 ? (
+            <p className="rounded-lg border border-line bg-black/20 p-3 text-sm text-slate-400">
+              Nenhum commit novo para juntar.
+            </p>
+          ) : (
+            <div className="flex max-h-56 flex-col gap-1.5 overflow-y-auto pr-1">
+              {commits.map((item) => (
+                <label
+                  key={item.hash}
+                  className="flex w-full cursor-pointer items-center gap-3 rounded-lg border border-line bg-black/20 px-3 py-2 transition-colors hover:bg-white/5"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selection.includes(item.hash)}
+                    onChange={() => togglePicked(item.hash)}
+                    className="size-4 shrink-0 accent-violet-500"
+                  />
+                  <span className="shrink-0 font-mono text-xs text-slate-400">{item.hash}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-slate-200">
+                    {item.subject}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+            <button
+              type="button"
+              disabled={busy || running || selection.length === 0}
+              onClick={joinMain}
+              className="flex items-center gap-2 rounded-lg border border-line bg-black/20 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <GitMerge className="size-4" /> Aplicar {selection.length} na main
+            </button>
+            <span className="text-sm text-slate-400">
+              {notice ??
+                (selection.length > 0
+                  ? `${selection.length} selecionado(s)`
+                  : "selecione commits acima")}
+            </span>
           </div>
         </Section>
 

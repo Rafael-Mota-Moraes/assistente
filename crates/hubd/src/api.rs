@@ -219,6 +219,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/update", get(update_status))
         .route("/api/update/apply", post(apply_update))
         .route("/api/update/rollback", post(rollback_update))
+        .route("/api/update/main", post(apply_to_main))
         .route("/api/exec", get(list_exec))
         .route("/api/exec/{id}/approve", post(approve_exec))
         .route("/api/exec/{id}/deny", post(deny_exec))
@@ -1339,6 +1340,207 @@ async fn rollback_update(State(state): State<AppState>) -> Result<StatusCode, Re
         let _ = std::fs::rename(&tmp, &anterior);
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ApplyMainRequest {
+    commits: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ApplyMainView {
+    /// HEAD curto da `main` depois de aplicar.
+    main: String,
+    /// Commits aplicados, do mais antigo para o mais novo.
+    applied: Vec<UpdateCommitView>,
+}
+
+/// POST /api/update/main (F8.8): leva os commits escolhidos para a `main` do projeto do
+/// Assistente, com cherry-pick em ordem de histórico. Trabalha numa worktree descartável e só
+/// mexe na `main` no fim: se um commit não entra, nada muda. Não instala nada (isso é `apply`).
+async fn apply_to_main(
+    State(state): State<AppState>,
+    Json(request): Json<ApplyMainRequest>,
+) -> Result<Json<ApplyMainView>, Response> {
+    let Some(self_update) = state.0.config.self_update.clone() else {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "projeto do Assistente não configurado ([self_update])",
+        ));
+    };
+    let dir = sleep_project_dir(&state, &self_update.profile, &self_update.project)
+        .map_err(|(s, m)| error(s, m))?;
+    let mut commits: Vec<String> = Vec::new();
+    for raw in &request.commits {
+        let commit = raw.trim().to_owned();
+        // Mesma regra do `apply`: só hexadecimal, para nada virar opção do git.
+        if !(7..=40).contains(&commit.len()) || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(error(StatusCode::BAD_REQUEST, "commit inválido"));
+        }
+        if !commits.contains(&commit) {
+            commits.push(commit);
+        }
+    }
+    if commits.is_empty() {
+        return Err(error(StatusCode::BAD_REQUEST, "escolha ao menos um commit"));
+    }
+    if read_update_state(&state.0.home).0 {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "uma atualização está rodando; espere terminar",
+        ));
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let scratch = state
+        .0
+        .home
+        .join(format!(".assistente/main-aplicar-{stamp}"));
+    tokio::task::spawn_blocking(move || apply_commits_to_main(&dir, &scratch, &commits))
+        .await
+        .map_err(|e| internal(&e.to_string()))?
+        .map(Json)
+        .map_err(|(status, message)| error(status, &message))
+}
+
+/// Corpo de `apply_to_main`, fora do runtime async (roda `git` em série).
+fn apply_commits_to_main(
+    dir: &std::path::Path,
+    scratch: &std::path::Path,
+    commits: &[String],
+) -> Result<ApplyMainView, (StatusCode, String)> {
+    let result = apply_in_scratch(dir, scratch, commits);
+    // A worktree sai sempre, com sucesso ou não.
+    let scratch_arg = scratch.to_string_lossy().into_owned();
+    let _ = git_out(dir, &["worktree", "remove", "--force", &scratch_arg]);
+    let _ = std::fs::remove_dir_all(scratch);
+    let _ = git_out(dir, &["worktree", "prune"]);
+    result
+}
+
+fn apply_in_scratch(
+    dir: &std::path::Path,
+    scratch: &std::path::Path,
+    commits: &[String],
+) -> Result<ApplyMainView, (StatusCode, String)> {
+    let conflito = |message: String| (StatusCode::CONFLICT, message);
+    let old = git_out(dir, &["rev-parse", "--verify", "refs/heads/main^{commit}"])
+        .map_err(|_| conflito("o projeto não tem a branch main".to_owned()))?;
+    let na_main: HashSet<String> = git_out(dir, &["rev-list", &old])
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let mut novos: Vec<String> = Vec::new();
+    for commit in commits {
+        let completo = git_out(
+            dir,
+            &["rev-parse", "--verify", &format!("{commit}^{{commit}}")],
+        )
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("commit desconhecido: {commit}"),
+            )
+        })?;
+        if !na_main.contains(&completo) && !novos.contains(&completo) {
+            novos.push(completo);
+        }
+    }
+    if novos.is_empty() {
+        return Err(conflito(
+            "todos os commits escolhidos já estão na main".to_owned(),
+        ));
+    }
+    // Do mais antigo para o mais novo, a ordem em que o histórico os teria.
+    let mut ordem = vec!["rev-list", "--no-walk=sorted", "--reverse"];
+    ordem.extend(novos.iter().map(String::as_str));
+    let ordenados: Vec<String> = git_out(dir, &ordem)
+        .map_err(|e| conflito(format!("não consegui ordenar os commits: {e}")))?
+        .lines()
+        .map(str::to_owned)
+        .collect();
+
+    let scratch_arg = scratch.to_string_lossy().into_owned();
+    git_out(dir, &["worktree", "add", "--detach", &scratch_arg, &old])
+        .map_err(|e| conflito(format!("não consegui preparar a main: {e}")))?;
+    // cherry-pick precisa de identidade; sem ela no git do projeto, usa uma do Assistente.
+    let identidade: Vec<&str> = if git_out(dir, &["var", "GIT_COMMITTER_IDENT"]).is_ok() {
+        Vec::new()
+    } else {
+        vec![
+            "-c",
+            "user.name=assistente",
+            "-c",
+            "user.email=assistente@localhost",
+        ]
+    };
+    let mut applied = Vec::new();
+    for hash in &ordenados {
+        let mut aplicar = identidade.clone();
+        aplicar.extend(["cherry-pick", hash.as_str()]);
+        if let Err(e) = git_out(scratch, &aplicar) {
+            let _ = git_out(scratch, &["cherry-pick", "--abort"]);
+            let motivo = e.lines().next().unwrap_or_default();
+            return Err(conflito(format!(
+                "não consegui aplicar {hash} na main ({motivo}). Nada mudou."
+            )));
+        }
+        let (curto, assunto) = git_out(dir, &["log", "-1", "--format=%h %s", hash])
+            .ok()
+            .and_then(|linha| {
+                linha
+                    .split_once(' ')
+                    .map(|(h, s)| (h.to_owned(), s.to_owned()))
+            })
+            .unwrap_or_else(|| (hash.clone(), String::new()));
+        applied.push(UpdateCommitView {
+            hash: curto,
+            subject: assunto,
+        });
+    }
+    let nova = git_out(scratch, &["rev-parse", "HEAD"]).map_err(conflito)?;
+    // A `main` anda para a nova ponta. Se ela é o checkout do projeto, o fast-forward mexe na
+    // árvore (recusa se a mudança encostar em algo sujo). Senão, troca a ref conferindo o valor
+    // antigo: falha se alguém mexeu na main no meio.
+    let na_checkout = git_out(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .ok()
+        .as_deref()
+        == Some("main");
+    let andou = if na_checkout {
+        git_out(dir, &["merge", "--ff-only", &nova])
+    } else {
+        git_out(dir, &["update-ref", "refs/heads/main", &nova, &old])
+    };
+    andou.map_err(|e| {
+        let motivo = e.lines().next().unwrap_or_default();
+        conflito(format!(
+            "não consegui avançar a main ({motivo}). Nada mudou."
+        ))
+    })?;
+    let curto = git_out(dir, &["rev-parse", "--short", &nova]).unwrap_or(nova);
+    Ok(ApplyMainView {
+        main: curto,
+        applied,
+    })
+}
+
+/// Roda `git -C dir args`. Em falha, devolve a mensagem do git (stderr, ou stdout se vazio).
+fn git_out(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if output.status.success() {
+        return Ok(stdout);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    Err(if stderr.is_empty() { stdout } else { stderr })
 }
 
 #[derive(Serialize)]
@@ -3966,6 +4168,115 @@ mod tests {
         assert_eq!(body["current_ui"], ui_nova);
         assert_eq!(body["previous_commit"], ui_velha);
         assert_eq!(body["shell_changed"], true);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Projeto `pessoal/assistente` com a `main` (commit base) e um branch `feat` com os
+    /// commits B e C. Devolve o diretório de teste, o repo e os hashes de B e C; HEAD na `main`.
+    fn projeto_com_feat(name: &str) -> (std::path::PathBuf, std::path::PathBuf, [String; 2]) {
+        let dir = std::env::temp_dir().join(format!("hubd-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = dir.join("pessoal/assistente");
+        std::fs::create_dir_all(&repo).unwrap();
+        git_teste(&repo, &["init", "-q", "-b", "main"]);
+        commit_teste(&repo, "a.txt", "a", "feat: base");
+        git_teste(&repo, &["checkout", "-q", "-b", "feat"]);
+        let b = commit_teste(&repo, "b.txt", "b", "feat: b");
+        let c = commit_teste(&repo, "c.txt", "c", "feat: c");
+        git_teste(&repo, &["checkout", "-q", "main"]);
+        (dir, repo, [b, c])
+    }
+
+    fn commit_teste(repo: &std::path::Path, arquivo: &str, texto: &str, mensagem: &str) -> String {
+        std::fs::write(repo.join(arquivo), texto).unwrap();
+        git_teste(repo, &["add", "."]);
+        git_teste(repo, &["commit", "-q", "-m", mensagem]);
+        git_teste(repo, &["rev-parse", "HEAD"])
+    }
+
+    fn app_do_projeto(dir: &std::path::Path) -> Router {
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let text = format!(
+            "{}\n[self_update]\nprofile = \"pessoal\"\nproject = \"assistente\"\n",
+            EXAMPLE.replace(
+                "~/Documentos/pessoal/projetos",
+                &dir.join("pessoal").display().to_string()
+            )
+        );
+        let config = Config::parse(&text, &home).unwrap();
+        router(AppState::new(config, home, None, None, Tmux::default()))
+    }
+
+    #[tokio::test]
+    async fn apply_to_main_puts_the_picked_commits_in_history_order() {
+        let (dir, repo, [b, c]) = projeto_com_feat("main-ordem");
+        let app = app_do_projeto(&dir);
+        // Escolhe C antes de B: manda a ordem do histórico, não a do pedido.
+        let body = json!({ "commits": [c, b] }).to_string();
+        let (status, body) = call_method(app, "POST", "/api/update/main", Some(&body), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["applied"][0]["subject"], "feat: b");
+        assert_eq!(body["applied"][1]["subject"], "feat: c");
+        assert_eq!(
+            git_teste(&repo, &["log", "-1", "--format=%s", "main"]),
+            "feat: c"
+        );
+        assert_eq!(git_teste(&repo, &["worktree", "list"]).lines().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_to_main_moves_the_ref_when_main_is_not_checked_out() {
+        let (dir, repo, [b, _]) = projeto_com_feat("main-ref");
+        git_teste(&repo, &["checkout", "-q", "feat"]);
+        let app = app_do_projeto(&dir);
+        let body = json!({ "commits": [b] }).to_string();
+        let (status, body) = call_method(app, "POST", "/api/update/main", Some(&body), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            git_teste(&repo, &["log", "-1", "--format=%s", "main"]),
+            "feat: b"
+        );
+        // O checkout do projeto não saiu do feat.
+        assert_eq!(
+            git_teste(&repo, &["symbolic-ref", "--short", "HEAD"]),
+            "feat"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_to_main_conflict_changes_nothing() {
+        let (dir, repo, _) = projeto_com_feat("main-conflito");
+        git_teste(&repo, &["checkout", "-q", "feat"]);
+        let d = commit_teste(&repo, "a.txt", "da feat", "feat: mexe em a");
+        git_teste(&repo, &["checkout", "-q", "main"]);
+        let e = commit_teste(&repo, "a.txt", "da main", "main: mexe em a");
+        let app = app_do_projeto(&dir);
+        let body = json!({ "commits": [d] }).to_string();
+        let (status, body) = call_method(app, "POST", "/api/update/main", Some(&body), None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("Nada mudou"));
+        assert_eq!(git_teste(&repo, &["rev-parse", "main"]), e);
+        assert_eq!(git_teste(&repo, &["worktree", "list"]).lines().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_to_main_rejects_bad_input() {
+        let (dir, _repo, _) = projeto_com_feat("main-entrada");
+        let app = app_do_projeto(&dir);
+        for body in [
+            r#"{"commits":[]}"#,
+            r#"{"commits":["abc"]}"#,
+            r#"{"commits":["--upload-pack=x"]}"#,
+            r#"{"commits":["0123456789abcdef0123456789abcdef0123456789"]}"#,
+        ] {
+            let (status, _) =
+                call_method(app.clone(), "POST", "/api/update/main", Some(body), None).await;
+            assert!(status.is_client_error(), "{body}: {status}");
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

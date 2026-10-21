@@ -31,6 +31,14 @@ export type UpdateStatus = {
   pending_commits: UpdateCommit[];
 };
 
+/** Resultado de juntar commits na `main` (F8.8, `POST /api/update/main`). */
+export type MainApplyResult = {
+  /** HEAD curto da `main` depois de aplicar. */
+  main: string;
+  /** Commits aplicados, do mais antigo para o mais novo. */
+  applied: UpdateCommit[];
+};
+
 export type ProfileView = {
   id: string;
   label: string;

@@ -7,7 +7,7 @@
 //! - texto hubd → UI: `{"type":"exit"}` quando o tmux attach termina (sessão encerrada) e
 //!   `{"type":"exit","status":N}` quando o processo da sessão morreu (F14.3).
 
-use crate::sessions::Tmux;
+use crate::sessions::{PaneState, Tmux};
 use axum::extract::ws::{Message, WebSocket};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Deserialize;
@@ -47,12 +47,11 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
     // processo morre, então a tela do painel morto perde a primeira linha da saída. O
     // terminal manda o que o processo imprimiu (o histórico do painel) e o status de saída,
     // sem abrir terminal: a aba mostra a saída e o fim.
-    if let Some(status) = tmux.dead_status(id).await {
+    if let PaneState::Dead(status) = tmux.pane_state(id).await {
         if let Some(saida) = tmux.capture(id).await {
             let _ = socket.send(Message::Binary(saida.into())).await;
         }
-        let aviso = serde_json::json!({ "type": "exit", "status": status }).to_string();
-        let _ = socket.send(Message::Text(aviso.into())).await;
+        let _ = socket.send(Message::Text(fim(status).into())).await;
         return Ok(());
     }
     let pair = native_pty_system()
@@ -156,9 +155,8 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
                 Some(Ok(_)) => {}
             },
             _ = verificacao.tick(), if !encerrada => {
-                if let Some(status) = tmux.dead_status(id).await {
-                    let aviso = serde_json::json!({ "type": "exit", "status": status }).to_string();
-                    let _ = socket.send(Message::Text(aviso.into())).await;
+                if let PaneState::Dead(status) = tmux.pane_state(id).await {
+                    let _ = socket.send(Message::Text(fim(status).into())).await;
                     encerrada = true;
                 }
             }
@@ -168,4 +166,12 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
     let _ = child.kill();
     let _ = child.wait();
     Ok(())
+}
+
+/// O aviso de fim para a UI (F14.3): com o código de saída quando o tmux sabe qual é.
+fn fim(status: Option<i32>) -> String {
+    match status {
+        Some(status) => serde_json::json!({ "type": "exit", "status": status }).to_string(),
+        None => r#"{"type":"exit"}"#.to_owned(),
+    }
 }

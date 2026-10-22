@@ -5,7 +5,9 @@
 use hub_core::{AgentKind, LaunchPlan, SessionSpec};
 use serde::Serialize;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::process::Command;
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SessionInfo {
@@ -27,6 +29,16 @@ pub struct Listed {
     pub info: SessionInfo,
     /// O processo do painel já saiu: a sessão existe, mas não trabalha.
     pub dead: bool,
+}
+
+/// O painel de uma sessão (F14.3): o processo vive, ou já morreu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneState {
+    /// O processo do painel ainda roda.
+    Alive,
+    /// O processo morreu. O status é o código de saída, quando deu para saber (o tmux às
+    /// vezes perde o SIGCHLD do painel morto e o status não aparece — ver `Tmux::reap`).
+    Dead(Option<i32>),
 }
 
 /// Acesso ao tmux. `socket` isola um servidor tmux próprio (usado nos testes).
@@ -217,9 +229,8 @@ impl Tmux {
         }
     }
 
-    /// O status de saída do painel quando o processo já morreu (F14.3). `None` enquanto o
-    /// processo vive (ou quando a sessão não existe mais).
-    pub async fn dead_status(&self, id: &str) -> Option<i32> {
+    /// O que o tmux sabe do painel: o processo morreu? e com que status de saída?
+    async fn pane_info(&self, id: &str) -> Option<(bool, Option<i32>)> {
         let out = self
             .run(&args(&[
                 "list-panes",
@@ -232,10 +243,43 @@ impl Tmux {
             .ok()?;
         let line = out.lines().next()?;
         let (dead, status) = line.split_once(':')?;
-        if dead != "1" {
-            return None;
+        // O status vem vazio quando o tmux não sabe o código de saída (o painel morreu por
+        // sinal, ou o tmux perdeu o SIGCHLD — ver `reap`).
+        Some((dead == "1", status.trim().parse().ok()))
+    }
+
+    /// O painel da sessão (F14.3): o processo vive, ou já morreu.
+    pub async fn pane_state(&self, id: &str) -> PaneState {
+        let Some((dead, status)) = self.pane_info(id).await else {
+            return PaneState::Alive;
+        };
+        if !dead {
+            return PaneState::Alive;
         }
-        Some(status.trim().parse().unwrap_or(0))
+        if let Some(status) = status {
+            return PaneState::Dead(Some(status));
+        }
+        // O tmux perdeu o SIGCHLD do painel morto: dá para recuperar (ver `reap`).
+        self.reap(id).await;
+        for _ in 0..15 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if let Some((_, Some(status))) = self.pane_info(id).await {
+                return PaneState::Dead(Some(status));
+            }
+        }
+        PaneState::Dead(None)
+    }
+
+    /// Faz o servidor do tmux recolher um zumbi esquecido (F14.3).
+    ///
+    /// O tmux 3.4 perde o SIGCHLD do painel morto em ~5% das vezes: o processo fica zumbi e
+    /// o `pane_dead_status` não aparece nunca. O `waitpid` do servidor recolhe todos os
+    /// filhos que morrem, então um `run-shell` (que morre na hora) faz ele recolher o zumbi
+    /// esquecido — e o status de saída aparece.
+    async fn reap(&self, id: &str) {
+        if let Err(e) = self.run(&args(&["run-shell", "-b", "true"])).await {
+            debug!("não consegui reap ar o painel {id}: {e}");
+        }
     }
 
     /// O que o processo imprimiu no painel (a tela e o histórico), para o terminal mostrar a
@@ -451,7 +495,10 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(info.id, "pessoal--x--claude-1");
         // A sessão continua viva (o painel fica), mas o processo morreu.
-        assert_eq!(t.tmux.dead_status(&info.id).await, Some(127));
+        assert_eq!(
+            t.tmux.pane_state(&info.id).await,
+            PaneState::Dead(Some(127))
+        );
         let listed = t.tmux.list_all().await.unwrap();
         assert!(listed[0].dead, "a sessão morta tem de aparecer como morta");
         // A saída do processo continua visível no painel.
@@ -532,8 +579,54 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(t.tmux.dead_status(&info.id).await, Some(3));
+        assert_eq!(t.tmux.pane_state(&info.id).await, PaneState::Dead(Some(3)));
         assert_eq!(t.tmux.session_for_exec_token(&token).await.unwrap(), None);
+    }
+
+    /// F14.3: o painel vivo é `Alive`; o morto por sinal não tem código de saída.
+    #[tokio::test]
+    async fn pane_state_tells_alive_from_dead() {
+        let t = TestTmux::new("estado");
+        let info = t
+            .tmux
+            .create(
+                &t.plan("pessoal--x--claude-1", "sleep 30"),
+                &spec("x", AgentKind::Claude),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(t.tmux.pane_state(&info.id).await, PaneState::Alive);
+
+        // O processo morre de sinal: não há código de saída (o tmux não inventa um).
+        let info = t
+            .tmux
+            .create(
+                &t.plan("pessoal--x--claude-2", "kill -9 $$"),
+                &spec("x", AgentKind::Claude),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(t.tmux.pane_state(&info.id).await, PaneState::Dead(None));
+    }
+
+    /// F14.3: o status sai do painel mesmo quando o tmux o perde (o `SIGCHLD` que some).
+    #[tokio::test]
+    async fn pane_state_knows_the_status_of_a_dead_pane() {
+        let t = TestTmux::new("status");
+        let info = t
+            .tmux
+            .create(
+                &t.plan("pessoal--x--claude-1", "exit 42"),
+                &spec("x", AgentKind::Claude),
+                None,
+            )
+            .await
+            .unwrap();
+        // O tmux 3.4 perde o SIGCHLD do painel morto em ~5% das vezes: o `pane_state` tem de
+        // recuperar o status de saída mesmo assim (o `reap`).
+        assert_eq!(t.tmux.pane_state(&info.id).await, PaneState::Dead(Some(42)));
     }
 
     #[test]

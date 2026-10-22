@@ -3496,7 +3496,7 @@ mod tests {
         // aberta quando o processo sai, sem depender de tempo.
         let sinal = t.dir.join("morre");
         let script = format!(
-            "echo 'comecou'; while [ ! -f {sinal} ]; do sleep 0.05; done; exit 5",
+            "echo 'comecou'; while [ ! -f '{sinal}' ]; do sleep 0.05; done; exit 5",
             sinal = sinal.display()
         );
         let hub = live_hub_with(&t, None, vec!["bash".into(), "-c".into(), script]).await;

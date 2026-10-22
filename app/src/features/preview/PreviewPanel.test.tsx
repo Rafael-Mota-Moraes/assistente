@@ -62,4 +62,18 @@ describe("PreviewPanel", () => {
     fireEvent.click(screen.getByTitle("Fechar (Esc)"));
     expect(useAppStore.getState().views).toHaveLength(0);
   });
+
+  it("Esc fecha a aba do preview", async () => {
+    useAppStore.setState({
+      hub: fakeHub("http://10.77.0.10:5173"),
+      activeProfile: "pessoal",
+      activeProject: "game",
+      views: [{ key: "pessoal/game", kind: "preview" }],
+      activeView: { key: "pessoal/game", kind: "preview" },
+    });
+    render(<PreviewPanel />);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(useAppStore.getState().views).toHaveLength(0);
+  });
 });

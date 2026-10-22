@@ -1,6 +1,6 @@
 # 03 — Interface
 
-Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6.
+Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6, F12.1.
 
 ## Tecnologia
 
@@ -17,6 +17,9 @@ o que exige o host (`src/bridge/host.ts` ↔ `app/src-tauri/src/main.rs`):
 | `open_in_cursor` | abre `cursor <caminho>` se o caminho estiver dentro de uma raiz de perfil |
 | `open_url` | abre `xdg-open <url>` no navegador padrão; só `http://`/`https://` (links do terminal, F2.4) |
 | `open_memory_panel` / `update_memory_panel_bounds` / `close_memory_panel` | painel da memória (F5.5): webview filha `memoria` com a web UI do ai-memory via `/memoria/entrar` do hubd, ancorada sobre a área de conteúdo principal (bounds em px de CSS vêm da UI; no Linux o wry (0.57) ignora os bounds do `add_child` — as duas webviews dividem a GtkBox da janela — então a webview principal mora num `GtkOverlay` com palco `GtkFixed` e a filha é ancorada por coordenadas de CSS via `with_webview`; fora do Linux o Rust converte px lógicos em **físicos**, pois o wry no X11 reescala lógicos pelo DPI da tela, tauri#15656); fora das capabilities, sem acesso aos comandos |
+| `open_preview_panel` / `update_preview_panel_bounds` / `close_preview_panel` | preview do projeto (F12.1): webview filha `preview` com a página do dev server (`preview_url` das configurações do projeto, F9.2), ancorada como o painel da memória; chamar `open_preview_panel` de novo recarrega a página |
+| `preview_panel_visible` | mostra/esconde a webview do preview: um modal do app (a engrenagem, F9.3) precisa ficar por cima dela, que é um widget nativo acima da UI |
+| `preview_picker` | liga/desliga o modo "apontar" na página do preview por `eval` (o gancho `window.__assistentePick`; a seleção chega na F12.2) |
 
 **Mixed content (validado em 2026-10-19):** no Linux a página do app vem de `tauri://localhost`,
 que o WebKit trata como origem segura, e `fetch` para `http://10.77.0.10` é bloqueado em
@@ -54,8 +57,13 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
 - 🌙 ao lado do projeto = tem `.assistente.toml` (pronto para o modo dormir).
 - Passar o mouse num projeto mostra a **engrenagem** (F9.3) e "abrir no Cursor". A engrenagem
   abre as configurações do jail do projeto: Docker, rede completa (aviso vermelho), hosts
-  liberados e comandos sempre permitidos. Valem para as sessões novas; o Docker ligado pelo
-  `[jail]` do `.assistente.toml` aparece marcado e travado.
+  liberados, comandos sempre permitidos e a **URL do preview** (F12.1). Valem para as sessões
+  novas; o Docker ligado pelo `[jail]` do `.assistente.toml` aparece marcado e travado.
+- **Preview** (F12.1): botão "Visualizar" junto dos agentes abre a página do dev server do
+  projeto numa aba (a sessão continua viva). O chrome (URL, recarregar, apontar, fechar) é
+  React; a webview filha preenche o retângulo e acompanha o redimensionamento da janela.
+  A URL se edita na engrenagem, com a dica de que o endereço é visto do PC: projeto rodando
+  na VM usa o IP dela.
 
 ## Estados
 

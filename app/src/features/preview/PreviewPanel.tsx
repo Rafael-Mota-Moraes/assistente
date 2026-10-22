@@ -33,29 +33,39 @@ export function PreviewPanel() {
   const [url, setUrl] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [apontando, setApontando] = useState(false);
+  /** Muda a cada recarga: no navegador, o iframe é remontado (no app, a webview navega). */
+  const [nonce, setNonce] = useState(0);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const key = profile && project ? viewKey(profile, project) : "";
 
   /** Lê a URL do preview das configurações do projeto (F9.2 guarda o endereço). */
+  const cancelar = useRef<(() => void) | null>(null);
   const carregar = useCallback(() => {
+    cancelar.current?.();
+    cancelar.current = null;
     if (!hub || !profile || !project) return;
-    let cancelado = false;
+    let caiu = false;
+    cancelar.current = () => {
+      caiu = true;
+    };
     hub
       .projectSettings(profile, project)
       .then((view) => {
-        if (cancelado) return;
+        if (caiu) return;
         setUrl(view.settings.preview_url ?? null);
         setErro(null);
       })
       .catch((e: unknown) => {
-        if (!cancelado) setErro(mensagem(e));
+        if (!caiu) setErro(mensagem(e));
       });
-    return () => {
-      cancelado = true;
-    };
   }, [hub, profile, project]);
 
-  useEffect(() => carregar(), [carregar]);
+  useEffect(() => {
+    carregar();
+    return () => {
+      cancelar.current?.();
+    };
+  }, [carregar]);
 
   /** Webview filha: abre, segue o retângulo do âncora e fecha ao sair. */
   useEffect(() => {
@@ -95,9 +105,19 @@ export function PreviewPanel() {
     };
   }, [url, modalAberto, carregar]);
 
+  /** Esc fecha o preview (o X da barra fecha sempre). */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && key) closeView(key, "preview");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [key]);
+
   if (!profile || !project) return null;
 
   function recarregar() {
+    setNonce((n) => n + 1);
     const anchor = anchorRef.current;
     if (!url || !anchor) return;
     openPreviewPanel(url, rectOf(anchor)).catch((error) =>
@@ -179,6 +199,7 @@ export function PreviewPanel() {
             </div>
           ) : (
             <iframe
+              key={nonce}
               src={url}
               title="preview do projeto"
               className="h-full w-full border-0"

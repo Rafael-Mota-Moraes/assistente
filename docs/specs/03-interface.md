@@ -57,7 +57,9 @@ política e ela é cancelada antes de a página trocar.
 | `preview-pick` | `PickedElement` — o elemento apontado (espelha `app/src/bridge/types.ts`) |
 
 A UI abre a caixa de pedido (`features/pick/PickDialog.tsx`) com o elemento escolhido
-e o espaço para escrever o que deve mudar; o envio ao agente é a F12.4.
+e o espaço para escrever o que deve mudar; o envio ao agente é a F12.4. A caixa é um
+modal: quando o preview do projeto (F12.1) existir, ela esconde o painel do preview
+(o `preview_panel_visible`), senão a webview do preview fica por cima da caixa.
 
 Para conferir na mão: sirva uma página de teste com um botão que muda de cor
 (`python3 -m http.server`), abra no preview do projeto (F12.1), ligue o **Apontar** e

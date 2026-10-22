@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::Manager;
 
+mod pick;
+
 fn home() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -432,6 +434,9 @@ fn main() {
         .plugin(tauri_plugin_websocket::init())
         // Copiar/colar do terminal: o navigator.clipboard do WebKitGTK falha em silêncio.
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Modo apontar (F12.2): injeta o script do pick na webview e intercepta a
+        // navegação `assistente-pick:`, que traz o elemento escolhido na página.
+        .plugin(pick::plugin())
         .invoke_handler(tauri::generate_handler![
             hub_connection,
             vm_status,

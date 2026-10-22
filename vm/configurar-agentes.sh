@@ -131,6 +131,21 @@ usuário manda (botão "Mandar"); `agente` foi marcado para o agente implementar
   falharem. Você acompanha pelas abas e não precisa reiniciar nada à mão.
 - Trabalhador: não marque a tarefa nem edite o quadro; o `trabalhador` faz isso pelo resultado
   do git.
+
+## Diagnóstico da VM (Assistente, F14)
+
+Para ler o estado da VM **sem pedir aprovação** (a leitura não escreve nada):
+
+    "$ASSISTENTE_FORA_DO_JAIL" diagnostico <comando>
+
+- `journal-hubd [linhas]`: as últimas linhas do journal do hubd (padrão 200).
+- `tmux-ls`: as sessões abertas.
+- `tmux-pane <sessão>`: a saída de uma sessão deste projeto (as últimas 200 linhas).
+- `explorar`: os prompts das sessões que montaram o quadro.
+- `claude-login`: onde o `claude` está no PATH de login do perfil.
+
+Qualquer outro comando é recusado. Prefira isto a pedir um comando fora do jail quando o que
+você quer é só ler (o journal do hubd, a saída de uma sessão que morreu).
 MD
 )"
 BEGIN_MARK="<!-- assistente:fora-do-jail (gerado por vm/configurar-agentes.sh) -->"

@@ -4,15 +4,18 @@
 #
 #   fora-do-jail [--timeout SEG] [--sem-esperar] [--] '<comando>'
 #   fora-do-jail --resultado <id>
+#   fora-do-jail diagnostico <comando-de-diagnostico>
 #
 # Roda na pasta atual (precisa ser dentro do projeto), com o env do perfil. Códigos de saída:
 # o do comando; 126 negado; 124 ninguém respondeu a tempo ou o comando estourou o timeout;
 # 125 o pedido se perdeu (hubd reiniciou) ou falhou ao iniciar; 2 uso errado / fora de sessão.
+# O `diagnostico` é leitura só (F14.1): não passa pelo app, devolve a saída e o código do
+# comando de leitura.
 # Spec: docs/specs/05-sandbox.md ("Fora do jail"); quadro e trabalhadores: docs/specs/10-kanban-e-trabalhadores.md
 set -euo pipefail
 
 die() { echo "fora-do-jail: $*" >&2; exit "${CODE:-2}"; }
-uso() { sed -n '4,5p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+uso() { sed -n '4,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # Quadro do projeto (F11.2): `fora-do-jail kanban pull|done|release|trabalhador`. Não passa pelo
 # app: é coordenação entre sessões (o que vai ao PC pede aprovação; isto não roda nada). Saída:
@@ -105,9 +108,55 @@ uso_kanban() {
   exit 2
 }
 
+# Diagnóstico da VM (F14.1): `fora-do-jail diagnostico <comando>`. Leitura só (journal do hubd,
+# sessões do tmux, saída de uma sessão, prompts do quadro, login do Claude): não passa pelo app
+# e não escreve nada. A saída vem no stdout; o que o comando reclamou, no stderr.
+diagnostico() {
+  local url="${ASSISTENTE_EXEC_URL:-}" token="${ASSISTENTE_EXEC_TOKEN:-}"
+  if [ -z "$url" ] || [ -z "$token" ]; then
+    die "fora de uma sessão do Assistente (sem ASSISTENTE_EXEC_URL/ASSISTENTE_EXEC_TOKEN)"
+  fi
+  [ $# -gt 0 ] || die "diagnostico: falta o comando (journal-hubd | tmux-ls | tmux-pane <sessão> | explorar | claude-login)"
+  local body response status json
+  body="$(python3 -c 'import json, sys; print(json.dumps({"comando": " ".join(sys.argv[1:])}))' "$@")"
+  response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+    --data-binary "$body" "$url/v1/diagnostico")" || die "o hubd não respondeu em $url"
+  status="${response##*$'\n'}"
+  json="${response%$'\n'*}"
+  case "$status" in
+    200) ;;
+    401) CODE=1 die "token recusado: a sessão foi encerrada?" ;;
+    *) CODE=1 die "HTTP $status: $(python3 -c 'import json, sys
+try:
+    print(json.loads(sys.argv[1]).get("error", sys.argv[1]))
+except ValueError:
+    print(sys.argv[1])' "$json")" ;;
+  esac
+  local rc=0
+  python3 -c '
+import json, sys
+reply = json.loads(sys.argv[1])
+sys.stdout.write(reply.get("saida") or "")
+sys.stdout.flush()
+erro = reply.get("erro")
+if erro:
+    sys.stderr.write(erro if erro.endswith("\n") else erro + "\n")
+if reply.get("truncado"):
+    print("fora-do-jail: saída grande; só o fim foi guardado.", file=sys.stderr)
+code = reply.get("codigo")
+sys.exit(code if isinstance(code, int) and code else 0)' "$json" || rc=$?
+  exit "$rc"
+}
+
 if [ "${1:-}" = kanban ]; then
   shift
   kanban "$@"
+fi
+
+if [ "${1:-}" = diagnostico ]; then
+  shift
+  diagnostico "$@"
 fi
 
 timeout=""

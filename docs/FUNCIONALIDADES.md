@@ -355,6 +355,18 @@ hubd); F11.2 antes de F11.4.
   `…fora_do_jail_kanban_talks_to_the_board` (`validar`/`reabrir`), `kanban::tests::qa_validates…`,
   `worker::tests::qa_prompt…` e `KanbanBoard.test.tsx` (coluna, botão, selo). Na VM real, junto com
   a F11.8: um QA de ponta a ponta com o Claude de verdade.
+- [x] **F11.16 QA geral, para limpar o quadro.** O QA da F11.15 é um card por vez. Agora a coluna
+  Feito tem também "QA geral (N)" (`POST …/kanban/qa`): um Claude só, na raiz do projeto, segura
+  todos os cards feitos livres, pergunta **uma vez** onde juntar (`main` ou outra branch) e passa
+  por eles em ordem, validando ou devolvendo ao backlog com o que falta, pelos mesmos `validar` e
+  `reabrir`. Conflito com o que ele já juntou, ele resolve no worktree da tarefa. No fim, um resumo
+  do que entrou e do que voltou. Card feito sem branch (modo dormir) é validado pelo commit dele.
+  Card que ele não tocar fica livre quando a sessão acaba.
+  Pronto quando: com vários cards em Feito, um clique leva todos para Validado ou de volta ao
+  backlog, com uma só pergunta. Como testar: feito em
+  `api::kanban::tests::qa_all_holds_every_free_done_card_in_one_session`,
+  `worker::tests::qa_all_prompt…` e `KanbanBoard.test.tsx` (botão com a contagem, sem botão quando
+  nada está livre). Na VM real, junto com a F11.8.
 
 ## F12 — Apontar e pedir na tela
 

@@ -266,6 +266,10 @@ pub fn router(state: AppState) -> Router {
             post(kanban::finish_with_claude),
         )
         .route(
+            "/api/projects/{profile}/{project}/kanban/qa",
+            post(kanban::qa_all),
+        )
+        .route(
             "/api/projects/{profile}/{project}/kanban/{id}/qa",
             post(kanban::qa_card),
         )

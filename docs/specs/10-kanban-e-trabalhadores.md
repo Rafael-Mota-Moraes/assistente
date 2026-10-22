@@ -1,6 +1,6 @@
 # 10 — Quadro, orquestrador e trabalhadores
 
-Cobre o quadro por projeto (F11). Funcionalidades F11.1–F11.15. O que e por que: `docs/VISAO.md`
+Cobre o quadro por projeto (F11). Funcionalidades F11.1–F11.16. O que e por que: `docs/VISAO.md`
 (R6 modo dormir, R7 sessões). Este documento é o como.
 
 ## Quadro
@@ -168,6 +168,15 @@ Só quem segura valida ou reabre. Quando a sessão do QA acaba, o card perde o `
 remove`, que recusa com mudança) e a branch `agente/<id>` também, se já está no commit juntado.
 O card validado mostra "na main · abc1234". O contador da lateral conta só backlog e fazendo.
 
+**QA geral** (F11.16), para limpar o quadro: o botão "QA geral (N)" no topo da coluna Feito (`POST
+…/kanban/qa`) abre um Claude só, na raiz do projeto (`launch_session`, como o "Popular pelo
+backlog"), com `worker::render_qa_all_prompt`: os N cards feitos sem dono, em ordem de id, cada um
+com branch e worktree. A sessão segura todos. Ele pergunta **uma vez** onde juntar e passa card por
+card com os mesmos `validar`/`reabrir`; o conflito que nasce da junção das anteriores ele resolve no
+worktree da tarefa. Card que ele não tocar fica livre quando a sessão acaba. Card feito sem branch
+(modo dormir, ou feito à mão) é validado pelo commit marcado: se já está na branch escolhida, só
+muda de coluna.
+
 ## Supervisão
 
 - Dentro: o `trabalhador` troca de modelo e tenta de novo sozinho (acima).
@@ -194,7 +203,8 @@ Opt-in por projeto: `[sleep] source = "quadro"`. O padrão `backlog` não muda n
   automático (limite, card que voltou fica, "Tentar de novo", erro no quadro), cota (bloqueio pausa,
   "Terminar com Claude", "Retomar"), QA (um por vez, só quem segura valida, árvore suja, merge na
   `main` em checkout, conflito sem mudar nada, branch nova, reabrir com nota, worktree e branch saem
-  quando o QA acaba).
+  quando o QA acaba), QA geral (segura só os feitos livres, valida pelo commit quando não há
+  branch, solta o resto quando acaba).
 - `vm/teste-trabalhador.sh` (inclui cota: na saída final e no meio da tentativa) e
   `notebook/teste-dorme.sh` (quadro: prioridade, commit, volta ao backlog, quadro vazio).
 - `KanbanBoard.test.tsx`, `ProjectList.test.tsx`.

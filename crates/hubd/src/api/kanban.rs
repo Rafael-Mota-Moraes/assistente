@@ -5,7 +5,8 @@
 //! tira a pausa e `…/kanban/{id}/claude` termina a tarefa com um Claude no mesmo worktree.
 //! QA (F11.15): `…/kanban/{id}/qa` abre um Claude que confere um card "feito"; ele chama
 //! `/v1/kanban/validate` (o hubd junta a branch e o card vai para "validado") ou
-//! `/v1/kanban/reopen` (volta ao backlog com o que falta).
+//! `/v1/kanban/reopen` (volta ao backlog com o que falta). `…/kanban/qa` (F11.16) é o QA geral:
+//! um Claude só, na raiz do projeto, segurando todos os cards "feitos" livres.
 //! O orquestrador automático (F11.11, `spawn_orchestrator`) é um laço do próprio hubd: liga em
 //! `PUT …/kanban/orquestrador` e abre trabalhadores para as tarefas `agente`, sem sessão do Claude.
 //! Regras em `hub_core::kanban`; arquivo e commit em `crate::kanban`; trabalhador em `hub_core::worker`.
@@ -392,6 +393,63 @@ pub(super) async fn qa_card(
         return Err(response);
     }
     tracing::info!("Claude {} no QA da tarefa {id}", info.id);
+    Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// POST /api/projects/{perfil}/{projeto}/kanban/qa (F11.16): QA geral, para limpar o quadro. Um
+/// Claude na raiz do projeto segura todos os cards "feitos" sem dono, pergunta uma vez onde juntar
+/// e valida ou reabre cada um. O que ele não tocar volta a ficar livre quando a sessão acabar.
+pub(super) async fn qa_all(
+    State(state): State<AppState>,
+    Params((profile, project)): Params<(String, String)>,
+) -> Reply<(StatusCode, Json<SessionInfo>)> {
+    let dir = project_dir(&state, &profile, &project)?;
+    // Sem a API dos agentes o Claude não conseguiria validar nem reabrir: não abre.
+    if exec_access_for(&state.0, AgentKind::Claude).is_none() {
+        return Err(error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a API dos agentes está desligada: o Claude não conseguiria mexer nos cards",
+        ));
+    }
+    let _guard = state.0.kanban_lock.lock().await;
+    let mut board = load(&state, &dir).await?;
+    let mut cards: Vec<Card> = board
+        .cards
+        .iter()
+        .filter(|card| card.column == Column::Feito && card.holder.is_none())
+        .cloned()
+        .collect();
+    if cards.is_empty() {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "nenhum card em feito livre para o QA",
+        ));
+    }
+    cards.sort_by_key(|card| {
+        card.id
+            .trim_start_matches('T')
+            .parse::<u32>()
+            .unwrap_or(u32::MAX)
+    });
+    let prompt = worker::render_qa_all_prompt(&cards, &board.orchestrator.instructions);
+    let spec = SessionSpec {
+        profile: profile.clone(),
+        project: project.clone(),
+        agent: AgentKind::Claude,
+    };
+    let info = super::launch_session(&state, &spec, Some(&prompt)).await?;
+    let ids: Vec<&str> = cards.iter().map(|card| card.id.as_str()).collect();
+    let message = format!("kanban: QA geral de {} com {}", ids.join(", "), info.id);
+    let saved = ids
+        .iter()
+        .try_for_each(|id| board.start_qa(id, &info.id).map(|_| ()))
+        .map_err(kanban_error)
+        .and_then(|_| persist(&dir, &board, &message));
+    if let Err(response) = saved {
+        let _ = state.0.tmux.kill(&info.id).await;
+        return Err(response);
+    }
+    tracing::info!("Claude {} no QA geral de {}", info.id, ids.join(", "));
     Ok((StatusCode::CREATED, Json(info)))
 }
 
@@ -901,10 +959,26 @@ pub(super) async fn agent_validate(
         .home
         .join(format!(".assistente/qa-juntar-{}-{}", card.id, now()));
     let message = format!("Junta {}: {} (QA)", card.id, card.title);
+    // Sem a branch (tarefa feita fora de um trabalhador, p. ex. no modo dormir), vale o commit
+    // marcado no card.
+    let has_branch = git_out(
+        &dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok();
+    let source = match (&card.commit, has_branch) {
+        (Some(commit), false) => commit.clone(),
+        _ => format!("refs/heads/{branch}"),
+    };
     let commit = {
         let (dir, target) = (dir.clone(), target.clone());
         tokio::task::spawn_blocking(move || {
-            merge_task(&dir, &worktree, &branch, &target, &scratch, &message)
+            merge_task(&dir, &worktree, &source, &target, &scratch, &message)
         })
         .await
         .map_err(|e| internal(&e.to_string()))?
@@ -929,7 +1003,8 @@ pub(super) async fn agent_validate(
     Ok(Json(card))
 }
 
-/// Junta a branch da tarefa na `target` e devolve o commit da `target` depois. A `target` só
+/// Junta `source` (a branch da tarefa, ou o commit dela) na `target` e devolve o commit da
+/// `target` depois. A `target` só
 /// anda no fim, e só para a frente: já contém a tarefa = nada muda; é ancestral = fast-forward;
 /// senão, merge numa worktree descartável. Branch que não existe nasce na ponta da tarefa. Quem
 /// tem a `target` em checkout (a pasta do projeto, em geral a `main`) anda com `merge --ff-only`,
@@ -937,7 +1012,7 @@ pub(super) async fn agent_validate(
 fn merge_task(
     dir: &Path,
     worktree: &Path,
-    branch: &str,
+    source: &str,
     target: &str,
     scratch: &Path,
     message: &str,
@@ -954,13 +1029,9 @@ fn merge_task(
     }
     let tip = git_out(
         dir,
-        &[
-            "rev-parse",
-            "--verify",
-            &format!("refs/heads/{branch}^{{commit}}"),
-        ],
+        &["rev-parse", "--verify", &format!("{source}^{{commit}}")],
     )
-    .map_err(|_| conflict(format!("a branch {branch} não existe")))?;
+    .map_err(|_| conflict(format!("{source} não existe")))?;
     let target_ref = format!("refs/heads/{target}");
     let Ok(old) = git_out(
         dir,
@@ -981,9 +1052,10 @@ fn merge_task(
         let _ = git_out(dir, &["worktree", "remove", "--force", &scratch_arg]);
         let _ = std::fs::remove_dir_all(scratch);
         let _ = git_out(dir, &["worktree", "prune"]);
+        let name = source.trim_start_matches("refs/heads/");
         merged.map_err(|e| {
             conflict(format!(
-                "conflito ao juntar {branch} em {target} ({e}). Nada mudou: rode `git merge \
+                "conflito ao juntar {name} em {target} ({e}). Nada mudou: rode `git merge \
                  {target}` no worktree, resolva, commite e valide de novo"
             ))
         })?
@@ -2182,6 +2254,103 @@ mod tests {
         assert!(t1_card.get("holder").is_none(), "{t1_card}");
         assert!(!t1.exists());
         assert!(git_sync(&hub.proj, &["branch", "--list", "agente/T1"]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn qa_all_holds_every_free_done_card_in_one_session() {
+        let t = TestTmux::new("kanban-qa-geral");
+        let hub = hub(&t, true);
+        let qa_all = || {
+            let app = hub.app.clone();
+            async move { send(app, "POST", &format!("{CARDS}/qa"), None, None).await }
+        };
+        for title in ["um", "dois", "tres", "quatro"] {
+            let body = format!(r#"{{"title":"{title}","kind":"agente"}}"#);
+            send(hub.app.clone(), "POST", CARDS, Some(&body), None).await;
+        }
+        assert_eq!(qa_all().await.0, StatusCode::CONFLICT, "nada em feito");
+        // T1 e T2 feitos sem branch (como no modo dormir), com o commit que já está na main; T3
+        // feito e já num QA próprio; T4 fica no backlog.
+        let head = git_sync(&hub.proj, &["rev-parse", "HEAD"]);
+        let (_, worker) = session(&t, AgentKind::Opencode, 1).await;
+        for id in ["T1", "T2", "T3"] {
+            send(
+                hub.agents.clone(),
+                "POST",
+                "/v1/kanban/pull",
+                None,
+                Some(&worker),
+            )
+            .await;
+            let body = format!(r#"{{"id":"{id}","commit":"{head}"}}"#);
+            send(
+                hub.agents.clone(),
+                "POST",
+                "/v1/kanban/done",
+                Some(&body),
+                Some(&worker),
+            )
+            .await;
+        }
+        let (status, single) = send(
+            hub.app.clone(),
+            "POST",
+            &format!("{CARDS}/T3/qa"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{single}");
+
+        let (status, info) = qa_all().await;
+        assert_eq!(status, StatusCode::CREATED, "{info}");
+        assert_eq!(info["agent"], "claude");
+        let qa = info["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            last_subject(&hub.proj),
+            format!("kanban: QA geral de T1, T2 com {qa}")
+        );
+        let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+        let holder = |id: &str| {
+            board["cards"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap()["holder"]
+                .clone()
+        };
+        assert_eq!(holder("T1"), qa.as_str());
+        assert_eq!(holder("T2"), qa.as_str());
+        assert_eq!(holder("T3"), single["id"]);
+        assert!(holder("T4").is_null());
+        assert_eq!(qa_all().await.0, StatusCode::CONFLICT, "nada livre");
+
+        // Sem branch, vale o commit do card: já está na main, então só valida.
+        let token = exec_token(&t, &qa).await;
+        let main_before = git_sync(&hub.proj, &["rev-parse", "main"]);
+        let (status, done) = send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/validate",
+            Some(r#"{"id":"T1","branch":"main"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{done}");
+        assert_eq!(done["column"], "validado");
+        assert_eq!(done["merged"]["commit"], main_before.as_str());
+        // O que o QA geral não tocou fica livre quando ele acaba.
+        t.tmux.kill(&qa).await.unwrap();
+        let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+        let t2 = board["cards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "T2")
+            .unwrap();
+        assert_eq!(t2["column"], "feito");
+        assert!(t2.get("holder").is_none(), "{t2}");
     }
 
     #[tokio::test]

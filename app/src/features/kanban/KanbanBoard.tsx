@@ -213,6 +213,18 @@ export function KanbanBoard() {
     });
   }
 
+  /** QA geral (F11.16): um Claude só passa por todos os cards feitos livres, para limpar o quadro. */
+  function qaAll(count: number) {
+    void act(async () => {
+      requireClaudeLogin("QA geral");
+      const info = await client.qaAll(profile, project);
+      useAppStore.setState((s) => ({
+        sessions: [...s.sessions.filter((x) => x.id !== info.id), info],
+        toast: `QA geral de ${count} ${count === 1 ? "card" : "cards"} aberto: responda na aba onde juntar (main ou outra branch).`,
+      }));
+    });
+  }
+
   /** "Retomar" (F11.14): a cota voltou; o orquestrador volta a puxar e avisa o que abriu. */
   function resume() {
     void act(async () => {
@@ -406,6 +418,7 @@ export function KanbanBoard() {
           <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-[minmax(0,1fr)] gap-3 p-4">
             {columns.map((column) => {
               const inColumn = cards.filter((card) => card.column === column.id);
+              const freeDone = column.id === "feito" ? inColumn.filter((c) => !c.holder) : [];
               const target = overColumn === column.id;
               return (
                 <section
@@ -432,6 +445,16 @@ export function KanbanBoard() {
                     <span className="rounded-full bg-white/10 px-2 text-xs text-slate-400">
                       {inColumn.length}
                     </span>
+                    {freeDone.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => qaAll(freeDone.length)}
+                        title="Abre um Claude que passa por todos os cards feitos: pergunta uma vez onde juntar e valida ou devolve cada um"
+                        className="ml-auto flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-0.5 text-xs font-normal text-white hover:bg-accent/30"
+                      >
+                        <ShieldCheck className="size-3.5" /> QA geral ({freeDone.length})
+                      </button>
+                    )}
                   </h3>
                   {inColumn.map((card) => (
                     <article

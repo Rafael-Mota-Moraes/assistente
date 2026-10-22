@@ -44,6 +44,7 @@ function connect(board: Board) {
     resumeOrchestrator: vi.fn().mockResolvedValue(board),
     finishWithClaude: vi.fn().mockResolvedValue(claude),
     qaCard: vi.fn().mockResolvedValue(claude),
+    qaAll: vi.fn().mockResolvedValue(claude),
   };
   useAppStore.setState({
     hub: hub as unknown as HubClient,
@@ -98,14 +99,35 @@ describe("KanbanBoard", () => {
     });
     const feito = await column("Feito");
     // O card que já está em QA não abre outro.
-    expect(within(feito).getAllByRole("button", { name: /QA/ })).toHaveLength(1);
-    fireEvent.click(within(feito).getByRole("button", { name: /QA/ }));
+    expect(within(feito).getAllByRole("button", { name: /^QA$/ })).toHaveLength(1);
+    fireEvent.click(within(feito).getByRole("button", { name: /^QA$/ }));
     await waitFor(() => expect(hub.qaCard).toHaveBeenCalledWith("pessoal", "game", "T1"));
     await waitFor(() => expect(useAppStore.getState().toast).toMatch(/QA de T1 aberto/));
     const validado = await column("Validado");
     expect(within(validado).getByText("main")).toBeInTheDocument();
     expect(within(validado).getByText("fedcba9")).toBeInTheDocument();
     expect(within(validado).queryByRole("button", { name: /QA/ })).toBeNull();
+  });
+
+  it("QA geral confere de uma vez os cards feitos livres", async () => {
+    const hub = connect({
+      next: 4,
+      cards: [
+        card("T1", { column: "feito" }),
+        card("T2", { column: "feito" }),
+        card("T3", { column: "feito", holder: claude.id }),
+      ],
+    });
+    const feito = await column("Feito");
+    fireEvent.click(within(feito).getByRole("button", { name: "QA geral (2)" }));
+    await waitFor(() => expect(hub.qaAll).toHaveBeenCalledWith("pessoal", "game"));
+    await waitFor(() => expect(useAppStore.getState().toast).toMatch(/QA geral de 2 cards aberto/));
+  });
+
+  it("sem card feito livre, não há QA geral", async () => {
+    connect({ next: 2, cards: [card("T1", { column: "feito", holder: claude.id })] });
+    const feito = await column("Feito");
+    expect(within(feito).queryByRole("button", { name: /QA geral/ })).toBeNull();
   });
 
   it("Mandar envia a tarefa manual para um trabalhador", async () => {

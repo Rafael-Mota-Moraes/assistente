@@ -322,6 +322,69 @@ pub fn render_qa_prompt(card: &Card, branch: &str, instructions: &str) -> String
     )
 }
 
+/// Prompt do QA geral (F11.16): uma sessão na raiz do projeto confere todos os cards "feitos" de
+/// uma vez, com uma só pergunta de onde juntar, e valida ou reabre cada um.
+pub fn render_qa_all_prompt(cards: &[Card], instructions: &str) -> String {
+    let list: String = cards
+        .iter()
+        .map(|card| {
+            let description = if card.description.is_empty() {
+                "(sem descrição: o título é o pedido)".to_owned()
+            } else {
+                card.description.clone()
+            };
+            let commit = card
+                .commit
+                .as_deref()
+                .map(|commit| format!(", marcada como feita no commit `{commit}`"))
+                .unwrap_or_default();
+            format!(
+                "### {id}: {title}\n\n\
+                 Branch `{branch}`, worktree `.assistente/worktrees/{id}`{commit}.\n\n\
+                 {description}\n\n",
+                id = card.id,
+                title = card.title,
+                branch = branch(&card.id),
+            )
+        })
+        .collect();
+    format!(
+        "# QA geral do quadro\n\n\
+         Você é o QA destas {n} tarefas \"feitas\": confere se cada uma atende o pedido e, se\n\
+         atender, junta. Você está na raiz do projeto; o trabalho de cada tarefa está na branch\n\
+         dela, com um worktree em `.assistente/worktrees/<id>` (se não houver branch, veja o\n\
+         commit marcado).\n\n\
+         ## Tarefas\n\n\
+         {list}\
+         ## Passos\n\n\
+         1. Antes de tudo, pergunte ao usuário onde juntar: na `main` ou em outra branch (qual).\n   \
+            Uma resposta vale para todas. Espere. Chame a escolhida de ALVO.\n\
+         2. Uma tarefa por vez, na ordem da lista (a que depende de outra vem depois dela):\n   \
+            - Veja o que foi feito: `git log --oneline ALVO..agente/<id>` e\n     \
+              `git diff ALVO...agente/<id>`. Confira com o pedido (e o \"Pronto quando\", se houver).\n   \
+            - Rode as verificações do projeto no worktree dela (ex.: `./dev just check`).\n   \
+            - Não atende: `\"$ASSISTENTE_FORA_DO_JAIL\" kanban reabrir <id> --nota \"<o que já existe\n     \
+              e o que falta>\"`. Volta ao backlog com a nota; não implemente o que falta.\n   \
+            - Atende: `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar <id> --branch ALVO`. O hubd junta\n     \
+              (merge local, nunca push) e o card vai para \"validado\". Se ele responder conflito\n     \
+              (a ALVO andou com as anteriores), no worktree da tarefa rode `git merge ALVO`,\n     \
+              resolva, rode as verificações, commite e chame `validar` de novo.\n\
+         3. No fim, um resumo curto ao usuário: o que entrou, o que voltou e por quê.\n\n\
+         ## Regras\n\n\
+         - Só corrija o que nasce da junção (conflito), e só no worktree da tarefa. Não faça push,\n  \
+           não troque a branch da raiz e não commite nela.\n\
+         - Não mexa em `.assistente/kanban.json`: o quadro muda pelos comandos acima.\n\
+         - Deixe o worktree limpo antes de validar: o que não está commitado não entra.\n\
+         - Tarefa que você não conseguir avaliar, deixe como está e diga no resumo.\n\
+         {extra}",
+        n = cards.len(),
+        extra = match instructions.trim() {
+            "" => String::new(),
+            text => format!("\n## Instruções do projeto\n\n{text}\n"),
+        },
+    )
+}
+
 fn prompt(card: &Card, branch: &str, instructions: &str, marking: &str) -> String {
     let description = if card.description.is_empty() {
         "(sem descrição: o título é o pedido)".to_owned()
@@ -533,6 +596,24 @@ mod tests {
             extra.ends_with("\n## Instruções do projeto\n\nUse pnpm.\n"),
             "{extra}"
         );
+    }
+
+    #[test]
+    fn qa_all_prompt_lists_every_card_and_asks_once() {
+        let mut first = card("Pedir e-mail e senha.");
+        first.commit = Some("abc1234".to_owned());
+        let mut second = card("");
+        second.id = "T8".to_owned();
+        let text = render_qa_all_prompt(&[first, second], "");
+        assert!(text.starts_with("# QA geral do quadro"));
+        assert!(text.contains("destas 2 tarefas"));
+        assert!(text.contains("### T7: Tela de login"));
+        assert!(text.contains("Branch `agente/T7`, worktree `.assistente/worktrees/T7`, marcada"));
+        assert!(text.contains("### T8: Tela de login\n\nBranch `agente/T8`"));
+        assert!(text.contains("sem descrição"));
+        assert!(text.contains("Uma resposta vale para todas"));
+        assert!(text.contains("kanban validar <id> --branch ALVO"));
+        assert!(!text.contains("Instruções do projeto"));
     }
 
     #[test]

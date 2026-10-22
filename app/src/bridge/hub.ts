@@ -146,6 +146,11 @@ export class HubClient {
     return this.request("POST", `${kanbanPath(profile, project)}/${encodeURIComponent(id)}/qa`);
   }
 
+  /** QA geral (F11.16): um Claude só confere todos os cards feitos livres. */
+  qaAll(profile: string, project: string): Promise<SessionInfo> {
+    return this.request("POST", `${kanbanPath(profile, project)}/qa`);
+  }
+
   /** Abre um Claude que monta o quadro a partir do backlog em markdown (F11.9). */
   explorarBacklog(profile: string, project: string): Promise<SessionInfo> {
     return this.request("POST", `${kanbanPath(profile, project)}/explorar`);

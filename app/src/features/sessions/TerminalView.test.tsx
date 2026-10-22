@@ -83,4 +83,12 @@ describe("TerminalView", () => {
     act(() => fake.events?.onExit());
     expect(screen.getByText("Sessão encerrada.")).toBeInTheDocument();
   });
+
+  it("encerrar a sessão depois não apaga o status da morte (F14.3)", async () => {
+    render(<TerminalView sessionId="pessoal--x--claude-1" />);
+    await waitFor(() => expect(fake.events).not.toBeNull());
+    act(() => fake.events?.onExit(127));
+    act(() => fake.events?.onExit());
+    expect(screen.getByText("Sessão encerrada (status 127).")).toBeInTheDocument();
+  });
 });

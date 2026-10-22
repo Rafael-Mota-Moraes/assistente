@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import { backoffDelayMs, connectPersistent, type TerminalEvents } from "./terminal";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  backoffDelayMs,
+  connectPersistent,
+  connectTerminal,
+  type TerminalEvents,
+} from "./terminal";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -55,6 +60,64 @@ function persistentEvents() {
     onExit: vi.fn(),
   };
 }
+
+/** WebSocket falso: o teste manda o texto que o hubd manda (protocolo da spec 02). */
+class FakeSocket {
+  static last: FakeSocket | null = null;
+  url: string;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onopen: (() => void) | null = null;
+  binaryType = "";
+  readyState = 1;
+  constructor(url: string) {
+    this.url = url;
+    FakeSocket.last = this;
+  }
+  send() {}
+  close() {}
+}
+
+describe("o protocolo do terminal", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Conecta com o WebSocket falso e devolve o socket para o teste falar com o hubd. */
+  async function conecta(events: TerminalEvents) {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const promise = connectTerminal("ws://x", events);
+    const socket = FakeSocket.last;
+    if (!socket) throw new Error("o WebSocket falso não foi criado");
+    socket.onopen?.();
+    await promise;
+    return socket;
+  }
+
+  it("o exit com status do hubd chega com o status (F14.3)", async () => {
+    const events = { onData: vi.fn(), onClose: vi.fn() };
+    const socket = await conecta(events);
+    socket.onmessage?.({ data: '{"type":"exit","status":127}' });
+    expect(events.onClose).toHaveBeenCalledWith("exit", { status: 127 });
+  });
+
+  it("exit sem status não inventa status (processo morto por sinal)", async () => {
+    const events = { onData: vi.fn(), onClose: vi.fn() };
+    const socket = await conecta(events);
+    socket.onmessage?.({ data: '{"type":"exit"}' });
+    expect(events.onClose).toHaveBeenCalledWith("exit", { status: undefined });
+  });
+
+  it("o erro do hubd chega com a mensagem", async () => {
+    const events = { onData: vi.fn(), onClose: vi.fn() };
+    const socket = await conecta(events);
+    socket.onmessage?.({ data: '{"type":"error","message":"sessão não encontrada"}' });
+    expect(events.onClose).toHaveBeenCalledWith("error", {
+      message: "sessão não encontrada",
+    });
+  });
+});
 
 describe("backoffDelayMs", () => {
   it("dobra de 1 s em 1 s até o teto de 30 s", () => {

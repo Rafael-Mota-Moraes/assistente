@@ -75,9 +75,12 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
       onExit: (status) => {
         if (disposed) return;
         // F14.3: a sessão morreu e deixou o painel na tela. O aviso traz o status de saída
-        // e o que o processo imprimiu fica no terminal.
+        // e o que o processo imprimiu fica no terminal. O primeiro aviso fica: encerrar a
+        // sessão depois não apaga o status que a morte mostrou.
         setEnded(
-          status === undefined ? "Sessão encerrada." : `Sessão encerrada (status ${status}).`,
+          (antes) =>
+            antes ??
+            (status === undefined ? "Sessão encerrada." : `Sessão encerrada (status ${status}).`),
         );
       },
     });

@@ -251,12 +251,28 @@ pub fn router(state: AppState) -> Router {
             put(kanban::set_orchestrator),
         )
         .route(
+            "/api/projects/{profile}/{project}/kanban/orquestrador/retomar",
+            post(kanban::resume_orchestrator),
+        )
+        .route(
             "/api/projects/{profile}/{project}/kanban/{id}",
             patch(kanban::update_card).delete(kanban::delete_card),
         )
         .route(
             "/api/projects/{profile}/{project}/kanban/{id}/mandar",
             post(kanban::mandar_card),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/kanban/{id}/claude",
+            post(kanban::finish_with_claude),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/kanban/qa",
+            post(kanban::qa_all),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/kanban/{id}/qa",
+            post(kanban::qa_card),
         )
         .route("/api/sessions/{id}/reiniciar", post(kanban::restart_worker))
         .route(
@@ -301,6 +317,9 @@ pub fn agent_router(state: AppState) -> Router {
         .route("/v1/kanban/pull", post(kanban::agent_pull))
         .route("/v1/kanban/done", post(kanban::agent_done))
         .route("/v1/kanban/release", post(kanban::agent_release))
+        .route("/v1/kanban/block", post(kanban::agent_block))
+        .route("/v1/kanban/validate", post(kanban::agent_validate))
+        .route("/v1/kanban/reopen", post(kanban::agent_reopen))
         .route("/v1/workers", post(kanban::agent_worker))
         // Diagnóstico da VM: leitura só, sem aprovação (F14.1).
         .route("/v1/diagnostico", post(diagnostico::agent_diagnostico))

@@ -1,6 +1,6 @@
 # 10 — Quadro, orquestrador e trabalhadores
 
-Cobre o quadro por projeto (F11). Funcionalidades F11.1–F11.11. O que e por que: `docs/VISAO.md`
+Cobre o quadro por projeto (F11). Funcionalidades F11.1–F11.16. O que e por que: `docs/VISAO.md`
 (R6 modo dormir, R7 sessões). Este documento é o como.
 
 ## Quadro
@@ -9,12 +9,14 @@ Cobre o quadro por projeto (F11). Funcionalidades F11.1–F11.11. O que e por qu
 comita **só ele** a cada escrita (`git commit -- .assistente/kanban.json`): o que você já tinha no
 index fica como estava, e a árvore não amanhece suja (o modo dormir exige árvore limpa, F6.3).
 
-Colunas: `backlog` · `fazendo` · `feito`. Campos de um card: `id` (`T1`, nunca reaproveitado),
-`title`, `description`, `priority` (`alta` · `normal` · `baixa`), `kind`, `column`, `holder` (a
-sessão que segura, só em "fazendo"), `commit` (só em "feito"), `failures` (vezes que voltou do
-"fazendo" sem concluir: `release` ou sessão morta; omitido quando zero). No nível do quadro,
-`orchestrator` (`enabled`, `max_workers`, `instructions`), omitido enquanto estiver no padrão
-(desligado, 1, sem instruções).
+Colunas: `backlog` · `fazendo` · `feito` · `validado` (F11.15). Campos de um card: `id` (`T1`, nunca
+reaproveitado), `title`, `description`, `priority` (`alta` · `normal` · `baixa`), `kind`, `column`,
+`holder` (a sessão que segura: o trabalhador em "fazendo", o QA em "feito"/"validado"), `commit` (o
+que fechou a tarefa, em "feito"), `merged` `{branch, commit}` (onde o QA juntou, em "validado"), `failures` (vezes que voltou do
+"fazendo" sem concluir: `release` ou sessão morta; omitido quando zero), `blocked` (a linha de erro
+de quando parou por cota, F11.14; some quando a tarefa começa de novo). No nível do quadro,
+`orchestrator` (`enabled`, `max_workers`, `instructions`, `paused` `{reason, at}`), omitido enquanto
+estiver no padrão (desligado, 1, sem instruções, sem pausa).
 
 **Tipos de card** (F11.6):
 
@@ -27,6 +29,12 @@ mesma tarefa (o pull é atômico sob `kanban_lock`). Sessão morta = tarefa solt
 quadro, com commit `kanban: solta T3 (sessão encerrada)`. Regras puras em `hub_core::kanban`.
 
 ## Popular pelo backlog (F11.9)
+
+**Prompt inicial em arquivo.** Toda sessão do Claude que já começa com tarefa (esta, o "Terminar com
+Claude" e os QAs) recebe o prompt em `.assistente/prompts/<sessão>.md`, na pasta dela (projeto ou
+worktree, fora do `git status` pelo `info/exclude`). O argumento do `claude` só aponta para o
+arquivo. O prompt inteiro no comando fazia o tmux recusar a sessão ("command too long") no QA geral
+com vários cards. Na pasta da sessão, o Claude lê sem pedir permissão.
 
 `POST …/kanban/explorar` abre um Claude no projeto cujo prompt (`hub_core::worker::EXPLORE_PROMPT`) é
 gravado em `~/.assistente/perfis/<perfil>/explorar/<sessão>.md`. O Claude lê o backlog em markdown,
@@ -67,6 +75,15 @@ O `opencode run` vai com `--standalone`, como o agente: sem ele tenta o servidor
 porta 49374 (a do ai-memory) e aborta toda tentativa com "Managed service port 49374 … in use".
 A saída do `opencode run` vai para a tela da sessão (`tee`) e para o `.log`: a aba do trabalhador
 mostra o agente trabalhando, não só as linhas do loop.
+
+**Cota esgotada** (F11.14): a saída do opencode com `ERRO_COTA` ("Free usage limit reached",
+"Subscribe to OpenCode Go"; visto na VM em 2026-10-22) não é falha do modelo. Os grátis dividem a
+mesma cota, então trocar de modelo só queimaria os outros e, com o orquestrador ligado, o quadro
+inteiro. O `trabalhador` mata a tentativa (126), não grava resultado no histórico, roda
+`fora-do-jail kanban bloquear <id> --motivo <linha do erro>` e sai com 3. O hubd (`POST
+/v1/kanban/block`) devolve o card ao backlog **sem** `failures + 1`, com `blocked`, e pausa o
+orquestrador do projeto (`paused`, a hora da primeira recusa). Trabalhadores que já rodam seguem; se
+baterem na cota, bloqueiam do mesmo jeito.
 
 Vigia (F11.10): cada tentativa roda o opencode num grupo próprio e olha a saída a cada
 `AGENTE_VIGIA` segundos (padrão 5). Erro de provedor (`rate limit`, `429`/`5xx`, `model not found`, `model unavailable`, `has been deprecated`, `upstream request failed`,
@@ -113,8 +130,58 @@ decisão, porque o modelo já é escolhido sozinho (F11.10).
   um toast com o resultado: o que foi para trabalhador, o erro, ou que não havia card livre.
   Enquanto o `PUT` roda, o botão mostra "Ligando…"/"Desligando…".
 - Uma volta por vez (`orchestrator_lock`): o laço e o "ligar" da UI não disputam a mesma tarefa.
+- **Pausa por cota** (F11.14): com `paused`, a volta não abre nada (e não é erro). O quadro mostra
+  uma faixa ("Cota do provedor esgotada às HH:MM: orquestrador pausado"), com o motivo, e um toast
+  quando a pausa aparece com o quadro aberto. "Retomar" (`POST …/kanban/orquestrador/retomar`) tira
+  a pausa e já dá uma volta (`started`, como ao ligar); os cards bloqueados voltam a ser puxados.
+  O `PUT …/orquestrador` (ligar, limite, instruções) não mexe na pausa.
+- **Terminar com outro harness** (F11.14): o card com `blocked` mostra o selo "cota"; ele e o card
+  que voltou sem concluir (`failures > 0`) mostram dois botões.
+  "Terminar com Claude" (`POST …/kanban/{id}/claude`) abre um Claude no worktree da tarefa
+  (`LaunchPlan::build_finish`: `.git` do projeto gravável, API dos agentes) com
+  `worker::render_finish_prompt`: a mesma tarefa, "continue de onde o trabalhador parou" e, como
+  não há trabalhador, ele mesmo roda `kanban done` (ou `release`). A sessão segura o card. "Outro
+  modelo…" é o "Mandar" com um modelo escolhido (padrão `9router/free`). Os dois valem mesmo com o
+  orquestrador pausado: são pedidos seus.
 - Erro (sem API dos agentes, sem modelo grátis…) não para o laço: fica em memória por projeto, vai
   no `GET …/kanban` como `orchestrator_error` (faixa amarela no quadro) e no log só quando muda.
+
+## QA e validado (F11.15)
+
+O botão **QA** no card "feito" (sem ninguém segurando) abre um Claude numa aba (`POST
+…/kanban/{id}/qa`), no worktree da tarefa (`LaunchPlan::build_finish`, o mesmo do "Terminar com
+Claude"), com `worker::render_qa_prompt`. A sessão segura o card (`Board::start_qa`): um QA por vez.
+O Claude:
+
+1. Pergunta a você onde juntar: `main` ou outra branch. Espera a resposta.
+2. Lê o diff da branch `agente/<id>` contra a escolhida, confere com o pedido do card e roda as
+   verificações do projeto. Não implementa o que falta.
+3. Não atende: `fora-do-jail kanban reabrir <id> --nota "…"` (`POST /v1/kanban/reopen`). O card volta
+   ao backlog com "Revisão (AAAA-MM-DD): nota" no fim da descrição, `failures` zerado e sem
+   `commit`: o automático puxa de novo e o próximo trabalhador continua da mesma branch, que o
+   worktree mantém.
+4. Atende: `fora-do-jail kanban validar <id> --branch B` (`POST /v1/kanban/validate`). O hubd junta
+   (`merge_task`), só para a frente e sem push: a branch já contém a tarefa = nada muda; é
+   ancestral = fast-forward; senão, `merge --no-ff` numa worktree descartável, e conflito = 409 sem
+   mexer em nada (o QA roda `git merge B` no worktree, resolve, commita e valida de novo). Branch
+   que não existe nasce na ponta da tarefa. Quem tem `B` em checkout (a pasta do projeto, em geral
+   a `main`) anda com `merge --ff-only`, que recusa se encostar em mudança sua; senão a ref troca
+   conferindo o valor antigo (como a F8.8). Árvore suja no worktree = 409: o que não está commitado
+   não entraria. O card vai para "validado" com `merged`.
+
+Só quem segura valida ou reabre. Quando a sessão do QA acaba, o card perde o `holder` sem `failures`
+(fora de "fazendo", `release_dead` só solta) e, se está validado, o worktree sai (`git worktree
+remove`, que recusa com mudança) e a branch `agente/<id>` também, se já está no commit juntado.
+O card validado mostra "na main · abc1234". O contador da lateral conta só backlog e fazendo.
+
+**QA geral** (F11.16), para limpar o quadro: o botão "QA geral (N)" no topo da coluna Feito (`POST
+…/kanban/qa`) abre um Claude só, na raiz do projeto (`launch_session`, como o "Popular pelo
+backlog"), com `worker::render_qa_all_prompt`: os N cards feitos sem dono, em ordem de id, cada um
+com branch e worktree. A sessão segura todos. Ele pergunta **uma vez** onde juntar e passa card por
+card com os mesmos `validar`/`reabrir`; o conflito que nasce da junção das anteriores ele resolve no
+worktree da tarefa. Card que ele não tocar fica livre quando a sessão acaba. Card feito sem branch
+(modo dormir, ou feito à mão) é validado pelo commit marcado: se já está na branch escolhida, só
+muda de coluna.
 
 ## Supervisão
 
@@ -139,8 +206,12 @@ Opt-in por projeto: `[sleep] source = "quadro"`. O padrão `backlog` não muda n
 - `hub_core::kanban` (regras), `hub_core::worker` (config, prompt, nomes), `session::worker_runs…`.
 - `hubd::api::kanban::tests`: CRUD com um commit por escrita, pull/done/release com sessões de tmux de
   verdade, sessão morta, Mandar com worktree e reinício, orquestrador → trabalhador, orquestrador
-  automático (limite, card que voltou fica, "Tentar de novo", erro no quadro).
-- `vm/teste-trabalhador.sh` e `notebook/teste-dorme.sh` (quadro: prioridade, commit, volta ao backlog,
-  quadro vazio).
+  automático (limite, card que voltou fica, "Tentar de novo", erro no quadro), cota (bloqueio pausa,
+  "Terminar com Claude", "Retomar"), QA (um por vez, só quem segura valida, árvore suja, merge na
+  `main` em checkout, conflito sem mudar nada, branch nova, reabrir com nota, worktree e branch saem
+  quando o QA acaba), QA geral (segura só os feitos livres, valida pelo commit quando não há
+  branch, solta o resto quando acaba).
+- `vm/teste-trabalhador.sh` (inclui cota: na saída final e no meio da tentativa) e
+  `notebook/teste-dorme.sh` (quadro: prioridade, commit, volta ao backlog, quadro vazio).
 - `KanbanBoard.test.tsx`, `ProjectList.test.tsx`.
 - Não coberto aqui (F11.8, humano): opencode real, nomes de modelo do `opencode models`.

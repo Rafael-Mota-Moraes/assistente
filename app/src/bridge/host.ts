@@ -58,6 +58,38 @@ export function closeMemoryPanel(): Promise<void> {
   return invoke("close_memory_panel");
 }
 
+/** Preview do projeto (F12.1): webview filha ancorada sobre a área de conteúdo, fora das
+ * capabilities (a página apontada não alcança os comandos do app). No navegador (pnpm dev)
+ * o painel usa iframe e aqui não faz nada. Chamar de novo recarrega a página. */
+export function openPreviewPanel(url: string, rect: PanelRect): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke("open_preview_panel", { url, rect });
+}
+
+/** Acompanha o âncora do preview (janela redimensionou, layout mudou). */
+export function updatePreviewPanelBounds(rect: PanelRect): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke("update_preview_panel_bounds", { rect });
+}
+
+/** Esconde ou mostra a webview do preview: um modal do app precisa ficar por cima dela. */
+export function previewPanelVisible(visible: boolean): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke("preview_panel_visible", { visible });
+}
+
+/** Liga/desliga o modo "apontar" na página do preview (F12.1; a seleção chega na F12.2). */
+export function previewPicker(enabled: boolean): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke("preview_picker", { enabled });
+}
+
+/** Fecha a webview do preview. */
+export function closePreviewPanel(): Promise<void> {
+  if (!isTauri()) return Promise.resolve();
+  return invoke("close_preview_panel");
+}
+
 /** Abre uma URL no navegador padrão (links clicáveis do terminal). */
 export function openUrl(url: string): Promise<void> {
   if (!isTauri()) {

@@ -49,7 +49,11 @@ export function ProjectSettingsDialog() {
     if (!hub || !target || !settings) return;
     setSaving(true);
     try {
-      await hub.saveProjectSettings(target.profile, target.project, settings);
+      await hub.saveProjectSettings(target.profile, target.project, {
+        ...settings,
+        // Campo vazio = sem preview (o hubd guarda `null`).
+        preview_url: settings.preview_url?.trim() || null,
+      });
       useAppStore.setState({
         projectSettings: null,
         toast: `Configurações de ${target.project} salvas: valem para as próximas sessões.`,
@@ -78,7 +82,7 @@ export function ProjectSettingsDialog() {
           <Settings className="size-5 shrink-0 text-slate-300" />
           <h2 className="text-lg font-semibold text-white">
             {target.project}
-            <span className="ml-2 text-sm font-normal text-slate-400">jail das sessões</span>
+            <span className="ml-2 text-sm font-normal text-slate-400">sessões e preview</span>
           </h2>
           <button
             type="button"
@@ -91,8 +95,9 @@ export function ProjectSettingsDialog() {
         </header>
 
         <p className="text-sm text-slate-400">
-          O que o agente pode fazer dentro do ai-jail neste projeto. Fica na VM, fora do repo (o
-          agente não muda isso sozinho), e vale para as <strong>sessões novas</strong>.
+          O que o agente pode fazer dentro do ai-jail neste projeto e onde ver o projeto rodando.
+          Fica na VM, fora do repo (o agente não muda isso sozinho): o jail vale para as{" "}
+          <strong>sessões novas</strong>, o preview vale na hora.
         </p>
 
         {error && (
@@ -153,6 +158,23 @@ export function ProjectSettingsDialog() {
               items={settings.allowed_commands}
               onChange={(allowed_commands) => patch({ allowed_commands })}
             />
+
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-slate-200">URL do preview</span>
+              <input
+                aria-label="URL do preview"
+                value={settings.preview_url ?? ""}
+                onChange={(event) => patch({ preview_url: event.target.value })}
+                placeholder="http://10.77.0.10:5173"
+                className="rounded-lg border border-line bg-black/30 px-2 py-1 font-mono text-slate-200 placeholder:text-slate-600"
+              />
+              <span className="text-xs text-slate-400">
+                Endereço do dev server <strong>visto do PC</strong>: se o projeto roda na VM, use o
+                IP dela (o hubd responde no mesmo IP) e escute o dev server em 0.0.0.0. Só{" "}
+                <code className="font-mono">http</code>/<code className="font-mono">https</code> e
+                sem senha. Fica na VM, fora do repo.
+              </span>
+            </label>
 
             <div className="flex justify-end gap-2">
               <button

@@ -6,7 +6,13 @@ import { useAppStore } from "../../store";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 
 const closed = (): ProjectSettingsView => ({
-  settings: { docker: false, allow_hosts: [], full_network: false, allowed_commands: [] },
+  settings: {
+    docker: false,
+    allow_hosts: [],
+    full_network: false,
+    allowed_commands: [],
+    preview_url: null,
+  },
   docker_from_project_file: false,
 });
 
@@ -49,8 +55,42 @@ describe("ProjectSettingsDialog", () => {
       allow_hosts: ["pypi.org"],
       full_network: false,
       allowed_commands: ["cargo build"],
+      preview_url: null,
     });
     expect(useAppStore.getState().toast).toMatch(/próximas sessões/);
+  });
+
+  it("guarda a URL do preview e avisa que o endereço é visto do PC", async () => {
+    const hub = open(closed());
+    const campo = await screen.findByLabelText("URL do preview");
+    expect(screen.getByText(/visto do PC/)).toBeInTheDocument();
+
+    fireEvent.change(campo, { target: { value: " http://10.77.0.10:5173 " } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await vi.waitFor(() => expect(useAppStore.getState().projectSettings).toBeNull());
+    expect(hub.saveProjectSettings).toHaveBeenCalledWith(
+      "pessoal",
+      "game",
+      expect.objectContaining({ preview_url: "http://10.77.0.10:5173" }),
+    );
+  });
+
+  it("campo vazio do preview salva sem preview", async () => {
+    const hub = open({
+      ...closed(),
+      settings: { ...closed().settings, preview_url: "http://10.77.0.10:5173" },
+    });
+    const campo = await screen.findByLabelText("URL do preview");
+    expect(campo).toHaveValue("http://10.77.0.10:5173");
+
+    fireEvent.change(campo, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await vi.waitFor(() => expect(useAppStore.getState().projectSettings).toBeNull());
+    expect(hub.saveProjectSettings).toHaveBeenCalledWith(
+      "pessoal",
+      "game",
+      expect.objectContaining({ preview_url: null }),
+    );
   });
 
   it("rede completa mostra o aviso e desliga a lista de hosts", async () => {

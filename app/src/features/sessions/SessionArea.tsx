@@ -1,5 +1,6 @@
 import {
   Bot,
+  Eye,
   FileCode2,
   LayoutGrid,
   RotateCcw,
@@ -20,6 +21,7 @@ import {
 } from "../../store";
 import { EditorPanel } from "../editor/EditorPanel";
 import { KanbanBoard } from "../kanban/KanbanBoard";
+import { PreviewPanel } from "../preview/PreviewPanel";
 import { claudeLoginCommand, endSession, openSession } from "./actions";
 import { reopenTab } from "./shortcuts";
 import { TerminalView } from "./TerminalView";
@@ -56,7 +58,18 @@ export function tabLabel(session: SessionInfo): string {
 }
 
 /** Rótulo das visões que viram abas, como "Claude 1". */
-const viewLabel: Record<ViewKind, string> = { board: "Quadro", editor: "Editor" };
+const viewLabel: Record<ViewKind, string> = {
+  board: "Quadro",
+  editor: "Editor",
+  preview: "Preview",
+};
+
+/** Ícone da aba da visão. */
+function ViewIcon({ kind }: { kind: ViewKind }) {
+  if (kind === "board") return <LayoutGrid className="size-3.5" />;
+  if (kind === "preview") return <Eye className="size-3.5" />;
+  return <FileCode2 className="size-3.5" />;
+}
 
 export function SessionArea() {
   const {
@@ -109,6 +122,31 @@ export function SessionArea() {
   const lastHidden = hidden.at(-1) ?? null;
   const current = visible.find((s) => s.id === activeSession) ?? visible.at(-1) ?? null;
 
+  /** F12.1: abre o preview do projeto (o dev server) numa aba, sem mexer nas sessões. */
+  async function abrirPreview() {
+    const cliente = useAppStore.getState().hub;
+    const perfil = activeProfile;
+    const projeto = activeProject;
+    if (!cliente || !perfil || !projeto) return;
+    try {
+      const view = await cliente.projectSettings(perfil, projeto);
+      if (!view.settings.preview_url) {
+        useAppStore.setState({
+          toast:
+            "Este projeto não tem URL de preview. Ponha o endereço do dev server na engrenagem do projeto.",
+        });
+        return;
+      }
+      openView(key, "preview");
+    } catch (e) {
+      useAppStore.setState({
+        toast: `não consegui ler as configurações do projeto: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      });
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-3 border-b border-line px-5 py-3">
@@ -146,6 +184,14 @@ export function SessionArea() {
             className="flex items-center gap-1.5 rounded-lg border border-line bg-white/5 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-white/10"
           >
             <FileCode2 className="size-4" /> Editor
+          </button>
+          <button
+            type="button"
+            onClick={abrirPreview}
+            title="Ver o projeto rodando (dev server), sem sair do app"
+            className="flex items-center gap-1.5 rounded-lg border border-line bg-white/5 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:bg-white/10"
+          >
+            <Eye className="size-4" /> Visualizar
           </button>
         </div>
       </header>
@@ -232,11 +278,7 @@ export function SessionArea() {
                   onClick={() => openView(key, kind)}
                   className="flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5"
                 >
-                  {kind === "board" ? (
-                    <LayoutGrid className="size-3.5" />
-                  ) : (
-                    <FileCode2 className="size-3.5" />
-                  )}
+                  <ViewIcon kind={kind} />
                   {viewLabel[kind]}
                 </button>
                 <button
@@ -266,6 +308,8 @@ export function SessionArea() {
         <KanbanBoard />
       ) : focusedView === "editor" ? (
         <EditorPanel />
+      ) : focusedView === "preview" ? (
+        <PreviewPanel />
       ) : projectSessions.length === 0 ? (
         <Empty title="Nenhuma sessão aberta">
           Clique em Claude ou OpenCode para abrir um agente neste projeto, ou em Terminal para um

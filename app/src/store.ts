@@ -92,8 +92,8 @@ export const initialState: State = {
   activeView: null,
 };
 
-/** Visões que aparecem como abas: o Quadro e o Editor de cada projeto. */
-export type ViewKind = "board" | "editor";
+/** Visões que aparecem como abas: o Quadro, o Editor e o Preview de cada projeto. */
+export type ViewKind = "board" | "editor" | "preview";
 
 /** Chave de um projeto nas visões (`perfil/projeto`). */
 export function viewKey(profile: string, project: string): string {

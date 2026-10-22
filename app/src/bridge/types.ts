@@ -119,6 +119,8 @@ export type ProjectSettings = {
   allow_hosts: string[];
   full_network: boolean;
   allowed_commands: string[];
+  /** F12.1: endereço do dev server, visto do PC. Ausente = sem preview. */
+  preview_url?: string | null;
 };
 
 /** Pedido de um agente para rodar um comando fora do jail (F9.5). */

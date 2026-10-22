@@ -79,6 +79,45 @@ describe("SessionArea", () => {
     expect(tabLabel(session("pessoal--game--opencode-3", "game", "opencode"))).toBe("OpenCode 3");
   });
 
+  const comPreview = (previewUrl: string | null) =>
+    useAppStore.setState({
+      hub: {
+        kanban: vi.fn().mockResolvedValue({ next: 1, cards: [] }),
+        projectSettings: vi.fn().mockResolvedValue({
+          settings: {
+            docker: false,
+            allow_hosts: [],
+            full_network: false,
+            allowed_commands: [],
+            preview_url: previewUrl,
+          },
+          docker_from_project_file: false,
+        }),
+      } as unknown as HubClient,
+      activeProfile: "pessoal",
+      activeProject: "game",
+      sessions: [session("pessoal--game--claude-1", "game", "claude")],
+    });
+
+  it("Visualizar abre o preview do projeto como aba, sem mexer na sessão", async () => {
+    comPreview("http://10.77.0.10:5173");
+    render(<SessionArea />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Visualizar/ }));
+    expect(await screen.findByRole("tab", { name: "Preview" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Claude 1" })).toBeInTheDocument();
+    expect(useAppStore.getState().sessions).toHaveLength(1);
+  });
+
+  it("sem URL de preview, o Visualizar avisa em vez de abrir", async () => {
+    comPreview(null);
+    render(<SessionArea />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Visualizar/ }));
+    await vi.waitFor(() => expect(useAppStore.getState().toast).toMatch(/URL de preview/));
+    expect(screen.queryByRole("tab", { name: "Preview" })).toBeNull();
+  });
+
   it("botão Terminal abre um bash fora do jail sem trocar o último agente", async () => {
     const created = session("pessoal--game--shell-1", "game", "shell");
     const createSession = vi.fn().mockResolvedValue(created);

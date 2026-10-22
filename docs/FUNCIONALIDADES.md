@@ -320,7 +320,7 @@ comandos do app.
 
 ## F14 — Diagnóstico da VM pelo agente
 
-- [ ] **F14.1 Leitura de diagnóstico sem aprovação.** Rota nova na API dos agentes (`127.0.0.1:7879`,
+- [x] **F14.1 Leitura de diagnóstico sem aprovação.** Rota nova na API dos agentes (`127.0.0.1:7879`,
   token da sessão, como o `fora-do-jail`): `POST /v1/diagnostico` com `{"comando": "..."}`. Só aceita
   uma lista fixa de comandos de leitura, escrita no Rust (não é shell livre): `journal-hubd` (últimas N
   linhas de `journalctl -u hubd`), `tmux-ls`, `tmux-pane` (`capture-pane` de uma sessão do projeto,
@@ -330,6 +330,13 @@ comandos do app.
   fora da lista em Rust; chamada com token errado responde 401.
   Pronto quando: um agente dentro de uma sessão do projeto lê o journal do hubd e a saída de uma sessão
   morta sem pedir aprovação. Como testar: `cargo test` das rotas + uma sessão de agente que chama a rota.
+  Feito: `crates/hubd/src/api/diagnostico.rs` (lista fechada, saída cortada em 64 KiB, painel só de
+  sessão do próprio projeto) + rota na `agent_router`; o prompt da sessão que explora o backlog passa
+  a ser gravado em `~/.assistente/perfis/<perfil>/explorar/<sessão>.md` (como a spec 10 promete), para
+  o `explorar` ter o que listar; cliente `fora-do-jail diagnostico <comando>` e instruções aos agentes
+  (`vm/configurar-agentes.sh`). Testes: `api::diagnostico::tests` (parser, corte), `api::tests::
+  diagnostico_le_sem_aprovacao_e_recusa_o_que_esta_fora_da_lista` (401, 400, painel de outro projeto) e
+  `cliente_diagnostico_devolve_a_saida_sem_pedido_de_aprovacao` (o cliente de verdade).
 - [x] **F14.2 Journal do hubd sem sudo.** `vm/provisionar.sh` põe o usuário no grupo `systemd-journal`,
   para `journalctl -u hubd` rodar sem senha de `sudo` (a VM tem a senha travada, `lock_passwd: true`).
   Vale depois de relogar. Idempotente: rodar `provisionar.sh` duas vezes não falha. Feito: `usermod -aG`

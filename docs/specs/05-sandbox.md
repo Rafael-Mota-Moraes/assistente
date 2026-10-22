@@ -102,6 +102,11 @@ saídas na VM (a VM continua sendo a fronteira) e uma no PC, a mais restrita de 
   virtiofs no mesmo caminho do PC, então o `cwd` pedido pelo agente vale dos dois lados.
   É a fronteira mais forte do sistema (R3): nada roda no PC sem clique, não existe
   "sempre permitir" para `host` e tudo que rodou fica no registro do host (F9.11).
+- **Diagnóstico sem aprovação (F14.1).** Para **ler** o estado da VM, o agente usa
+  `"$ASSISTENTE_FORA_DO_JAIL" diagnostico <comando>`: o hubd roda uma leitura de uma lista
+  fechada (journal do hubd, sessões, painel de uma sessão, prompts do quadro, `claude` no PATH)
+  e devolve a saída. Como nada é escrito, isso não passa pelo app — o caminho é `POST
+  /v1/diagnostico` na API dos agentes (spec 02). Comando fora da lista é recusado com 400.
 
 ### No PC (F9.9–F9.10)
 

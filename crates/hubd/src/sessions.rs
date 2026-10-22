@@ -156,6 +156,23 @@ impl Tmux {
             .await
             .map(|_| ())
     }
+
+    /// A saída do painel de uma sessão (o que ela imprimiu). `lines` é quantas linhas de
+    /// histórico entram (`-200` = as últimas 200).
+    pub async fn capture_pane(&self, id: &str, lines: i32) -> Result<String, String> {
+        // O alvo do `capture-pane` é um painel: `=nome:` é "exatamente esta sessão" (`=nome`
+        // dá "can't find pane").
+        let target = format!("={id}:");
+        self.run(&args(&[
+            "capture-pane",
+            "-p",
+            "-t",
+            &target,
+            "-S",
+            &lines.to_string(),
+        ]))
+        .await
+    }
 }
 
 /// O erro do tmux que quer dizer "não há servidor": nenhum, ou um que acabou de encerrar (o

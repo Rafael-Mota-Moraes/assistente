@@ -480,7 +480,17 @@ fn profile_env(config: &Config, profile: &Profile, data_dir: &Path) -> Vec<(Stri
 
 /// tmux não aceita `.` nem `:` no nome; o resto vira `-`.
 fn tmux_session_name(profile: &str, project: &str, agent: AgentKind, seq: u32) -> String {
-    let project: String = project
+    debug_assert!(is_valid_id(profile));
+    format!(
+        "{profile}--{}--{}-{seq}",
+        normalize_project(project),
+        agent.id()
+    )
+}
+
+/// O mesmo nome de projeto que o tmux recebe (minúsculo, sem `.` nem `:`).
+fn normalize_project(project: &str) -> String {
+    project
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -489,9 +499,13 @@ fn tmux_session_name(profile: &str, project: &str, agent: AgentKind, seq: u32) -
                 '-'
             }
         })
-        .collect();
-    debug_assert!(is_valid_id(profile));
-    format!("{profile}--{project}--{}-{seq}", agent.id())
+        .collect()
+}
+
+/// Prefixo comum às sessões de um projeto (`<perfil>--<projeto>--`). Serve para saber se um
+/// nome de sessão é deste projeto, mesmo de uma sessão que já morreu (F14.1).
+pub fn tmux_session_prefix(profile: &str, project: &str) -> String {
+    format!("{profile}--{}--", normalize_project(project))
 }
 
 #[cfg(test)]

@@ -109,14 +109,11 @@
 
   /** O frame é do próprio React (o `jsxDEV` e o react-dom)? Aí não é o arquivo do usuário. */
   function isReactInternal(file) {
-    return (
-      file.includes("node_modules") ||
-      file.includes("react-dom") ||
-      file.includes("react_jsx") ||
-      file.includes("react.development") ||
-      file.includes("react.production") ||
-      /[/\\]react[/\\]/.test(file)
-    );
+    if (file.includes("node_modules")) return true;
+    if (file.includes("react-dom") || file.includes("react_jsx")) return true;
+    if (file.includes("react.development") || file.includes("react.production")) return true;
+    // Um arquivo JS dentro de uma pasta chamada "react" (o build do próprio React).
+    return /[/\\]react[/\\][^/\\]*\.(c|m)?js$/i.test(file);
   }
 
   function numberOrNull(value) {

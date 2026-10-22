@@ -2,9 +2,9 @@
  *
  * Colhido na página do preview: o script `codeContext.js` sobe pelo fiber do React
  * (`__reactFiber$…`) e devolve o componente mais próximo, a pilha de componentes e — em dev
- * (Vite + React) — o arquivo e a linha do JSX (`_debugSource`). Em build de produção não há
- * fonte: aí sobram o componente e a pilha, e o agente procura o arquivo pelo texto/classe/
- * componente antes de editar. */
+ * (Vite + React) — o arquivo e a linha do JSX (`_debugSource` no React 18 e anteriores,
+ * `_debugStack` no React 19). Em build de produção não há fonte: aí sobram o componente e a
+ * pilha, e o agente procura o arquivo pelo texto/classe/componente antes de editar. */
 export type PickCodeContext = {
   /** A página usa React? */
   react: boolean;

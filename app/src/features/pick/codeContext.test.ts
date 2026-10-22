@@ -177,6 +177,21 @@ describe("codeContext (script da página)", () => {
     expect(api().extract(botao).source).toBeNull();
   });
 
+  it("arquivo do usuário numa pasta chamada react não é pulado", () => {
+    const erro = new Error("react-stack-top-frame");
+    erro.stack = [
+      "Error: react-stack-top-frame",
+      "    at Botao (/home/dev/react/src/features/x/Botao.tsx:42:17)",
+    ].join("\n");
+    const botao = elementoComFiber({
+      type: "button",
+      _debugStack: erro,
+      return: { type: Botao, return: null },
+    });
+
+    expect(api().extract(botao).source?.file).toBe("/home/dev/react/src/features/x/Botao.tsx");
+  });
+
   it("elemento sem fiber nenhum não quebra", () => {
     expect(api().extract(null).react).toBe(false);
     expect(api().extract(undefined).react).toBe(false);

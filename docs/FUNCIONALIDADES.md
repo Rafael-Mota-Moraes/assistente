@@ -279,6 +279,39 @@ hubd); F11.2 antes de F11.4.
   preenchida pela próxima, e o card que falhou fica no backlog. Como testar:
   `api::kanban::tests::orchestrator_fills_up_to_the_limit…`, `…orchestrator_error_shows_on_the_board`,
   `kanban::tests::auto_skips…` e `KanbanBoard.test.tsx`. Na VM real, junto com F11.8.
+- [ ] **F11.12 Revisar e juntar o que os trabalhadores fizeram.** Hoje um card "feito" só tem commit
+  na branch `agente/<id>`: nada chega à `main` sem uma conversa à mão (revisar cada branch, juntar,
+  resolver conflito, rodar o check, devolver o que ficou ruim). Botão "Revisar" no quadro abre um
+  Claude (como o "Popular pelo backlog", F11.9) com um prompt de revisão; o orquestrador (F11.11)
+  chama o mesmo sozinho quando não há nada em "fazendo" e há card "feito" fora da `main`. O revisor:
+  lê o diff de cada branch contra a `main` e confere com o "Pronto quando" do card; junta numa
+  worktree descartável, em ordem de dependência (F11.13), resolvendo os conflitos e corrigindo só o
+  que **nasce da junção** (dois arquivos novos para a mesma coisa, código que um card esperava do
+  outro); roda `./dev just check` nela (a sessão sobe com `--docker`); e pede ao hubd para andar com
+  a `main` pela regra da F8.8 (fast-forward se ela é o checkout, senão troca a ref conferindo o valor
+  antigo; nunca push). Defeito de uma branch sozinha não é corrigido ali: o card volta para o
+  backlog com um parágrafo "Revisão (data)" dizendo o que já existe e o que falta (`fora-do-jail
+  kanban reabrir <id> --nota …`), e o item do `docs/FUNCIONALIDADES.md` (quando existe) ganha a mesma
+  nota; defeito que não é de card nenhum vira item novo. Card juntado ganha `merged` (o commit na
+  `main`) e o selo "na main"; worktree e branch saem (`git branch -d`). O resumo (o que entrou, o que
+  voltou e por quê) aparece no quadro e fica em `.assistente/revisoes/<data-hora>.md`, fora do git.
+  Check vermelho ou `main` movida: a `main` não muda e o resumo diz onde parou.
+  Pronto quando: com 3 cards feitos (dois que se cruzam e um sem código próprio), um clique em
+  "Revisar" leva os dois para a `main` com o check verde, devolve o terceiro ao backlog com a nota e
+  apaga os worktrees, sem conversa à mão. Como testar: `api::kanban::tests` com repo git real
+  (`init_repo`): sessão do revisor aberta com o prompt, `reabrir` com nota, `merged`, `main` movida =
+  nada muda; `KanbanBoard.test.tsx` (botão, selo, resumo).
+- [ ] **F11.13 Cards com dependência e progresso de verdade.** O card ganha `depends_on` (ids). O
+  "Popular pelo backlog" (F11.9) preenche pela "Ordem:" das seções e pelos "Depende de" dos itens, e
+  a engrenagem do card deixa editar. O orquestrador e o "Mandar" não abrem trabalhador para card
+  cuja dependência ainda não está na `main` (F11.12): o worktree nasce do `HEAD`, então já sai com o
+  código dela. Na revisão de 2026-10-22, F12.2–F12.4 rodaram em paralelo sem o código uma da outra
+  e saíram três caixas de pedido diferentes. E o `trabalhador` só conta como progresso commit com
+  mudança própria: um merge sem diff próprio (a T3 da mesma revisão) não fecha o card.
+  Pronto quando: um quadro com A → B abre só A, e B abre depois que A entra na `main`, num worktree
+  com o código de A; um trabalhador que só faz merge volta ao backlog. Como testar:
+  `kanban::tests` (a fila respeita `depends_on`), `api::kanban::tests::orchestrator_…` e
+  `vm/teste-trabalhador.sh` (merge sem diff não é progresso).
 
 ## F12 — Apontar e pedir na tela
 

@@ -8,6 +8,7 @@ import type {
   Health,
   MemoryStatus,
   NotebookStatus,
+  PickedElement,
   ProfileView,
   Project,
   SessionInfo,
@@ -64,6 +65,8 @@ type State = {
   memoryPanelOpen: boolean;
   /** Pedidos dos agentes para rodar fora do jail (F9.7), atualizados a cada 2 s. */
   execRequests: ExecView[];
+  /** Elemento apontado na página do preview (F12.2); `null` = sem apontar. */
+  pick: PickedElement | null;
 };
 
 export const initialState: State = {
@@ -90,6 +93,7 @@ export const initialState: State = {
   execRequests: [],
   views: [],
   activeView: null,
+  pick: null,
 };
 
 /** Visões que aparecem como abas: o Quadro e o Editor de cada projeto. */

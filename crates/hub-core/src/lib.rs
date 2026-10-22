@@ -19,7 +19,7 @@ pub use project_settings::{
     ProjectSettings, SettingsFile, load_settings, settings_path, validate_preview_url,
 };
 pub use session::{
-    AgentKind, ExecAccess, LaunchOptions, LaunchPlan, SessionSpec, claude_logged_in,
-    exec_client_dir, profile_data_dir, tmux_session_prefix,
+    AgentKind, ExecAccess, LaunchOptions, LaunchPlan, PROMPTS_EXCLUDE, PromptFile, SessionSpec,
+    claude_logged_in, exec_client_dir, profile_data_dir, tmux_session_prefix,
 };
 pub use sleep::{jail_config_at, workers_config_at};

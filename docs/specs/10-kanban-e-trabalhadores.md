@@ -30,6 +30,12 @@ quadro, com commit `kanban: solta T3 (sessão encerrada)`. Regras puras em `hub_
 
 ## Popular pelo backlog (F11.9)
 
+**Prompt inicial em arquivo.** Toda sessão do Claude que já começa com tarefa (esta, o "Terminar com
+Claude" e os QAs) recebe o prompt em `.assistente/prompts/<sessão>.md`, na pasta dela (projeto ou
+worktree, fora do `git status` pelo `info/exclude`). O argumento do `claude` só aponta para o
+arquivo. O prompt inteiro no comando fazia o tmux recusar a sessão ("command too long") no QA geral
+com vários cards. Na pasta da sessão, o Claude lê sem pedir permissão.
+
 `POST …/kanban/explorar` abre um Claude no projeto cujo prompt (`hub_core::worker::EXPLORE_PROMPT`) é
 gravado em `~/.assistente/perfis/<perfil>/explorar/<sessão>.md`. O Claude lê o backlog em markdown,
 usa `kanban listar` para não duplicar e `kanban criar` (`POST /v1/kanban/criar`, token da sessão) para

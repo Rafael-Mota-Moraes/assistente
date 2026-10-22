@@ -2310,6 +2310,11 @@ mod tests {
             last_subject(&hub.proj),
             format!("kanban: QA geral de T1, T2 com {qa}")
         );
+        // O prompt vai num arquivo da pasta do projeto (o tmux recusa comando grande), fora do git.
+        let prompt = hub.proj.join(format!(".assistente/prompts/{qa}.md"));
+        let text = std::fs::read_to_string(&prompt).unwrap();
+        assert!(text.starts_with("# QA geral do quadro"), "{text}");
+        assert!(git_sync(&hub.proj, &["status", "--porcelain"]).is_empty());
         let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
         let holder = |id: &str| {
             board["cards"]

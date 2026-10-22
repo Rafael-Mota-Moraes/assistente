@@ -51,6 +51,30 @@ pub struct LaunchPlan {
     pub env: Vec<(String, String)>,
     /// Comando que roda dentro do tmux.
     pub argv: Vec<String>,
+    /// Prompt inicial do Claude (exploração, "Terminar com", QA), que o hubd grava antes de
+    /// criar a sessão. Não vai inteiro no `argv`: o tmux recusa comando grande ("command too
+    /// long"), e o QA geral com vários cards passa disso.
+    pub prompt: Option<PromptFile>,
+}
+
+/// Arquivo do prompt inicial, dentro da pasta da sessão: o Claude lê sem pedir permissão.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptFile {
+    pub path: PathBuf,
+    pub text: String,
+}
+
+/// Pasta dos prompts iniciais, relativa à pasta da sessão (projeto ou worktree).
+pub const PROMPTS_DIR: &str = ".assistente/prompts";
+/// Linha do `info/exclude` que tira os prompts do `git status`.
+pub const PROMPTS_EXCLUDE: &str = "/.assistente/prompts/";
+
+/// Argumento curto do `claude` que aponta para o prompt gravado.
+fn prompt_pointer(session: &str) -> String {
+    format!(
+        "Suas instruções estão em {PROMPTS_DIR}/{session}.md. Leia esse arquivo inteiro antes \
+         de qualquer coisa e siga-o."
+    )
 }
 
 /// O que o hubd lê de fora (arquivos, segredos) e entrega pronto: o `LaunchPlan` fica puro.
@@ -240,6 +264,7 @@ impl LaunchPlan {
         let mut cwd = profile.root.join(&spec.project);
         let mut extra_maps: Vec<PathBuf> = Vec::new();
         let mut rw_maps: Vec<PathBuf> = Vec::new();
+        let mut prompt_text: Option<&str> = None;
         let argv = if spec.agent == AgentKind::Shell {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
             vec!["bash".to_owned(), "-l".to_owned()]
@@ -247,11 +272,15 @@ impl LaunchPlan {
             let command = match mode {
                 // Sem `bash`: dentro do jail o PATH não acha o `claude` (a home é privada,
                 // e ~/.local/bin fica de fora). O ai-jail resolve o binário, como no agente.
-                Mode::Explore(prompt) => vec!["claude".to_owned(), prompt.to_owned()],
+                Mode::Explore(prompt) => {
+                    prompt_text = Some(prompt);
+                    vec!["claude".to_owned(), prompt_pointer(&session)]
+                }
                 Mode::Finish { prompt, worktree } => {
                     cwd = worktree.to_path_buf();
                     rw_maps.push(profile.root.join(&spec.project).join(".git"));
-                    vec!["claude".to_owned(), prompt.to_owned()]
+                    prompt_text = Some(prompt);
+                    vec!["claude".to_owned(), prompt_pointer(&session)]
                 }
                 Mode::Worker(run) => {
                     cwd = run.worktree.clone();
@@ -281,11 +310,16 @@ impl LaunchPlan {
             };
             jail_argv(config, home, profile, &data_dir, &env, spec.agent, &jail)
         };
+        let prompt = prompt_text.map(|text| PromptFile {
+            path: cwd.join(PROMPTS_DIR).join(format!("{session}.md")),
+            text: text.to_owned(),
+        });
         Ok(Self {
             tmux_session: session,
             cwd,
             argv,
             env,
+            prompt,
         })
     }
 
@@ -819,10 +853,19 @@ mod tests {
             "monte o quadro",
         )
         .unwrap();
-        // O `claude` roda direto pelo ai-jail (sem bash): o PATH do jail não o acharia.
+        // O `claude` roda direto pelo ai-jail (sem bash): o PATH do jail não o acharia. O prompt
+        // vai num arquivo da pasta do projeto, e o argumento só aponta para ele.
+        assert_eq!(plan.argv[plan.argv.len() - 2], "claude");
+        let pointer = &plan.argv[plan.argv.len() - 1];
+        assert!(
+            pointer.contains(".assistente/prompts/pessoal--x--claude-1.md"),
+            "{pointer}"
+        );
+        let prompt = plan.prompt.clone().unwrap();
+        assert_eq!(prompt.text, "monte o quadro");
         assert_eq!(
-            plan.argv[plan.argv.len() - 2..],
-            ["claude", "monte o quadro"]
+            prompt.path,
+            plan.cwd.join(".assistente/prompts/pessoal--x--claude-1.md")
         );
         assert_eq!(env(&plan, "ASSISTENTE_PROMPT_FILE"), None);
     }
@@ -843,7 +886,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.cwd, worktree);
-        assert_eq!(plan.argv[plan.argv.len() - 2..], ["claude", "termine a T7"]);
+        assert_eq!(plan.argv[plan.argv.len() - 2], "claude");
+        let prompt = plan.prompt.clone().unwrap();
+        assert_eq!(prompt.text, "termine a T7");
+        assert!(prompt.path.starts_with(&worktree), "{prompt:?}");
+        // Um prompt enorme (QA geral com muitos cards) não aumenta o comando.
+        let long = "x".repeat(100_000);
+        let big = LaunchPlan::build_finish(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Claude),
+            1,
+            &LaunchOptions::default(),
+            &long,
+            &worktree,
+        )
+        .unwrap();
+        assert_eq!(big.argv, plan.argv);
         let git = "/home/rafa/Documentos/pessoal/projetos/x/.git".to_owned();
         assert!(
             plan.argv

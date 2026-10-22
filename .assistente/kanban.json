@@ -67,8 +67,8 @@
       "description": "`POST /api/projects/{perfil}/{projeto}/picks`: escreve `.assistente/picks/<data-hora>.md` com o detalhe do pick (fora do git via `.git/info/exclude`, como o `.ai-jail` da F0.5), monta o prompt curto (URL, onde, seletor, texto, pedido) e entrega no alvo escolhido no modal: **sessão** (só de agente, nunca a aba Terminal; confere que é do projeto e está viva, cola no prompt com `set-buffer` + `paste-buffer` **sem Enter** — Enter é seu, para não aprovar pergunta pendente nem executar texto no shell) ou **quadro** (card no backlog da F11.1, autossuficiente: o clone do notebook não tem o arquivo local). O modal mostra o prompt que será enviado, deixa editar o texto e escolher a sessão (padrão: a aba ativa do projeto); ao colar, a UI leva para a aba e avisa \"confirme no terminal\". Testes: rota com tmux real (colar e ler de volta, sem o pedido rodar sozinho), card fake, guards (texto vazio, sessão de outro projeto ou tipo shell, sessão/projeto inexistente), `PickDialog.test.tsx` (envio, erro, troca de alvo).\nPronto quando: apontar um botão, escrever \"deixa verde\" e enviar faz o texto aparecer no prompt da sessão; depois do seu Enter, o agente edita o arquivo certo.\nComo testar: rota com tmux real + manual.",
       "priority": "normal",
       "kind": "manual",
-      "column": "fazendo",
-      "holder": "pessoal--assistente--opencode-6",
+      "column": "feito",
+      "commit": "9c5ea2c90de9436237282c797e529a0acd565c51",
       "created_at": 1792614072
     },
     {

@@ -8,6 +8,7 @@ import type {
   Health,
   MemoryStatus,
   NotebookStatus,
+  PickDetail,
   ProfileView,
   Project,
   SessionInfo,
@@ -24,6 +25,14 @@ export type MorningState = {
   error: string | null;
   merged: boolean;
   busy: boolean;
+};
+
+/** Modal de apontar e pedir (F12.4); `null` = fechado. */
+export type PickState = {
+  profile: string;
+  project: string;
+  /** O elemento apontado na página. */
+  pick: PickDetail;
 };
 
 type State = {
@@ -56,6 +65,8 @@ type State = {
   morning: MorningState | null;
   /** Modal de configurações do projeto (engrenagem, F9.3); `null` = fechado. */
   projectSettings: { profile: string; project: string } | null;
+  /** Modal de apontar e pedir (F12.4); `null` = fechado. */
+  pick: PickState | null;
   /** Visões abertas como abas (Quadro e Editor), por projeto: `key` = `perfil/projeto`. */
   views: { key: string; kind: ViewKind }[];
   /** Aba de visão em foco; `null` = uma sessão de agente. */
@@ -86,6 +97,7 @@ export const initialState: State = {
   toast: null,
   morning: null,
   projectSettings: null,
+  pick: null,
   memoryPanelOpen: false,
   execRequests: [],
   views: [],
@@ -113,6 +125,11 @@ export function openView(key: string, kind: ViewKind) {
       : [...s.views, { key, kind }],
     activeView: { key, kind },
   }));
+}
+
+/** Abre a caixa de pedido do apontamento (F12.4). */
+export function openPick(profile: string, project: string, pick: PickDetail) {
+  useAppStore.setState({ pick: { profile, project, pick } });
 }
 
 /** Fecha a aba da visão; se ela estava em foco, volta para a sessão. */

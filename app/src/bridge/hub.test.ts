@@ -100,6 +100,33 @@ describe("HubClient", () => {
     expect(fetchFn.mock.calls[2]?.[0]).toBe("http://vm:7878/api/sleep/stop");
   });
 
+  it("manda o pick para a rota dos picks e pede o preview do prompt (F12.4)", async () => {
+    const fetchFn = fakeFetch(200, {
+      target: "sessao",
+      prompt: "Apontei…",
+      file: ".assistente/picks/2026-10-22-11-44-05.md",
+    });
+    const hub = new HubClient({ url: "", token: null }, fetchFn);
+    const pick = {
+      url: "http://localhost:5173",
+      selector: "button.salvar",
+      text: "Salvar",
+      html: "",
+      tag: "button",
+    };
+    await hub.sendPick("pessoal", "a b", {
+      target: "sessao",
+      session: "pessoal--x--claude-1",
+      request: "deixa verde",
+      pick,
+    });
+    expect(fetchFn.mock.calls[0]?.[0]).toBe("/api/projects/pessoal/a%20b/picks");
+    expect(fetchFn.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+
+    await hub.previewPick("pessoal", "game", { pick, request: "deixa verde" });
+    expect(fetchFn.mock.calls[1]?.[0]).toBe("/api/projects/pessoal/game/picks/preview");
+  });
+
   it("monta a URL do terminal em ws:// com o token na query", () => {
     const hub = new HubClient({ url: "http://10.77.0.10:7878", token: "a b" });
     expect(hub.terminalUrl("pessoal--x--claude-1")).toBe(

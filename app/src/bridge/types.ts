@@ -248,3 +248,58 @@ export type GitStatus = { files: GitFileStatus[] };
 
 /** F10.1: diff de um arquivo (HEAD × árvore de trabalho). */
 export type GitDiff = { path: string; head: string | null; working: string | null };
+
+/** Elemento apontado na página (F12.2) e contexto de código (F12.3). */
+export type PickDetail = {
+  /** URL real da webview (o hubd não confia na URL do payload). */
+  url: string;
+  /** Seletor CSS estável do elemento. */
+  selector: string;
+  /** Texto curto do elemento. */
+  text: string;
+  /** Trecho de HTML. */
+  html: string;
+  /** Tag do elemento. */
+  tag: string;
+  id?: string | null;
+  classes?: string[];
+  role?: string | null;
+  aria_label?: string | null;
+  /** Caminho no DOM. */
+  dom_path?: string | null;
+  /** Componente React (F12.3). */
+  component?: string | null;
+  /** `arquivo:linha` do fonte do componente (F12.3). */
+  source?: string | null;
+  /** Pilha de componentes (F12.3). */
+  components?: string[];
+};
+
+/** Onde o pedido vai (F12.4): na sessão de um agente ou no quadro. */
+export type PickTarget = "sessao" | "quadro";
+
+/** O que o app manda para o hubd (F12.4). */
+export type PickRequest = {
+  target: PickTarget;
+  /** Sessão que recebe o pedido (alvo = sessão). */
+  session?: string | null;
+  /** O recado do usuário. */
+  request: string;
+  pick: PickDetail;
+};
+
+/** O que o hubd devolve (F12.4). */
+export type PickResult = {
+  target: PickTarget;
+  /** A sessão que recebeu o pedido (alvo = sessão). */
+  session?: string;
+  /** O card criado no quadro (alvo = quadro). */
+  card?: KanbanCard;
+  /** O prompt que o agente recebeu. */
+  prompt: string;
+  /** O arquivo do pick, dentro do projeto. */
+  file: string;
+};
+
+/** O prompt que será enviado (F12.4). */
+export type PickPreview = { prompt: string };

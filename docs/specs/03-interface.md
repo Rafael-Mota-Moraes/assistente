@@ -39,12 +39,18 @@ webview (`initialization_script`, fora do bundle do projeto, em
   captura**: a página não recebe o clique, a ação do botão não dispara;
 - `Esc` cancela; um novo clique troca a seleção.
 
+O script entra em toda webview e se decide pelo rótulo (`__TAURI_INTERNALS__`): a
+janela principal (`main`) e o painel da memória (`memoria`) ficam de fora, e sem
+rótulo o botão não aparece (a dúvida vale mais que o botão sobrando).
+
 O pick (tag, id, classes, `role`/`aria`, texto curto, trecho de HTML, seletor CSS,
 caminho no DOM, retângulo, viewport/scroll e URL) sai da página por uma navegação
 `assistente-pick:<payload>`: sem IPC e sem CORS na página remota. O Rust intercepta a
 navegação (`on_navigation` do plugin `pick`, em `app/src-tauri/src/pick.rs`), descarta
 payload acima de 64 KiB, troca a URL do payload pela **URL real da webview** (a da
 página não é confiável), emite o evento para a janela principal e cancela a navegação.
+O esquema não precisa ser registrado no app: o WebKit entrega a navegação para a
+política e ela é cancelada antes de a página trocar.
 
 | Evento | Payload |
 |---|---|
@@ -52,6 +58,11 @@ página não é confiável), emite o evento para a janela principal e cancela a 
 
 A UI abre a caixa de pedido (`features/pick/PickDialog.tsx`) com o elemento escolhido
 e o espaço para escrever o que deve mudar; o envio ao agente é a F12.4.
+
+Para conferir na mão: sirva uma página de teste com um botão que muda de cor
+(`python3 -m http.server`), abra no preview do projeto (F12.1), ligue o **Apontar** e
+clique no botão: a cor não muda (o clique foi capturado) e a caixa de pedido abre com
+o botão escolhido.
 
 ## Layout
 

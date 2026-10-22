@@ -55,7 +55,7 @@
       "title": "F12.3 Contexto de código",
       "description": "No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.\nPronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.\nComo testar: vitest com DOM fake + um build de produção.\n\nRevisão (2026-10-22): o código já está na main e tem testes (`app/src/features/pick/`: `codeContext.js`, `context.ts`, `prompt.ts`, `PickCodeContext.tsx`), mas não está ligado. Falta: injetar `codeContext.js` antes do `pick.js` (no `SCRIPT` do `app/src-tauri/src/pick.rs`), o `pick.js` mandar `code`, o `PickedElement` (TS e Rust) ganhar `code`, o `toPickDetail` (`features/pick/detail.ts`) preencher `source`/`component`/`components` e a caixa do F12.4 (`PickDialog.tsx`) mostrar o `PickCodeContext`; e deixar um tipo de pick e um prompt só (o do hubd). Detalhes em docs/FUNCIONALIDADES.md (F12.3).",
       "priority": "normal",
-      "kind": "manual",
+      "kind": "agente",
       "column": "backlog",
       "created_at": 1792614072
     },

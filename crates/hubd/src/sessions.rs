@@ -286,17 +286,7 @@ impl Tmux {
     /// saída de uma sessão morta (F14.3). O tmux rola o painel uma linha quando o processo
     /// morre: por isso vem o histórico, e não só a tela.
     pub async fn capture(&self, id: &str) -> Option<String> {
-        let out = self
-            .run(&args(&[
-                "capture-pane",
-                "-p",
-                "-S",
-                "-500",
-                "-t",
-                &format!("={id}:"),
-            ]))
-            .await
-            .ok()?;
+        let out = self.capture_pane(id, -500).await.ok()?;
         // O terminal do app espera \r\n.
         Some(out.replace('\n', "\r\n"))
     }

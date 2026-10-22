@@ -37,8 +37,8 @@
       "description": "`preview_url` opcional em `ProjectSettings` (F9.2) e no espelho `app/src/bridge/types.ts`, editável na engrenagem (F9.3), com a dica de que o endereço é visto do PC (projeto rodando na VM usa o IP dela). Comandos Tauri no molde de F5.5: `open_preview_panel`, `update_preview_panel_bounds`, `preview_panel_visible` (esconde ao abrir o modal), `preview_picker` (liga/desliga o modo por `eval` no script) e `close_preview_panel`, validando `http`/`https` e recusando credenciais. Botão \"Visualizar\" junto dos agentes; o chrome (URL, recarregar, apontar, fechar) é React e a webview preenche o retângulo, inclusive ao redimensionar a janela. Testes: `project_settings_round_trip` com `preview_url`, validação da URL e caso em `ProjectSettingsDialog.test.tsx`.\nPronto quando: colar a URL do dev server na engrenagem e clicar em Visualizar abre o app dentro do Assistente, sem fechar a sessão.\nComo testar: `./dev just hubd` + `vite --host` de um projeto de teste e o painel no app.",
       "priority": "normal",
       "kind": "manual",
-      "column": "fazendo",
-      "holder": "pessoal--assistente--opencode-3",
+      "column": "feito",
+      "commit": "a9647cd6f38b39d4b6c6a82c19d2d1113ebc2caa",
       "created_at": 1792614072
     },
     {

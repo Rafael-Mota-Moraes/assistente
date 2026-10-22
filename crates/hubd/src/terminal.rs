@@ -51,7 +51,9 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
         if let Some(saida) = tmux.capture(id).await {
             let _ = socket.send(Message::Binary(saida.into())).await;
         }
-        let _ = socket.send(Message::Text(fim(status).into())).await;
+        let _ = socket
+            .send(Message::Text(exit_message(status).into()))
+            .await;
         return Ok(());
     }
     let pair = native_pty_system()
@@ -156,7 +158,7 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
             },
             _ = verificacao.tick(), if !encerrada => {
                 if let PaneState::Dead(status) = tmux.pane_state(id).await {
-                    let _ = socket.send(Message::Text(fim(status).into())).await;
+                    let _ = socket.send(Message::Text(exit_message(status).into())).await;
                     encerrada = true;
                 }
             }
@@ -169,7 +171,7 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
 }
 
 /// O aviso de fim para a UI (F14.3): com o código de saída quando o tmux sabe qual é.
-fn fim(status: Option<i32>) -> String {
+fn exit_message(status: Option<i32>) -> String {
     match status {
         Some(status) => serde_json::json!({ "type": "exit", "status": status }).to_string(),
         None => r#"{"type":"exit"}"#.to_owned(),

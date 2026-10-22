@@ -2,7 +2,10 @@
  * Contexto de código do elemento apontado (F12.3).
  *
  * Script clássico (sem import/export) porque ele é injetado na página do preview junto com o
- * script do modo apontar (F12.2). O script do apontar chama:
+ * script do modo apontar (F12.2): o Rust o include com `include_str!` e passa na
+ * `initialization_script` da webview — antes do script do apontar.
+ *
+ * O script do apontar chama a API que este arquivo deixa na página:
  *
  *   const code = window.__assistenteCodeContext.extract(element);
  *

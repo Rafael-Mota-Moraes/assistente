@@ -53,6 +53,9 @@ export function PickDialog({
 
         <p className="text-sm text-slate-300">
           <span className="font-mono text-violet-200">{pick.tag}</span>
+          {pick.selector ? (
+            <span className="font-mono text-slate-400"> · {pick.selector}</span>
+          ) : null}
           {pick.text ? <span className="text-slate-400"> · "{pick.text}"</span> : null}
         </p>
 

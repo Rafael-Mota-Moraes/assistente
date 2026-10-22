@@ -101,6 +101,7 @@ export function describeWhere(context: ResolvedCodeContext, pick: PickElement): 
 export function searchHints(pick: PickElement, context: ResolvedCodeContext): string[] {
   const hints: string[] = [];
   if (pick.text) hints.push(`o texto "${pick.text}"`);
+  // Classe que o próprio apontar põe no elemento não ajuda a achar o arquivo.
   const classes = (pick.classes ?? []).filter((c) => c && !c.startsWith("assistente-"));
   if (classes.length > 0) hints.push(`a classe "${classes[0]}"`);
   if (context.component) hints.push(`o componente "${context.component}"`);
@@ -114,8 +115,11 @@ export function searchHints(pick: PickElement, context: ResolvedCodeContext): st
 export function searchInstruction(pick: PickElement, context: ResolvedCodeContext): string {
   const hints = searchHints(pick, context);
   const how = hints.length > 0 ? `grep por ${hints.join(", por ")}` : "grep pelo seletor";
+  const motivo = context.react
+    ? "Sem arquivo de origem (build de produção)"
+    : "A página não expõe o código do elemento";
   return (
-    `Sem arquivo de origem (build de produção): antes de editar, procure o arquivo no projeto ` +
+    `${motivo}: antes de editar, procure o arquivo no projeto ` +
     `(${how}) e confirme o caminho; não chute o arquivo.`
   );
 }

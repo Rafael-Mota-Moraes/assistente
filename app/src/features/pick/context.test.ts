@@ -129,10 +129,10 @@ describe("searchInstruction", () => {
     expect(searchInstruction(semTexto, context)).toContain("grep pelo seletor");
   });
 
-  it("em dev não precisa de aviso", () => {
+  it("em dev o pedido não precisa do aviso de procurar", () => {
     const context = resolveCodeContext(pickDev.code);
 
-    expect(searchInstruction(pickDev, context)).toContain("Sem arquivo de origem");
+    expect(context.source).not.toBeNull();
     expect(describeComponents(context)).toBe("componente Botao · pilha: Botao > Card > App");
   });
 });

@@ -77,8 +77,8 @@
       "description": "Rota nova na API dos agentes (`127.0.0.1:7879`,\ntoken da sessão, como o `fora-do-jail`): `POST /v1/diagnostico` com `{\"comando\": \"...\"}`. Só aceita\numa lista fixa de comandos de leitura, escrita no Rust (não é shell livre): `journal-hubd` (últimas N\nlinhas de `journalctl -u hubd`), `tmux-ls`, `tmux-pane` (`capture-pane` de uma sessão do projeto,\ncom `-S -200`), `explorar` (lista e tamanho dos prompts em `explorar/`) e `claude-login`\n(`bash -l -c 'command -v claude'`). A saída é cortada em 64 KiB e comando fora da lista responde 400.\nNão passa pelo `ExecApprovals` (F9.7) porque não escreve nada. Testes: parser e recusa de comando\nfora da lista em Rust; chamada com token errado responde 401.\nPronto quando: um agente dentro de uma sessão do projeto lê o journal do hubd e a saída de uma sessão\nmorta sem pedir aprovação. Como testar: `cargo test` das rotas + uma sessão de agente que chama a rota.",
       "priority": "normal",
       "kind": "manual",
-      "column": "fazendo",
-      "holder": "pessoal--assistente--opencode-7",
+      "column": "feito",
+      "commit": "b8fb8a7332d4308a9bef31241d67280b572ed39b",
       "created_at": 1792614072
     },
     {

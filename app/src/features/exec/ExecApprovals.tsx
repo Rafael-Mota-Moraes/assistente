@@ -57,6 +57,8 @@ export function ExecApprovals() {
   const requests = useAppStore((s) => s.execRequests);
   const sessions = useAppStore((s) => s.sessions);
   const [showRecent, setShowRecent] = useState(false);
+  // Pedido em andamento (rodando no PC, F9.10): não aprova de novo.
+  const [busy, setBusy] = useState<string[]>([]);
 
   const pending = requests.filter((r) => r.state === "pending");
   const recent = requests.filter((r) => r.state !== "pending").slice(0, 8);
@@ -65,6 +67,14 @@ export function ExecApprovals() {
   const origin = (request: ExecView) => {
     const session = sessions.find((s) => s.id === request.session);
     return `${request.project} · ${session ? tabLabel(session) : request.session}`;
+  };
+
+  const respond = (request: ExecView, verb: "approve" | "always" | "deny") => {
+    if (busy.includes(request.id)) return;
+    setBusy((ids) => [...ids, request.id]);
+    answer(request, verb).finally(() => {
+      setBusy((ids) => ids.filter((id) => id !== request.id));
+    });
   };
 
   return (
@@ -93,15 +103,17 @@ export function ExecApprovals() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => answer(request, "approve")}
-              className="flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-500"
+              disabled={busy.includes(request.id)}
+              onClick={() => respond(request, "approve")}
+              className="flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-50"
             >
               <Check className="size-3.5" /> Aprovar
             </button>
             <button
               type="button"
-              onClick={() => answer(request, "deny")}
-              className="flex items-center gap-1 rounded-lg border border-line bg-white/5 px-3 py-1 text-sm text-slate-200 hover:bg-white/10"
+              disabled={busy.includes(request.id)}
+              onClick={() => respond(request, "deny")}
+              className="flex items-center gap-1 rounded-lg border border-line bg-white/5 px-3 py-1 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-50"
             >
               <X className="size-3.5" /> Negar
             </button>
@@ -116,7 +128,7 @@ export function ExecApprovals() {
                       `Sempre permitir este comando em ${request.project}?\n\n${request.command}\n\n${ALWAYS_WARNING}`,
                     )
                   ) {
-                    answer(request, "always");
+                    respond(request, "always");
                   }
                 }}
                 className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"

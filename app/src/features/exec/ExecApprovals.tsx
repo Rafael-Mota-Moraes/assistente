@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { ExecView } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { tabLabel } from "../sessions/SessionArea";
+import { approveOnHost } from "./hostExec";
 
 const EVERY_MS = 2000;
 
@@ -36,6 +37,9 @@ async function answer(request: ExecView, verb: "approve" | "always" | "deny") {
   if (!hub) return;
   try {
     if (verb === "deny") await hub.denyExec(request.id);
+    // Pedido para o PC (F9.10): o hubd não executa nada na VM; o app roda no host e
+    // devolve o resultado para o agente.
+    else if (request.target === "host") await approveOnHost(request, hub);
     else await hub.approveExec(request.id, verb === "always");
     useAppStore.setState({ execRequests: await hub.execRequests() });
   } catch (error) {
@@ -154,10 +158,12 @@ export function ExecApprovals() {
 }
 
 function Outcome({ request }: { request: ExecView }) {
-  const { state, result, auto_approved } = request;
+  const { state, result, auto_approved, target } = request;
   const [label, tone] =
     state === "running"
-      ? ["rodando", "text-sky-300"]
+      ? target === "host"
+        ? ["rodando no PC", "text-amber-300"]
+        : ["rodando", "text-sky-300"]
       : state === "denied"
         ? ["negado", "text-slate-400"]
         : state === "expired"

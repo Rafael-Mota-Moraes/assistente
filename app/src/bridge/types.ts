@@ -136,6 +136,10 @@ export type ExecResult = {
   duration_ms: number;
 };
 
+/** O que o app devolve ao hubd depois de rodar no PC (F9.10): o resultado ou o motivo da
+ * falha (o comando nem começou). */
+export type HostExecOutcome = ExecResult | { error: string };
+
 /** GET /api/exec: pendentes primeiro, depois os recentes (30 min). */
 export type ExecView = {
   id: string;

@@ -1,9 +1,14 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { hostExec } from "../../bridge/host";
 import type { HubClient } from "../../bridge/hub";
 import type { ExecView, Health } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { ExecApprovals } from "./ExecApprovals";
+
+vi.mock("../../bridge/host", () => ({
+  hostExec: vi.fn(),
+}));
 
 const request = (id: string, extra: Partial<ExecView> = {}): ExecView => ({
   id,
@@ -26,6 +31,7 @@ function connect(requests: ExecView[]) {
     execRequests: vi.fn().mockResolvedValue(requests),
     approveExec: vi.fn().mockResolvedValue(undefined),
     denyExec: vi.fn().mockResolvedValue(undefined),
+    execResult: vi.fn().mockResolvedValue(undefined),
   };
   useAppStore.setState({
     hub: hub as unknown as HubClient,
@@ -79,13 +85,28 @@ describe("ExecApprovals", () => {
     await vi.waitFor(() => expect(hub.approveExec).toHaveBeenCalledWith("p1", true));
   });
 
-  it("pedido para o PC (F9.9) mostra 'no PC' e não oferece 'sempre permitir'", async () => {
+  it("pedido para o PC (F9.9/F9.10) mostra 'no PC', não oferece 'sempre permitir' e roda no host", async () => {
+    vi.mocked(hostExec).mockResolvedValue({
+      exit_code: 0,
+      stdout: "push ok\n",
+      stderr: "",
+      truncated: false,
+      timed_out: false,
+      duration_ms: 5,
+    });
     const hub = connect([request("h1", { target: "host", command: "git push" })]);
     const card = await screen.findByRole("region", { name: /Pedido de game · Claude 1/ });
     expect(within(card).getByText(/no PC/)).toBeInTheDocument();
     expect(within(card).queryByRole("button", { name: /sempre permitir/ })).not.toBeInTheDocument();
     fireEvent.click(within(card).getByRole("button", { name: "Aprovar" }));
-    await vi.waitFor(() => expect(hub.approveExec).toHaveBeenCalledWith("h1", false));
+    // O hubd só marca como rodando; quem executa no PC é o app, e o resultado volta.
+    await vi.waitFor(() => expect(hostExec).toHaveBeenCalledWith("h1"));
+    await vi.waitFor(() =>
+      expect(hub.execResult).toHaveBeenCalledWith(
+        "h1",
+        expect.objectContaining({ stdout: "push ok\n" }),
+      ),
+    );
   });
 
   it("recentes ficam recolhidos e mostram o resultado", async () => {

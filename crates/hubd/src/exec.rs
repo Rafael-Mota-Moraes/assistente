@@ -69,6 +69,10 @@ pub struct ExecView {
     /// Casou com um comando "sempre permitido" do projeto: rodou sem perguntar.
     pub auto_approved: bool,
     pub result: Option<ExecResult>,
+    /// Pedido `host` já foi pego pelo app para execução no PC (F9.11).
+    /// Evita que um segundo `host_exec` rode o comando de novo.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub picked_up: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +144,8 @@ struct Entry {
     /// Quando o pedido foi aprovado (o app no PC começa a rodar aqui, F9.10).
     approved: Option<Instant>,
     finished: Option<Instant>,
+    /// Pedido `host` já foi pego pelo app (F9.11): evita execução dupla.
+    picked_up: bool,
     state_tx: watch::Sender<ExecState>,
 }
 
@@ -256,6 +262,7 @@ impl ExecStore {
                 created: Instant::now(),
                 approved: None,
                 finished: None,
+                picked_up: false,
                 state_tx,
             },
         );
@@ -297,6 +304,28 @@ impl ExecStore {
         Ok((entry.view.target == ExecTarget::Vm).then(|| job_of(&entry.view, &entry.env)))
     }
 
+    /// Marca o pedido `host` como pego pelo app (F9.11).
+    /// Só funciona se o pedido for `host`, estiver `running` (aprovado) e ainda não tiver sido pego.
+    /// Devolve o job com comando e pasta para o app executar no PC.
+    pub fn claim_host(&self, id: &str) -> Result<ExecJob, ExecError> {
+        let mut entries = self.lock();
+        Self::gc(&mut entries, &self.limits);
+        let entry = entries.get_mut(id).ok_or(ExecError::NotFound)?;
+        if entry.view.target != ExecTarget::Host {
+            return Err(ExecError::NotHost);
+        }
+        if entry.view.state != ExecState::Running {
+            return Err(ExecError::NotPending(entry.view.state));
+        }
+        if entry.picked_up {
+            return Err(ExecError::NotPending(ExecState::Running)); // já pego
+        }
+        entry.picked_up = true;
+        entry.view.picked_up = true;
+        entry.state_tx.send_replace(ExecState::Running);
+        Ok(job_of(&entry.view, &entry.env))
+    }
+
     pub fn deny(&self, id: &str) -> Result<ExecView, ExecError> {
         let mut entries = self.lock();
         Self::gc(&mut entries, &self.limits);
@@ -321,7 +350,8 @@ impl ExecStore {
     }
 
     /// Resultado que o app no PC devolve (F9.10). Só vale para pedido `host` já aprovado
-    /// (rodando): pedido da VM tem o resultado do hubd, e pendente ainda não foi aprovado.
+    /// (rodando) e já pego pelo app (F9.11): pedido da VM tem o resultado do hubd, e
+    /// pendente ainda não foi aprovado.
     pub fn finish_host(
         &self,
         id: &str,
@@ -335,6 +365,9 @@ impl ExecStore {
         }
         if entry.view.state != ExecState::Running {
             return Err(ExecError::NotPending(entry.view.state));
+        }
+        if !entry.picked_up {
+            return Err(ExecError::NotPending(ExecState::Running));
         }
         Self::finish_entry(entry, result);
         Ok(())
@@ -825,5 +858,100 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(1200)).await;
         let expired = store.wait(&lost.id, Duration::from_secs(5)).await.unwrap();
         assert_eq!(expired.state, ExecState::Expired);
+    }
+
+    /// F9.11: claim_host marca o pedido como pego e devolve o job; segundo claim falha.
+    #[tokio::test]
+    async fn claim_host_marks_picked_up_and_prevents_double_execution() {
+        let store = ExecStore::default();
+        let (host, _) = store
+            .submit(NewRequest {
+                target: ExecTarget::Host,
+                ..request("s1", "git push")
+            })
+            .unwrap();
+        store.approve(&host.id).unwrap();
+
+        // Primeiro claim: deve funcionar e devolver o job.
+        let job = store.claim_host(&host.id).unwrap();
+        assert_eq!(job.command, "git push");
+        assert!(!job.id.is_empty());
+
+        // O view deve mostrar picked_up = true.
+        let view = store.get(&host.id).unwrap();
+        assert!(view.picked_up);
+        assert_eq!(view.state, ExecState::Running);
+
+        // Segundo claim: deve falhar (já foi pego).
+        let err = store.claim_host(&host.id).unwrap_err();
+        assert_eq!(err, ExecError::NotPending(ExecState::Running));
+
+        // finish_host deve funcionar após claim.
+        store
+            .finish_host(&host.id, Ok(ExecResult::default()))
+            .unwrap();
+        let done = store.get(&host.id).unwrap();
+        assert_eq!(done.state, ExecState::Done);
+    }
+
+    /// F9.11: claim_host falha se o pedido não for host, não estiver aprovado, ou não existir.
+    #[tokio::test]
+    async fn claim_host_rejects_invalid_requests() {
+        let store = ExecStore::default();
+
+        // Pedido VM: não pode fazer claim.
+        let (vm, _) = store.submit(request("s1", "ls")).unwrap();
+        store.approve(&vm.id).unwrap();
+        assert_eq!(
+            store.claim_host(&vm.id).unwrap_err(),
+            ExecError::NotHost
+        );
+
+        // Pedido host pendente (não aprovado): não pode fazer claim.
+        let (pending, _) = store
+            .submit(NewRequest {
+                target: ExecTarget::Host,
+                ..request("s1", "git push")
+            })
+            .unwrap();
+        assert_eq!(
+            store.claim_host(&pending.id).unwrap_err(),
+            ExecError::NotPending(ExecState::Pending)
+        );
+
+        // ID inexistente: NotFound.
+        assert_eq!(
+            store.claim_host("nao-existe").unwrap_err(),
+            ExecError::NotFound
+        );
+    }
+
+    /// F9.11: finish_host só aceita se já foi feito claim.
+    #[tokio::test]
+    async fn finish_host_requires_claim() {
+        let store = ExecStore::default();
+        let (host, _) = store
+            .submit(NewRequest {
+                target: ExecTarget::Host,
+                ..request("s1", "git push")
+            })
+            .unwrap();
+        store.approve(&host.id).unwrap();
+
+        // Sem claim, finish_host deve falhar.
+        assert_eq!(
+            store
+                .finish_host(&host.id, Ok(ExecResult::default()))
+                .unwrap_err(),
+            ExecError::NotPending(ExecState::Running)
+        );
+
+        // Com claim, finish_host deve funcionar.
+        store.claim_host(&host.id).unwrap();
+        store
+            .finish_host(&host.id, Ok(ExecResult::default()))
+            .unwrap();
+        let done = store.get(&host.id).unwrap();
+        assert_eq!(done.state, ExecState::Done);
     }
 }

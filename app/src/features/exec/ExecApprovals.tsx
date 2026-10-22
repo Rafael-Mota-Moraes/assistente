@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronUp, ShieldAlert, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronUp, ShieldAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ExecView } from "../../bridge/types";
 import { useAppStore } from "../../store";
@@ -82,63 +82,80 @@ export function ExecApprovals() {
       aria-label="Pedidos fora do jail"
       className="fixed right-4 bottom-12 z-40 flex max-h-[70vh] w-[30rem] max-w-[calc(100vw-2rem)] flex-col gap-2 overflow-y-auto"
     >
-      {pending.map((request) => (
-        <section
-          key={request.id}
-          aria-label={`Pedido de ${origin(request)}`}
-          className="flex flex-col gap-2 rounded-xl border border-amber-500/40 bg-surface-strong p-3 shadow-2xl backdrop-blur"
-        >
-          <header className="flex items-center gap-2 text-sm">
-            <ShieldAlert className="size-4 shrink-0 text-amber-300" />
-            <span className="font-medium text-amber-100">Rodar fora do jail?</span>
-            <span className="ml-auto truncate text-xs text-slate-400">{origin(request)}</span>
-          </header>
-          <pre className="max-h-40 overflow-auto rounded-lg bg-black/40 px-2 py-1.5 font-mono text-xs whitespace-pre-wrap break-all text-slate-100">
-            {request.command}
-          </pre>
-          <p className="truncate font-mono text-[11px] text-slate-500" title={request.cwd}>
-            em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min ·{" "}
-            {request.target === "host" ? "no PC" : "na VM"}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={busy.includes(request.id)}
-              onClick={() => respond(request, "approve")}
-              className="flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-50"
-            >
-              <Check className="size-3.5" /> Aprovar
-            </button>
-            <button
-              type="button"
-              disabled={busy.includes(request.id)}
-              onClick={() => respond(request, "deny")}
-              className="flex items-center gap-1 rounded-lg border border-line bg-white/5 px-3 py-1 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-50"
-            >
-              <X className="size-3.5" /> Negar
-            </button>
-            {/* "Sempre permitir" é só da VM: pedido para o PC nunca roda sem clique (F9.9/F9.11). */}
-            {request.target === "vm" && (
+      {pending.map((request) => {
+        const isHost = request.target === "host";
+        return (
+          <section
+            key={request.id}
+            aria-label={`Pedido de ${origin(request)}`}
+            className={`flex flex-col gap-2 rounded-xl p-3 shadow-2xl backdrop-blur ${
+              isHost
+                ? "border-red-500/60 bg-red-900/40"
+                : "border-amber-500/40 bg-surface-strong"
+            }`}
+          >
+            <header className="flex items-center gap-2 text-sm">
+              {isHost ? (
+                <AlertTriangle className="size-4 shrink-0 text-red-300" />
+              ) : (
+                <ShieldAlert className="size-4 shrink-0 text-amber-300" />
+              )}
+              <span className="font-medium">{isHost ? "text-red-100" : "text-amber-100"}>
+                {isHost ? "⚠️ Vai rodar no seu PC" : "Rodar fora do jail?"}
+              </span>
+              <span className="ml-auto truncate text-xs text-slate-400">{origin(request)}</span>
+            </header>
+            <pre className="max-h-40 overflow-auto rounded-lg bg-black/40 px-2 py-1.5 font-mono text-xs whitespace-pre-wrap break-all text-slate-100">
+              {request.command}
+            </pre>
+            <p className="truncate font-mono text-[11px] text-slate-500" title={request.cwd}>
+              em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min ·{" "}
+              {isHost ? "no PC" : "na VM"}
+            </p>
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                title={ALWAYS_WARNING}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Sempre permitir este comando em ${request.project}?\n\n${request.command}\n\n${ALWAYS_WARNING}`,
-                    )
-                  ) {
-                    respond(request, "always");
-                  }
-                }}
-                className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
+                disabled={busy.includes(request.id)}
+                onClick={() => respond(request, "approve")}
+                className={`flex items-center gap-1 rounded-lg px-3 py-1 text-sm font-medium ${
+                  isHost
+                    ? "bg-red-600 text-white hover:bg-red-500"
+                    : "bg-amber-600 text-white hover:bg-amber-500"
+                } disabled:opacity-50`}
               >
-                Aprovar e sempre permitir neste projeto
+                <Check className="size-3.5" /> Aprovar
               </button>
-            )}
-          </div>
-        </section>
-      ))}
+              <button
+                type="button"
+                disabled={busy.includes(request.id)}
+                onClick={() => respond(request, "deny")}
+                className="flex items-center gap-1 rounded-lg border border-line bg-white/5 px-3 py-1 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-50"
+              >
+                <X className="size-3.5" /> Negar
+              </button>
+              {/* "Sempre permitir" é só da VM: pedido para o PC nunca roda sem clique (F9.9/F9.11). */}
+              {request.target === "vm" && (
+                <button
+                  type="button"
+                  title={ALWAYS_WARNING}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `Sempre permitir este comando em ${request.project}?\n\n${request.command}\n\n${ALWAYS_WARNING}`,
+                      )
+                    ) {
+                      respond(request, "always");
+                    }
+                  }}
+                  className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
+                >
+                  Aprovar e sempre permitir neste projeto
+                </button>
+              )}
+            </div>
+          </section>
+        );
+      })}
 
       {recent.length > 0 && (
         <section className="rounded-xl border border-line bg-surface-strong text-sm shadow-xl backdrop-blur">

@@ -241,6 +241,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/exec/{id}/approve", post(approve_exec))
         .route("/api/exec/{id}/deny", post(deny_exec))
         .route("/api/exec/{id}/result", post(exec_result))
+        .route("/api/exec/{id}/claim", post(claim_exec))
         .route(
             "/api/projects/{profile}/{project}/kanban",
             get(kanban::list_cards).post(kanban::create_card),
@@ -2307,6 +2308,33 @@ async fn exec_result(
     state.0.exec.finish_host(&id, result).map_err(exec_error)?;
     tracing::info!("resultado do PC recebido no pedido {id}");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/exec/{id}/claim: o app no PC marca o pedido `host` como pego para execução
+/// (F9.11). Evita que um segundo `host_exec` rode o comando de novo. Devolve o job
+/// (comando, pasta, env, timeout) para o app executar.
+async fn claim_exec(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ClaimResponse>, Response> {
+    let job = state.0.exec.claim_host(&id).map_err(exec_error)?;
+    tracing::info!("pedido {id} pego pelo app no PC: {}", job.command);
+    Ok(Json(ClaimResponse {
+        id: job.id,
+        command: job.command,
+        cwd: job.cwd.to_string_lossy().to_string(),
+        env: job.env.into_iter().map(|(k, v)| (k, v)).collect(),
+        timeout_secs: job.timeout.as_secs(),
+    }))
+}
+
+#[derive(Serialize)]
+struct ClaimResponse {
+    id: String,
+    command: String,
+    cwd: String,
+    env: Vec<(String, String)>,
+    timeout_secs: u64,
 }
 
 #[derive(Deserialize, Default)]

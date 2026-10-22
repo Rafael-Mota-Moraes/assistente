@@ -286,6 +286,17 @@ export class HubClient {
     await this.request("POST", `/api/exec/${encodeURIComponent(id)}/result`, outcome);
   }
 
+  /** Pega o pedido `host` para execução no PC (F9.11): evita execução dupla. */
+  async claimExec(id: string): Promise<{
+    id: string;
+    command: string;
+    cwd: string;
+    env: [string, string][];
+    timeout_secs: number;
+  }> {
+    return this.request("POST", `/api/exec/${encodeURIComponent(id)}/claim`);
+  }
+
   /** Status do atualizador (F8.5/F8.6). */
   updateStatus(): Promise<UpdateStatus> {
     return this.get("/api/update");

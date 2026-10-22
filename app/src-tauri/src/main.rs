@@ -9,6 +9,7 @@
 
 use http_body_util::BodyExt;
 use hub_core::Config;
+use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::os::unix::process::CommandExt;
@@ -257,6 +258,9 @@ struct ExecView {
     cwd: String,
     #[serde(default)]
     timeout_secs: u64,
+    /// Pedido `host` já foi pego pelo app para execução no PC (F9.11).
+    #[serde(default)]
+    picked_up: bool,
 }
 
 /// O que o app devolve ao hubd depois de rodar no PC.
@@ -337,7 +341,7 @@ fn valid_request_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/// Comando do app: roda no PC o pedido `host` que você aprovou (F9.10).
+/// Comando do app: roda no PC o pedido `host` que você aprovou (F9.10/F9.11).
 #[tauri::command]
 async fn host_exec(id: String) -> Result<HostExecResult, String> {
     if !valid_request_id(&id) {
@@ -345,32 +349,93 @@ async fn host_exec(id: String) -> Result<HostExecResult, String> {
     }
     let config = load_config()?;
     let (url, token) = hub_url_and_token(&config)?;
-    // Nada roda sem aprovação: o hubd diz o que foi aprovado (alvo, estado, comando e pasta).
-    let value = hub_get(&url, &token, &format!("/api/exec/{id}")).await?;
-    let view: ExecView =
-        serde_json::from_value(value).map_err(|e| format!("pedido do hubd ilegível: {e}"))?;
-    if view.target != "host" {
-        return Err("este pedido não é para o PC".into());
+    // Pega o pedido no hubd (marca como pego para evitar execução dupla, F9.11).
+    let value = hub_post(&url, &token, &format!("/api/exec/{id}/claim"), None).await?;
+    let claim: ClaimResponse =
+        serde_json::from_value(value).map_err(|e| format!("resposta de claim ilegível: {e}"))?;
+    // Verificações de segurança.
+    if claim.command.is_empty() {
+        return Err("comando vazio".into());
     }
-    if view.state != "running" {
-        return Err(format!(
-            "o pedido {id} não está aprovado ({}); aprove no app primeiro",
-            view.state
-        ));
-    }
-    // A pasta de trabalho precisa estar dentro de uma raiz de perfil (como no `open_in_cursor`).
-    let cwd = PathBuf::from(&view.cwd);
+    let cwd = PathBuf::from(&claim.cwd);
     if !inside_profile_root(&config, &cwd) {
         return Err(format!(
             "{} não está dentro de uma raiz de perfil",
-            view.cwd
+            claim.cwd
         ));
     }
-    let command = view.command.clone();
-    let timeout = Duration::from_secs(view.timeout_secs.clamp(1, 3600));
-    tauri::async_runtime::spawn_blocking(move || run_on_host(&cwd, &command, timeout))
+    let command = claim.command.clone();
+    let timeout = Duration::from_secs(claim.timeout_secs.clamp(1, 3600));
+    let result = tauri::async_runtime::spawn_blocking(move || run_on_host(&cwd, &command, timeout))
         .await
-        .map_err(|e| format!("a execução no PC falhou: {e}"))?
+        .map_err(|e| format!("a execução no PC falhou: {e}"))?;
+    // Registra no log local do PC (F9.11).
+    log_pc_exec(&id, &claim.cwd, &command, &result).await;
+    Ok(result)
+}
+
+#[derive(Deserialize)]
+struct ClaimResponse {
+    id: String,
+    command: String,
+    cwd: String,
+    env: Vec<(String, String)>,
+    timeout_secs: u64,
+}
+
+/// POST no hubd (usado para claim).
+async fn hub_post(
+    url: &str,
+    token: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let parsed = tauri::Url::parse(url).map_err(|e| format!("URL do hubd inválida: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| format!("URL do hubd sem host: {url}"))?
+        .to_owned();
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| format!("URL do hubd sem porta: {url}"))?;
+    let stream = tokio::net::TcpStream::connect((host.as_str(), port))
+        .await
+        .map_err(|e| format!("não consegui falar com o hubd em {url}: {e}"))?;
+    let io = hyper_util::rt::TokioIo::new(stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+        .await
+        .map_err(|e| format!("falha na conversa com o hubd: {e}"))?;
+    tauri::async_runtime::spawn(async move {
+        let _ = conn.await;
+    });
+    let mut request = hyper::Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(hyper::header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(hyper::header::CONTENT_TYPE, "application/json");
+    if let Some(body) = body {
+        request = request.body(http_body_util::Full::new(http_body_util::Bytes::from(
+            body.to_string(),
+        )));
+    } else {
+        request = request.body(http_body_util::Empty::<hyper::body::Bytes>::new());
+    }
+    let request = request.map_err(|e| format!("requisição inválida: {e}"))?;
+    let response = sender
+        .send_request(request)
+        .await
+        .map_err(|e| format!("o hubd não respondeu: {e}"))?;
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .map_err(|e| format!("resposta do hubd ilegível: {e}"))?
+        .to_bytes();
+    if !status.is_success() {
+        return Err(format!("o hubd respondeu {status}"));
+    }
+    serde_json::from_slice(&body).map_err(|e| format!("resposta do hubd ilegível: {e}"))
 }
 
 /// Roda `bash -lc <comando>` no PC: na pasta do projeto, com timeout e saída truncada.
@@ -468,6 +533,45 @@ fn kill_group(pid: u32) {
             .stderr(Stdio::null())
             .status();
         thread::sleep(grace);
+    }
+}
+
+/// Registra a execução no PC no log local (F9.11): ~/.local/state/assistente/pc-exec.log
+async fn log_pc_exec(
+    request_id: &str,
+    cwd: &str,
+    command: &str,
+    result: &HostExecResult,
+) {
+    let home = match home() {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let log_dir = home.join(".local/state/assistente");
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        tracing::warn!("não consegui criar diretório de log: {e}");
+        return;
+    }
+    let log_file = log_dir.join("pc-exec.log");
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+    let exit_code = result.exit_code.map_or("timeout/signal".to_string(), |c| c.to_string());
+    let line = format!(
+        "{} | id={} | cwd={} | exit={} | dur={}ms | truncated={} | cmd={}\n",
+        timestamp,
+        request_id,
+        cwd,
+        exit_code,
+        result.duration_ms,
+        result.truncated,
+        command.replace('\n', " ")
+    );
+    if let Err(e) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()))
+    {
+        tracing::warn!("não consegui escrever no log pc-exec: {e}");
     }
 }
 

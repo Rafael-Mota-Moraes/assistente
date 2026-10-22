@@ -7,9 +7,13 @@
       "description": "`fora-do-jail --pc '<comando>'` manda `target: \"host\"` na API do agente (F9.5); o hubd guarda o alvo no pedido e o mostra em `/api/exec`. O hubd não executa pedidos `host`: eles esperam o app, e expiram se ninguém aprovar. Caminho de trabalho = pasta do projeto (o mesmo caminho no PC, via virtiofs). Rotas novas em `not_yet(\"F9.9\")` até prontas.\nPronto quando: um pedido `--pc` aparece em `/api/exec` com `target: \"host\"` e o hubd nunca o roda na VM. Como testar: `exec::tests` + `client_script_round_trip` com `--pc`.",
       "priority": "normal",
       "kind": "manual",
-      "column": "feito",
+      "column": "validado",
       "holder": "pessoal--assistente--claude-2",
       "commit": "b34dc696311a57f8782a143eb6660af19ef0dfd1",
+      "merged": {
+        "branch": "main",
+        "commit": "49fbdb7450fefba1e8e9a27584637b7a759f66d7"
+      },
       "created_at": 1792614071
     },
     {

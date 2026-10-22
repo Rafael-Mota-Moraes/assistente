@@ -272,7 +272,9 @@ impl Board {
         if let Some(depends_on) = draft.depends_on {
             let depends_on = checked_depends_on(depends_on)?;
             if depends_on.contains(&card.id) {
-                return Err(KanbanError::Invalid("a tarefa não depende de si mesma".to_owned()));
+                return Err(KanbanError::Invalid(
+                    "a tarefa não depende de si mesma".to_owned(),
+                ));
             }
             card.depends_on = depends_on;
         }
@@ -329,7 +331,9 @@ impl Board {
     /// Próxima tarefa do orquestrador automático, na ordem do `pull`, sem as que já voltaram do
     /// "fazendo". Não prende nada.
     pub fn next_auto(&self, landed: impl Fn(&Merged) -> bool) -> Option<&Card> {
-        self.first_agent_card(|card| card.failures == 0 && self.dependencies_satisfied(card, &landed))
+        self.first_agent_card(|card| {
+            card.failures == 0 && self.dependencies_satisfied(card, &landed)
+        })
     }
 
     fn first_agent_card(&self, extra: impl Fn(&Card) -> bool) -> Option<&Card> {
@@ -602,7 +606,9 @@ fn checked_depends_on(ids: Vec<String>) -> Result<Vec<String>, KanbanError> {
         let id = id.trim().to_owned();
         let digits = id.strip_prefix('T').unwrap_or("");
         if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
-            return Err(KanbanError::Invalid(format!("dependência inválida: {id:?}")));
+            return Err(KanbanError::Invalid(format!(
+                "dependência inválida: {id:?}"
+            )));
         }
         if !checked.contains(&id) {
             checked.push(id);

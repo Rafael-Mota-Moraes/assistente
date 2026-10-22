@@ -429,6 +429,7 @@ mod tests {
             failures: 0,
             blocked: None,
             merged: None,
+            depends_on: Vec::new(),
             created_at: 1,
         }
     }

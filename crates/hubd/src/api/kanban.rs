@@ -104,7 +104,13 @@ fn clean_validated(dir: &Path, board: &Board, released: &[String]) {
 /// Dependência na `main` (F11.13): o commit que o QA juntou está no `HEAD` do projeto, de onde o
 /// worktree do trabalhador nasce. Juntada noutra branch não conta.
 fn landed(dir: &Path) -> impl Fn(&Merged) -> bool + '_ {
-    move |merged| git_out(dir, &["merge-base", "--is-ancestor", &merged.commit, "HEAD"]).is_ok()
+    move |merged| {
+        git_out(
+            dir,
+            &["merge-base", "--is-ancestor", &merged.commit, "HEAD"],
+        )
+        .is_ok()
+    }
 }
 
 fn persist(dir: &Path, board: &Board, message: &str) -> Reply<()> {
@@ -2638,7 +2644,14 @@ mod tests {
         assert_eq!(mandar_b().await.0, StatusCode::CONFLICT);
 
         // O QA junta A na main: B abre, num worktree que já tem o código de A.
-        let (status, info) = send(hub.app.clone(), "POST", &format!("{CARDS}/T1/qa"), None, None).await;
+        let (status, info) = send(
+            hub.app.clone(),
+            "POST",
+            &format!("{CARDS}/T1/qa"),
+            None,
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::CREATED, "{info}");
         let qa_token = exec_token(&t, info["id"].as_str().unwrap()).await;
         let (status, done) = send(

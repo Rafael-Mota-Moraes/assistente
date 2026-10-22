@@ -22,9 +22,13 @@
       "description": "Comando Tauri `host_exec`: só para pedidos `host` aprovados no `ExecApprovals`, `bash -lc` na pasta do projeto (precisa estar dentro de uma raiz de perfil, como no `open_in_cursor`), com timeout e saída truncada; o resultado volta ao hubd (`POST /api/exec/{id}/result`, com o token do hub) e de lá ao agente. App fechado = o pedido espera ou expira.\nPronto quando: aprovar um `git push` pedido com `--pc` empurra do PC e o agente recebe saída e código. Como testar: vitest com hub fake + teste de rota do resultado.",
       "priority": "normal",
       "kind": "manual",
-      "column": "feito",
+      "column": "validado",
       "holder": "pessoal--assistente--claude-2",
       "commit": "801ee991bc09bdf3339c9313ad57bf9c2b5929c6",
+      "merged": {
+        "branch": "main",
+        "commit": "6cd1d8f97935758e0b3d2cbdf93b6c01cb185ce2"
+      },
       "created_at": 1792614071
     },
     {

@@ -79,6 +79,7 @@ sessões nascem sem a API.
 |---|---|---|
 | POST | `/v1/exec` | `{command, cwd?, timeout_secs?}` → 202 `{id, state, auto_approved}`; 400 comando vazio/cwd fora do projeto; 401; 429 (3 pendentes por sessão, 20 no total) |
 | GET | `/v1/exec/{id}?wait=<s≤55>` | long-poll até estado final → `{…, state, result}`; pedido de outra sessão = 404 |
+| POST | `/v1/diagnostico` | `{comando}` → `{comando, saida, codigo, erro?, truncado}`; 400 comando fora da lista; 401 |
 
 Estados: `pending → running → done | failed`, `pending → denied | expired` (10 min sem resposta).
 A fila é só memória (`crates/hubd/src/exec.rs`): reiniciar o hubd perde os pedidos. O
@@ -86,6 +87,27 @@ comando roda com `bash -lc` na pasta pedida (dentro do projeto), env do perfil, 
 num grupo de processos próprio (timeout padrão 10 min, teto 60, mata o grupo), guardando o fim
 da saída (64 KiB por stream). Casou exatamente com `allowed_commands` do projeto? Roda sem
 perguntar (`auto_approved`).
+
+## Diagnóstico da VM (F14.1)
+
+`POST /v1/diagnostico` (token da sessão, como o resto da API dos agentes) é **leitura**: não
+escreve nada, então não passa pela aprovação do app (F9.7). O corpo é `{"comando": "…"}` e o
+comando vem de uma lista fechada, escrita em Rust (`crates/hubd/src/api/diagnostico.rs`): o
+agente escolhe a leitura, não o que roda. Fora da lista, a rota responde 400.
+
+| Comando | O que lê |
+|---|---|
+| `journal-hubd [linhas]` | `journalctl --no-pager -u hubd -n <linhas>` (padrão 200, teto 5000) |
+| `tmux-ls` | as sessões do tmux (nome, perfil, projeto, agente) |
+| `tmux-pane <sessão>` | `tmux capture-pane -p -t =<sessão>: -S -200` de uma sessão **deste projeto** |
+| `explorar` | os prompts de `~/.assistente/perfis/<perfil>/explorar/` e o tamanho de cada um |
+| `claude-login` | `bash -l -c 'command -v claude'` (o `claude` está no PATH de login?) |
+
+A saída é cortada em 64 KiB (fica o fim, como no `fora-do jail`) e a resposta traz `codigo`
+(o código de saída do comando) e `erro` (o stderr). `tmux-pane` só responde com o painel de uma
+sessão do projeto de quem pergunta: sessão viva de outro projeto = 400; sessão que não existe =
+404. O cliente do agente é `fora-do-jail diagnostico <comando>`, que devolve a saída no stdout
+(sem passar pelo app).
 
 ## Protocolo do terminal (F2.3)
 

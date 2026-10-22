@@ -60,7 +60,10 @@ inicia `dorme` num tmux do notebook. De manhã, "Recolher" faz `git fetch` de `d
 grava em `~/.assistente/projetos.toml` (fora do repo e do jail) o que afrouxar no `LaunchPlan`.
 O agente pede um comando com `fora-do-jail`: POST na API dos agentes (`127.0.0.1:7879`, única
 porta do hubd no jail, token por sessão), o app mostra o pedido, você aprova e o hubd roda o
-comando na VM e devolve a saída ao agente (long-poll).
+comando na VM e devolve a saída ao agente (long-poll). Para só **ler** o estado da VM, o agente
+usa `fora-do-jail diagnostico <comando>`: a mesma API responde com uma leitura de uma lista
+fechada de comandos (journal do hubd, sessões, painel de uma sessão), sem passar pela aprovação
+(F14.1).
 
 **Auto-atualização (F8).** A aba Assistente é uma sessão de agente no próprio repo. Com
 "Aplicar", o hubd lança `vm/atualizar.sh` fora do jail: ele faz um worktree limpo do commit,

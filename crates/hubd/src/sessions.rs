@@ -19,6 +19,16 @@ pub struct SessionInfo {
     pub attached: u32,
 }
 
+/// Uma sessão e o estado do seu painel. Com `remain-on-exit` (F14.3) a sessão continua viva
+/// depois que o processo morre: a saída e o status de saída ficam visíveis na aba até o
+/// usuário encerrar a sessão.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub info: SessionInfo,
+    /// O processo do painel já saiu: a sessão existe, mas não trabalha.
+    pub dead: bool,
+}
+
 /// Acesso ao tmux. `socket` isola um servidor tmux próprio (usado nos testes).
 #[derive(Debug, Clone)]
 pub struct Tmux {
@@ -33,7 +43,8 @@ impl Default for Tmux {
 
 /// O tmux troca TAB e outros caracteres de controle por `_` na saída: separador visível.
 const SEP: &str = "|~|";
-const FORMAT: &str = "#{session_name}|~|#{@assistente_profile}|~|#{@assistente_project}|~|#{@assistente_agent}|~|#{session_created}|~|#{session_attached}";
+/// `pane_dead` no fim: o painel morreu? (F14.3, `remain-on-exit`).
+const FORMAT: &str = "#{session_name}|~|#{@assistente_profile}|~|#{@assistente_project}|~|#{@assistente_agent}|~|#{session_created}|~|#{session_attached}|~|#{pane_dead}";
 
 impl Tmux {
     pub fn new(socket: Option<PathBuf>) -> Self {
@@ -72,15 +83,37 @@ impl Tmux {
 
     /// Só as sessões criadas pelo Assistente (as outras do tmux ficam de fora).
     pub async fn list(&self) -> Result<Vec<SessionInfo>, String> {
+        Ok(self
+            .list_all()
+            .await?
+            .into_iter()
+            .map(|session| session.info)
+            .collect())
+    }
+
+    /// As sessões do Assistente com o estado do painel (F14.3).
+    pub async fn list_all(&self) -> Result<Vec<Listed>, String> {
         let out = match self.run(&args(&["list-sessions", "-F", FORMAT])).await {
             Ok(out) => out,
             // Sem servidor tmux = nenhuma sessão.
             Err(e) if no_server(&e) => return Ok(Vec::new()),
             Err(e) => return Err(e),
         };
-        let mut sessions: Vec<SessionInfo> = out.lines().filter_map(parse_line).collect();
-        sessions.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut sessions: Vec<Listed> = out.lines().filter_map(parse_line).collect();
+        sessions.sort_by(|a, b| a.info.id.cmp(&b.info.id));
         Ok(sessions)
+    }
+
+    /// Só as sessões cujo processo ainda vive: as mortas continuam no tmux (F14.3), mas não
+    /// seguram tarefa no quadro nem token da API dos agentes.
+    pub async fn list_running(&self) -> Result<Vec<SessionInfo>, String> {
+        Ok(self
+            .list_all()
+            .await?
+            .into_iter()
+            .filter(|session| !session.dead)
+            .map(|session| session.info)
+            .collect())
     }
 
     pub async fn find(&self, id: &str) -> Result<Option<SessionInfo>, String> {
@@ -95,7 +128,22 @@ impl Tmux {
         spec: &SessionSpec,
         exec_token: Option<&str>,
     ) -> Result<SessionInfo, String> {
-        self.run(&plan.tmux_new_session_argv()[1..]).await?;
+        // F14.3: `remain-on-exit` na janela da sessão. O painel continua na tela quando o
+        // processo morre, para a aba mostrar a saída e o status de saída. Só esta janela: o
+        // servidor tmux do usuário continua sem a opção. O `;` encadeia no mesmo tmux, senão
+        // a opção chegaria depois do processo e quem morre na hora levaria a sessão junto.
+        let mut argv = plan.tmux_new_session_argv();
+        argv.remove(0); // o "tmux" do começo
+        argv.extend([
+            ";".to_owned(),
+            "set-option".to_owned(),
+            "-w".to_owned(),
+            "-t".to_owned(),
+            format!("={}:", plan.tmux_session),
+            "remain-on-exit".to_owned(),
+            "on".to_owned(),
+        ]);
+        self.run(&argv).await?;
         // `set-option -t` espera um painel: `=nome:` é "exatamente esta sessão" (`=nome` falha).
         let target = format!("={}:", plan.tmux_session);
         if let Some(token) = exec_token {
@@ -130,25 +178,74 @@ impl Tmux {
             .ok_or_else(|| "a sessão terminou logo ao iniciar".to_owned())
     }
 
-    /// Sessão dona do token da API dos agentes (F9.5). Sessão encerrada = token inválido.
+    /// Sessão dona do token da API dos agentes (F9.5). Sessão encerrada = token inválido:
+    /// com o `remain-on-exit` (F14.3) a sessão morta continua no tmux, mas o token dela não
+    /// vale mais (o processo que o usava já foi embora).
     pub async fn session_for_exec_token(&self, token: &str) -> Result<Option<SessionInfo>, String> {
         if token.is_empty() {
             return Ok(None);
         }
-        let format = format!("#{{session_name}}{SEP}#{{@assistente_exec_token}}");
+        let format =
+            format!("#{{session_name}}{SEP}#{{@assistente_exec_token}}{SEP}#{{pane_dead}}");
         let out = match self.run(&args(&["list-sessions", "-F", &format])).await {
             Ok(out) => out,
             Err(e) if no_server(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
         let owner = out.lines().find_map(|line| {
-            let (id, stored) = line.split_once(SEP)?;
+            let mut parts = line.split(SEP);
+            let id = parts.next()?;
+            let stored = parts.next()?;
+            let dead = parts.next().unwrap_or("0") == "1";
+            if dead {
+                return None;
+            }
             constant_time_eq(stored.as_bytes(), token.as_bytes()).then(|| id.to_owned())
         });
         match owner {
             Some(id) => self.find(&id).await,
             None => Ok(None),
         }
+    }
+
+    /// O status de saída do painel quando o processo já morreu (F14.3). `None` enquanto o
+    /// processo vive (ou quando a sessão não existe mais).
+    pub async fn dead_status(&self, id: &str) -> Option<i32> {
+        let out = self
+            .run(&args(&[
+                "list-panes",
+                "-t",
+                &format!("={id}:"),
+                "-F",
+                "#{pane_dead}:#{pane_dead_status}",
+            ]))
+            .await
+            .ok()?;
+        let line = out.lines().next()?;
+        let (dead, status) = line.split_once(':')?;
+        if dead != "1" {
+            return None;
+        }
+        Some(status.trim().parse().unwrap_or(0))
+    }
+
+    /// O que o processo imprimiu no painel (a tela e o histórico), para o terminal mostrar a
+    /// saída de uma sessão morta (F14.3). O tmux rola o painel uma linha quando o processo
+    /// morre: por isso vem o histórico, e não só a tela.
+    pub async fn capture(&self, id: &str) -> Option<String> {
+        let out = self
+            .run(&args(&[
+                "capture-pane",
+                "-p",
+                "-S",
+                "-500",
+                "-t",
+                &format!("={id}:"),
+            ]))
+            .await
+            .ok()?;
+        // O terminal do app espera \r\n.
+        Some(out.replace('\n', "\r\n"))
     }
 
     pub async fn kill(&self, id: &str) -> Result<(), String> {
@@ -187,21 +284,24 @@ fn args(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| (*s).to_owned()).collect()
 }
 
-fn parse_line(line: &str) -> Option<SessionInfo> {
+fn parse_line(line: &str) -> Option<Listed> {
     let mut parts = line.split(SEP);
     let id = parts.next()?.to_owned();
     let profile = parts.next()?.to_owned();
     let project = parts.next()?.to_owned();
     // Sessão que não é do Assistente: sem agente conhecido.
     let agent = AgentKind::from_id(parts.next()?)?;
-    Some(SessionInfo {
+    let info = SessionInfo {
         id,
         profile,
         project,
         agent,
         created_at: parts.next()?.parse().ok()?,
         attached: parts.next()?.parse().ok()?,
-    })
+    };
+    // O painel morreu? (F14.3: a sessão continua viva, mas o processo foi embora.)
+    let dead = parts.next().unwrap_or("0") == "1";
+    Some(Listed { info, dead })
 }
 
 /// Menor `n` livre para (perfil, projeto, agente): claude-1, claude-2…
@@ -327,19 +427,47 @@ pub(crate) mod tests {
         assert_eq!(text.trim(), format!("sim {}", t.dir.display()));
     }
 
+    /// F14.3: o processo que morre deixa o painel na tela, com a saída e o status de saída.
     #[tokio::test]
-    async fn command_that_exits_at_once_is_an_error() {
+    async fn command_that_exits_at_once_leaves_the_dead_pane() {
         let t = TestTmux::new("morre");
-        let err = t
+        let info = t
             .tmux
             .create(
-                &t.plan("pessoal--x--claude-1", "exit 0"),
+                &t.plan("pessoal--x--claude-1", "echo 'claude: not found'; exit 127"),
                 &spec("x", AgentKind::Claude),
                 None,
             )
             .await
-            .unwrap_err();
-        assert!(err.contains("terminou logo ao iniciar"), "{err}");
+            .unwrap();
+        assert_eq!(info.id, "pessoal--x--claude-1");
+        // A sessão continua viva (o painel fica), mas o processo morreu.
+        assert_eq!(t.tmux.dead_status(&info.id).await, Some(127));
+        let listed = t.tmux.list_all().await.unwrap();
+        assert!(listed[0].dead, "a sessão morta tem de aparecer como morta");
+        // A saída do processo continua visível no painel.
+        let pane = t
+            .tmux
+            .run(&args(&[
+                "capture-pane",
+                "-p",
+                "-S",
+                "-20",
+                "-t",
+                "=pessoal--x--claude-1:",
+            ]))
+            .await
+            .unwrap();
+        assert!(pane.contains("claude: not found"), "{pane}");
+        // O servidor tmux do usuário não ganha a opção: só a janela da sessão.
+        let global = t
+            .tmux
+            .run(&args(&["show-options", "-g", "-v", "remain-on-exit"]))
+            .await
+            .unwrap();
+        assert_eq!(global.trim(), "off", "{global}");
+        // A sessão morta não segura tarefa nem token.
+        assert!(t.tmux.list_running().await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -381,6 +509,24 @@ pub(crate) mod tests {
         assert_eq!(t.tmux.session_for_exec_token(&token).await.unwrap(), None);
     }
 
+    /// F14.3: a sessão morta continua no tmux, mas o token dela não vale mais.
+    #[tokio::test]
+    async fn exec_token_of_a_dead_session_is_refused() {
+        let t = TestTmux::new("token-morto");
+        let token = new_exec_token().unwrap();
+        let info = t
+            .tmux
+            .create(
+                &t.plan("pessoal--x--claude-1", "exit 3"),
+                &spec("x", AgentKind::Claude),
+                Some(&token),
+            )
+            .await
+            .unwrap();
+        assert_eq!(t.tmux.dead_status(&info.id).await, Some(3));
+        assert_eq!(t.tmux.session_for_exec_token(&token).await.unwrap(), None);
+    }
+
     #[test]
     fn next_seq_fills_the_first_gap() {
         let mk = |id: &str| SessionInfo {
@@ -401,10 +547,15 @@ pub(crate) mod tests {
 
     #[test]
     fn parse_line_knows_the_terminal_tab_and_skips_foreign_sessions() {
-        let info = parse_line("pessoal--x--shell-1|~|pessoal|~|x|~|shell|~|10|~|1").unwrap();
-        assert_eq!(info.agent, AgentKind::Shell);
-        assert_eq!(info.attached, 1);
-        assert!(parse_line("minha|~||~||~||~|10|~|0").is_none());
+        let listed = parse_line("pessoal--x--shell-1|~|pessoal|~|x|~|shell|~|10|~|1|~|0").unwrap();
+        assert_eq!(listed.info.agent, AgentKind::Shell);
+        assert_eq!(listed.info.attached, 1);
+        assert!(!listed.dead);
+        // Painel morto: a sessão continua listada, mas sem trabalho.
+        let listed =
+            parse_line("pessoal--x--claude-1|~|pessoal|~|x|~|claude|~|10|~|0|~|1").unwrap();
+        assert!(listed.dead);
+        assert!(parse_line("minha|~||~||~||~|10|~|0|~|0").is_none());
     }
 
     pub async fn wait_for_file(path: &Path) -> String {

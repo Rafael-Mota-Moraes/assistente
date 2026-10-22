@@ -3269,13 +3269,18 @@ mod tests {
 
     /// hubd de verdade numa porta livre, com um perfil cuja raiz tem o repo `proj`.
     async fn live_hub(t: &TestTmux, token: Option<&str>) -> String {
+        live_hub_with(t, token, vec!["bash".into(), "--norc".into(), "-i".into()]).await
+    }
+
+    /// O mesmo hubd, mas com outro comando no lugar do agente.
+    async fn live_hub_with(t: &TestTmux, token: Option<&str>, argv: Vec<String>) -> String {
         let root = t.dir.join("raiz");
         std::fs::create_dir_all(root.join("proj/.git")).unwrap();
         let text = EXAMPLE.replace("~/Documentos/pessoal/projetos", &root.display().to_string());
         let home = PathBuf::from("/home/rafa");
         let config = Config::parse(&text, &home).unwrap();
         let state = AppState::new(config, home, token.map(str::to_owned), None, t.tmux.clone())
-            .with_argv_override(vec!["bash".into(), "--norc".into(), "-i".into()]);
+            .with_argv_override(argv);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
@@ -3424,6 +3429,104 @@ mod tests {
         )
         .await;
         assert_eq!(status, 404);
+    }
+
+    /// F14.3: a sessão que sai com erro continua na tela: a aba mostra o que o processo
+    /// imprimiu e o status de saída.
+    #[tokio::test]
+    async fn dead_session_shows_the_output_and_the_exit_status() {
+        let t = TestTmux::new("api-morta");
+        let hub = live_hub_with(
+            &t,
+            None,
+            vec![
+                "bash".into(),
+                "-c".into(),
+                "echo 'claude: not found'; exit 127".into(),
+            ],
+        )
+        .await;
+        let spec = r#"{"profile":"pessoal","project":"proj","agent":"claude"}"#;
+        let (status, body) = http("POST", &format!("{hub}/api/sessions"), Some(spec)).await;
+        // A sessão não morre com o processo: o painel fica (F14.3).
+        assert_eq!(status, 201, "{body}");
+        let info: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(info["id"], "pessoal--proj--claude-1");
+
+        let url = format!("ws://{hub}/api/sessions/pessoal--proj--claude-1/terminal");
+        let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        let mut seen = String::new();
+        let mut status: Option<i64> = None;
+        let done = tokio::time::timeout(Duration::from_secs(15), async {
+            while let Some(Ok(message)) = ws.next().await {
+                match message {
+                    WsMessage::Binary(bytes) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+                    WsMessage::Text(text) => {
+                        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                        if value["type"] == "exit" {
+                            status = value["status"].as_i64();
+                        }
+                    }
+                    _ => {}
+                }
+                // A saída e o aviso de fim chegam (a ordem não importa).
+                if status.is_some() && seen.contains("claude: not found") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert!(done, "a aba não mostrou a saída nem o status: {seen}");
+        assert_eq!(status, Some(127));
+        assert!(seen.contains("claude: not found"), "{seen}");
+    }
+
+    /// F14.3: a sessão que morre com a aba aberta avisa o status de saída.
+    #[tokio::test]
+    async fn session_that_dies_with_the_tab_open_sends_the_status() {
+        let t = TestTmux::new("api-morre");
+        let hub = live_hub_with(
+            &t,
+            None,
+            vec![
+                "bash".into(),
+                "-c".into(),
+                "echo 'comecou'; sleep 1; exit 5".into(),
+            ],
+        )
+        .await;
+        let spec = r#"{"profile":"pessoal","project":"proj","agent":"claude"}"#;
+        let (status, body) = http("POST", &format!("{hub}/api/sessions"), Some(spec)).await;
+        assert_eq!(status, 201, "{body}");
+
+        let url = format!("ws://{hub}/api/sessions/pessoal--proj--claude-1/terminal");
+        let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        let mut seen = String::new();
+        let mut status: Option<i64> = None;
+        let done = tokio::time::timeout(Duration::from_secs(15), async {
+            while let Some(Ok(message)) = ws.next().await {
+                match message {
+                    WsMessage::Binary(bytes) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+                    WsMessage::Text(text) => {
+                        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                        if value["type"] == "exit" {
+                            status = value["status"].as_i64();
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert!(done, "a aba não avisou que a sessão morreu: {seen}");
+        assert_eq!(status, Some(5));
+        // A saída chegou viva, enquanto o processo rodava.
+        assert!(seen.contains("comecou"), "{seen}");
     }
 
     #[tokio::test]

@@ -2,8 +2,11 @@
 # fora-do-jail — pede ao Assistente para rodar um comando FORA do ai-jail, na VM (F9.6).
 # Você aprova (ou nega) no app; a saída e o código de saída voltam para quem chamou.
 #
-#   fora-do-jail [--timeout SEG] [--sem-esperar] [--] '<comando>'
+#   fora-do-jail [--pc] [--timeout SEG] [--sem-esperar] [--] '<comando>'
 #   fora-do-jail --resultado <id>
+#
+# Com `--pc` (F9.9) o pedido vai para o PC: o hubd nunca o roda na VM; com sua aprovação, o
+# app roda no seu computador, na mesma pasta do projeto (o caminho do PC, via virtiofs).
 #
 # Roda na pasta atual (precisa ser dentro do projeto), com o env do perfil. Códigos de saída:
 # o do comando; 126 negado; 124 ninguém respondeu a tempo ou o comando estourou o timeout;
@@ -12,7 +15,7 @@
 set -euo pipefail
 
 die() { echo "fora-do-jail: $*" >&2; exit "${CODE:-2}"; }
-uso() { sed -n '4,5p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+uso() { sed -n '5,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # Quadro do projeto (F11.2): `fora-do-jail kanban pull|done|release|trabalhador`. Não passa pelo
 # app: é coordenação entre sessões (o que vai ao PC pede aprovação; isto não roda nada). Saída:
@@ -113,10 +116,12 @@ fi
 timeout=""
 wait=1
 id=""
+pc=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --timeout) [ $# -ge 2 ] || uso; timeout="$2"; shift 2 ;;
     --sem-esperar) wait=0; shift ;;
+    --pc) pc=1; shift ;;
     --resultado) [ $# -ge 2 ] || uso; id="$2"; shift 2 ;;
     -h|--help) uso ;;
     --) shift; break ;;
@@ -153,7 +158,9 @@ import json, os, sys
 request = {"command": sys.argv[1], "cwd": os.getcwd()}
 if sys.argv[2]:
     request["timeout_secs"] = int(sys.argv[2])
-print(json.dumps(request))' "$command" "$timeout")"
+if sys.argv[3]:
+    request["target"] = "host"
+print(json.dumps(request))' "$command" "$timeout" "$pc")"
   response="$(http 30 -H 'Content-Type: application/json' --data-binary "$body" "$url/v1/exec")" \
     || CODE=125 die "o hubd não respondeu em $url"
   status="${response##*$'\n'}"
@@ -167,6 +174,8 @@ print(json.dumps(request))' "$command" "$timeout")"
   id="$(field "$json" id)"
   if [ "$(field "$json" auto_approved)" = "True" ]; then
     echo "fora-do-jail: pedido $id sempre permitido neste projeto; rodando…" >&2
+  elif [ -n "$pc" ]; then
+    echo "fora-do-jail: pedido $id aguardando aprovação no app; vai rodar no seu PC…" >&2
   else
     echo "fora-do-jail: pedido $id aguardando aprovação no app do Assistente…" >&2
   fi

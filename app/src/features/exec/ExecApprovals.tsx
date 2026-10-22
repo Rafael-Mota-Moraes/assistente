@@ -83,7 +83,8 @@ export function ExecApprovals() {
             {request.command}
           </pre>
           <p className="truncate font-mono text-[11px] text-slate-500" title={request.cwd}>
-            em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min · na VM
+            em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min ·{" "}
+            {request.target === "host" ? "no PC" : "na VM"}
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -100,22 +101,25 @@ export function ExecApprovals() {
             >
               <X className="size-3.5" /> Negar
             </button>
-            <button
-              type="button"
-              title={ALWAYS_WARNING}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Sempre permitir este comando em ${request.project}?\n\n${request.command}\n\n${ALWAYS_WARNING}`,
-                  )
-                ) {
-                  answer(request, "always");
-                }
-              }}
-              className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
-            >
-              Aprovar e sempre permitir neste projeto
-            </button>
+            {/* "Sempre permitir" é só da VM: pedido para o PC nunca roda sem clique (F9.9/F9.11). */}
+            {request.target === "vm" && (
+              <button
+                type="button"
+                title={ALWAYS_WARNING}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Sempre permitir este comando em ${request.project}?\n\n${request.command}\n\n${ALWAYS_WARNING}`,
+                    )
+                  ) {
+                    answer(request, "always");
+                  }
+                }}
+                className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
+              >
+                Aprovar e sempre permitir neste projeto
+              </button>
+            )}
           </div>
         </section>
       ))}

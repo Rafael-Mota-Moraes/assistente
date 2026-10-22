@@ -32,7 +32,7 @@ mod kanban;
 
 pub use kanban::spawn_orchestrator;
 
-use crate::exec::{self, ExecError, ExecJob, ExecStore, ExecView, NewRequest};
+use crate::exec::{self, ExecError, ExecJob, ExecStore, ExecTarget, ExecView, NewRequest};
 use crate::sessions::{SessionInfo, Tmux, new_exec_token, next_seq};
 use crate::sleep::{
     self, CollectReport, Remote, SleepLimits, SleepStatusReport, StartSleepError, StartedSleep,
@@ -2116,6 +2116,9 @@ struct AgentExecRequest {
     cwd: Option<String>,
     #[serde(default)]
     timeout_secs: Option<u64>,
+    /// `host` = pedido para o PC (F9.9, `fora-do-jail --pc`): o hubd não executa na VM.
+    #[serde(default)]
+    target: ExecTarget,
 }
 
 #[derive(Serialize)]
@@ -2141,6 +2144,8 @@ async fn agent_submit(
     }
     let dir = sleep_project_dir(&state, &session.profile, &session.project)
         .map_err(|(s, m)| error(s, m))?;
+    // Caminho de trabalho = pasta do projeto. Para o PC (F9.9) o mesmo caminho vale: a VM o
+    // monta por virtiofs no lugar certo do host.
     let cwd = exec::resolve_cwd(&dir, request.cwd.as_deref())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
     // Env do perfil como na aba Terminal (sem token: o comando roda fora do jail).
@@ -2151,14 +2156,16 @@ async fn agent_submit(
     };
     let plan = LaunchPlan::build(&state.0.config, &state.0.home, &spec, 1)
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
-    let auto_approved = load_settings(&state.0.home)
-        .map(|file| {
-            file.get(&session.profile, &session.project)
-                .allowed_commands
-                .iter()
-                .any(|allowed| allowed.trim() == command)
-        })
-        .unwrap_or(false);
+    // "Sempre permitir" é só para a VM: pedido para o PC nunca roda sem clique (F9.9/F9.11).
+    let auto_approved = request.target == ExecTarget::Vm
+        && load_settings(&state.0.home)
+            .map(|file| {
+                file.get(&session.profile, &session.project)
+                    .allowed_commands
+                    .iter()
+                    .any(|allowed| allowed.trim() == command)
+            })
+            .unwrap_or(false);
     let (view, job) = state
         .0
         .exec
@@ -2168,17 +2175,23 @@ async fn agent_submit(
             project: session.project,
             cwd,
             command: command.to_owned(),
+            target: request.target,
             env: plan.env,
             timeout_secs: request.timeout_secs,
             auto_approved,
         })
         .map_err(exec_error)?;
     tracing::info!(
-        "pedido {} de {}{}: {}",
+        "pedido {} de {}{}{}: {}",
         view.id,
         session.id,
         if auto_approved {
             " (sempre permitido)"
+        } else {
+            ""
+        },
+        if view.target == ExecTarget::Host {
+            " (no PC)"
         } else {
             ""
         },
@@ -2231,7 +2244,8 @@ struct ApproveRequest {
     always: bool,
 }
 
-/// POST /api/exec/{id}/approve `{always?}`: roda o pedido fora do jail.
+/// POST /api/exec/{id}/approve `{always?}`: roda o pedido fora do jail. Pedido para o PC (F9.9)
+/// é só marcado como rodando: quem executa é o app no host (F9.10), nunca a VM.
 async fn approve_exec(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2246,6 +2260,12 @@ async fn approve_exec(
             .ok_or_else(|| exec_error(ExecError::NotFound))?;
         if view.state != exec::ExecState::Pending {
             return Err(exec_error(ExecError::NotPending(view.state)));
+        }
+        if view.target == ExecTarget::Host {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "pedido para o PC não aceita 'sempre permitir' (F9.11)",
+            ));
         }
         let (profile, project, command) = (view.profile, view.project, view.command);
         let mut current = load_settings(&state.0.home)
@@ -2271,9 +2291,13 @@ async fn approve_exec(
         .map_err(|e| internal(&e))?;
         tracing::info!("{profile}/{project}: sempre permitir {command:?}");
     }
-    let job = state.0.exec.approve(&id).map_err(exec_error)?;
-    tracing::info!("pedido {id} aprovado: {}", job.command);
-    spawn_exec(&state, job);
+    match state.0.exec.approve(&id).map_err(exec_error)? {
+        Some(job) => {
+            tracing::info!("pedido {id} aprovado: {}", job.command);
+            spawn_exec(&state, job);
+        }
+        None => tracing::info!("pedido {id} aprovado no PC: o app executa e devolve o resultado"),
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -3563,6 +3587,7 @@ mod tests {
         assert_eq!(pending[0]["id"], id.as_str());
         assert_eq!(pending[0]["session"], session.as_str());
         assert_eq!(pending[0]["state"], "pending");
+        assert_eq!(pending[0]["target"], "vm");
         let result_url = |wait: u32| format!("{agents}/v1/exec/{id}?wait={wait}");
         let (_, body) = http_as("GET", &result_url(1), None, tok().as_deref()).await;
         assert_eq!(json(&body)["state"], "pending");
@@ -3743,6 +3768,49 @@ mod tests {
         let out = run_client(&t, &agents, &token, &["--resultado", "nao-existe"]).await;
         assert_eq!(out.status.code(), Some(125));
         assert!(String::from_utf8_lossy(&out.stderr).contains("peça de novo"));
+
+        // Pedido para o PC (F9.9): aparece no app com `target: host`; aprovar marca como
+        // rodando, mas o hubd nunca executa na VM (quem roda é o app, F9.10).
+        let out = run_client(
+            &t,
+            &agents,
+            &token,
+            &["--pc", "--sem-esperar", "--", "echo do pc"],
+        )
+        .await;
+        assert_eq!(out.status.code(), Some(0), "{out:?}");
+        let pc_id = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        let find_pc = |body: &str| {
+            json(body)
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["id"] == pc_id.as_str())
+                .cloned()
+                .unwrap_or_else(|| panic!("pedido {pc_id} não apareceu no app: {body}"))
+        };
+        let (_, body) = http("GET", &format!("{hub}/api/exec"), None).await;
+        let card = find_pc(&body);
+        assert_eq!(card["target"], "host");
+        assert_eq!(card["state"], "pending");
+        assert_eq!(
+            http(
+                "POST",
+                &format!("{hub}/api/exec/{pc_id}/approve"),
+                Some("{}")
+            )
+            .await
+            .0,
+            204
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (_, body) = http("GET", &format!("{hub}/api/exec"), None).await;
+        let card = find_pc(&body);
+        assert_eq!(card["state"], "running", "{card}");
+        assert!(
+            card["result"].is_null(),
+            "o hubd rodou o pedido do PC na VM: {card}"
+        );
     }
 
     #[tokio::test]

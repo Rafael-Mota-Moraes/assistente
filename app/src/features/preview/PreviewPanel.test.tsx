@@ -136,7 +136,11 @@ describe("PreviewPanel", () => {
       activeProject: "game",
       views: [{ key: "pessoal/game", kind: "preview" }],
       activeView: { key: "pessoal/game", kind: "preview" },
-      pick: { profile: "pessoal", project: "game", pick: { url: "", selector: "#x", text: "", html: "", tag: "button" } },
+      pick: {
+        profile: "pessoal",
+        project: "game",
+        pick: { url: "", selector: "#x", text: "", html: "", tag: "button" },
+      },
     });
     render(<PreviewPanel />);
 

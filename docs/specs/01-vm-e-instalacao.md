@@ -9,7 +9,7 @@ Cobre R3 (VM) e R9 (reinstalar fácil). Funcionalidades F1.x e F7.x.
 | `instalar.sh` | Bootstrap do PC: Incus/QEMU, config, token, VM, app `.deb` |
 | `bin/assistente` | CLI do host: `vm criar|iniciar|parar|shell|recriar|logins|status`, `login`, `token`, `backup`, `restaurar`, `notebook instalar` |
 | `vm/cloud-init.yaml` | Primeira inicialização: usuário com UID do host, pacotes (git, tmux, bubblewrap, docker, autossh) |
-| `vm/provisionar.sh` | Reexecutável, como root na VM: ai-jail, claude, opencode, ai-memory (cliente), pastas de perfil, hubd |
+| `vm/provisionar.sh` | Reexecutável, como root na VM: ai-jail, claude, opencode, ai-memory (cliente), pastas de perfil, hubd, grupo `systemd-journal` (F14.2) |
 | `vm/hubd.service` | systemd do hubd, como o usuário |
 
 ## A VM
@@ -113,3 +113,8 @@ Pegadinhas encontradas (já tratadas nos scripts):
   o agent monta o virtiofs do espelho ~0,4s depois do systemd tentar o bind no boot. Sem a
   ordem, o bind captura a pasta vazia por baixo do ponto de montagem e o ai-memory crasha
   com "Permission denied" em `wiki/.git` (a pasta raiz do espelho fica com dono root).
+- A senha da conta da VM está travada (`lock_passwd` no cloud-init): o `journalctl -u hubd`
+  não pode pedir sudo. O `provisionar.sh` põe o usuário no grupo `systemd-journal`
+  (`usermod -aG`), que dá leitura do journal sem senha (F14.2). O grupo entra no processo
+  quando ele nasce: o `restart` do hubd logo abaixo já roda com ele; quem já estava logado
+  precisa relogar para o `groups` mostrar.

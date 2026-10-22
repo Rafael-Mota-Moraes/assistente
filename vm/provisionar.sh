@@ -224,6 +224,28 @@ fi
 ln -sfn "$(basename "$nova")" "$versoes/atual"
 chown -h "$USER_NAME:" "$versoes/atual"
 
+echo "==> journal do hubd sem sudo (F14.2)"
+# A VM tem a senha travada (lock_passwd no cloud-init): sem o grupo systemd-journal o
+# `journalctl -u hubd` pede sudo e não há quem digite a senha. `usermod -aG` é idempotente
+# (a segunda passada não falha) e não derruba sessão nenhuma.
+# O grupo entra no processo quando ele nasce: o restart do hubd logo abaixo já roda com o
+# grupo novo (é o hubd que lê o journal na rota de diagnóstico, F14.1) e o `sudo -u` do
+# `assistente vm shell` também, porque o sudo lê os grupos do usuário ao abrir a sessão.
+# Quem já estava logado antes do usermod precisa relogar para o `groups` mostrar o grupo.
+# O grupo vem do systemd (sysusers.d) e existe em toda VM com systemd no boot. Se um dia
+# faltar, avisa e segue: sem ele o resto da VM funciona igual, só o journalctl pede sudo.
+if getent group systemd-journal >/dev/null; then
+  usermod -aG systemd-journal "$USER_NAME"
+  # Confere na hora: sem o grupo na conta, o journalctl continua pedindo sudo.
+  if ! id -nG "$USER_NAME" | tr ' ' '\n' | grep -qx systemd-journal; then
+    echo "aviso: o grupo systemd-journal não entrou na conta $USER_NAME;" \
+      "confira com 'id -nG $USER_NAME'" >&2
+  fi
+else
+  echo "aviso: esta VM não tem o grupo systemd-journal (rode systemd-sysusers);" \
+    "o journalctl do hubd vai pedir sudo" >&2
+fi
+
 echo "==> hubd"
 sed "s/@USER@/$USER_NAME/g" /tmp/assistente/hubd.service > /etc/systemd/system/hubd.service
 systemctl daemon-reload

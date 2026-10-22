@@ -2892,7 +2892,7 @@ mod tests {
         assert_eq!(body["settings"]["docker"], false);
         assert_eq!(body["docker_from_project_file"], false);
 
-        let loose = r#"{"docker":true,"allow_hosts":["pypi.org"],"full_network":false,"allowed_commands":["./dev just check"]}"#;
+        let loose = r#"{"docker":true,"allow_hosts":["pypi.org"],"full_network":false,"allowed_commands":["./dev just check"],"preview_url":"http://10.77.0.10:5173"}"#;
         let (status, body) = call_method(app.clone(), "PUT", uri, Some(loose), None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let (_, body) = call_method(app.clone(), "GET", uri, None, None).await;
@@ -2901,10 +2901,16 @@ mod tests {
             body["settings"]["allowed_commands"],
             json!(["./dev just check"])
         );
+        // F12.1: a URL do preview (dev server) vai e volta.
+        assert_eq!(
+            body["settings"]["preview_url"],
+            json!("http://10.77.0.10:5173")
+        );
 
         let path = settings_path(&dir.join("home"));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("[pessoal.game]"), "{text}");
+        assert!(text.contains("preview_url"), "{text}");
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
@@ -2948,6 +2954,22 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        // F12.1: URL do preview só http/https e sem credenciais.
+        for url in [
+            "ftp://exemplo.test",
+            "http://usuario:senha@exemplo.test",
+            "10.77.0.10:5173",
+        ] {
+            let (status, body) = call_method(
+                app.clone(),
+                "PUT",
+                "/api/projects/pessoal/game/settings",
+                Some(&format!(r#"{{"preview_url":"{url}"}}"#)),
+                token,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{url}: {body}");
+        }
         assert!(!settings_path(&dir.join("home")).exists());
         std::fs::remove_dir_all(dir).unwrap();
     }

@@ -22,6 +22,10 @@ pub struct ProjectSettings {
     pub full_network: bool,
     /// Pedidos do agente (F9.5) que rodam sem perguntar: comparação exata.
     pub allowed_commands: Vec<String>,
+    /// Endereço do dev server do projeto (F12.1), visto do PC. `None` = sem preview.
+    /// Só `http`/`https` e sem credenciais (valida em [`validate_preview_url`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_url: Option<String>,
 }
 
 /// O arquivo inteiro: perfil → projeto → configurações.
@@ -108,8 +112,50 @@ impl ProjectSettings {
                 return Err(format!("comando com mais de {MAX_COMMAND_LEN} caracteres"));
             }
         }
+        if let Some(url) = &self.preview_url {
+            validate_preview_url(url)?;
+        }
         Ok(())
     }
+}
+
+/// Valida a URL do preview (F12.1): só `http`/`https`, com host e **sem credenciais**.
+///
+/// O app abre essa URL numa webview dentro da janela (F12.1) e o arquivo fica na VM,
+/// fora do repo: credencial na URL viraria segredo guardado no `projetos.toml`.
+/// O mesmo vale para a URL que o app valida antes de abrir a webview.
+pub fn validate_preview_url(url: &str) -> Result<(), String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("URL do preview vazia".into());
+    }
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(format!("URL do preview com caractere inválido: {trimmed}"));
+    }
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return Err(format!("URL do preview sem http:// ou https://: {trimmed}"));
+    };
+    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") {
+        return Err(format!("URL do preview só http ou https: {trimmed}"));
+    }
+    // A parte antes do caminho: "host", "host:porta" ou "[::1]:porta".
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return Err(format!("URL do preview sem host: {trimmed}"));
+    }
+    if authority.contains('@') {
+        return Err(format!(
+            "URL do preview com credenciais não é permitida: {trimmed}"
+        ));
+    }
+    let host = match authority.strip_prefix('[') {
+        Some(ipv6) => ipv6.split(']').next().unwrap_or(""),
+        None => authority.split(':').next().unwrap_or(""),
+    };
+    if host.is_empty() {
+        return Err(format!("URL do preview sem host: {trimmed}"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -124,6 +170,7 @@ mod tests {
             allow_hosts: vec!["pypi.org".into()],
             full_network: false,
             allowed_commands: vec!["./dev just check".into()],
+            preview_url: None,
         };
         file.set("pessoal", "Meu.App", loose.clone());
         file.set("trabalho", "erp", ProjectSettings::default());
@@ -173,5 +220,74 @@ mod tests {
         let home =
             std::env::temp_dir().join(format!("hub-core-sem-arquivo-{}", std::process::id()));
         assert_eq!(load_settings(&home), Ok(SettingsFile::default()));
+    }
+
+    #[test]
+    fn preview_url_only_accepts_http_without_credentials() {
+        for url in [
+            "http://10.77.0.10:5173",
+            "https://exemplo.test/app",
+            "http://localhost:3000/",
+            "http://[::1]:5173",
+        ] {
+            assert_eq!(validate_preview_url(url), Ok(()), "{url}");
+        }
+        for url in [
+            "",
+            "   ",
+            "10.77.0.10:5173",
+            "ftp://exemplo.test",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "http://",
+            "http://usuario:senha@exemplo.test",
+        ] {
+            assert!(validate_preview_url(url).is_err(), "{url} passou");
+        }
+    }
+
+    #[test]
+    fn preview_url_goes_through_the_settings_validation() {
+        let settings = ProjectSettings {
+            preview_url: Some("http://10.77.0.10:5173".into()),
+            ..Default::default()
+        };
+        assert_eq!(settings.validate(), Ok(()));
+        let ruim = ProjectSettings {
+            preview_url: Some("http://usuario:senha@exemplo.test".into()),
+            ..Default::default()
+        };
+        assert!(ruim.validate().is_err());
+    }
+
+    #[test]
+    fn round_trip_keeps_the_preview_url() {
+        let mut file = SettingsFile::default();
+        file.set(
+            "pessoal",
+            "game",
+            ProjectSettings {
+                preview_url: Some("http://10.77.0.10:5173".into()),
+                ..Default::default()
+            },
+        );
+        let text = file.to_toml();
+        assert!(text.contains("preview_url"), "{text}");
+        let back = SettingsFile::parse(&text).unwrap();
+        assert_eq!(
+            back.get("pessoal", "game").preview_url.as_deref(),
+            Some("http://10.77.0.10:5173")
+        );
+        // Sem preview, a chave nem aparece no arquivo.
+        let mut sem = SettingsFile::default();
+        sem.set(
+            "pessoal",
+            "game",
+            ProjectSettings {
+                docker: true,
+                ..Default::default()
+            },
+        );
+        assert!(!sem.to_toml().contains("preview_url"));
     }
 }

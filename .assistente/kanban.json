@@ -173,7 +173,7 @@
     }
   ],
   "orchestrator": {
-    "enabled": false,
+    "enabled": true,
     "max_workers": 4,
     "paused": {
       "reason": "\u001b[91m\u001b[1mError: \u001b[0mFree usage limit reached. Subscribe to OpenCode Go to keep going: https://opencode.ai/go",

@@ -42,6 +42,35 @@ describe("HubClient", () => {
     expect(fetchFn.mock.calls[2]?.[1]).toMatchObject({ method: "POST" });
   });
 
+  it("pedido do PC: o app pergunta o que foi aprovado e devolve o resultado (F9.10)", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (url) =>
+      String(url).includes("/result")
+        ? new Response(null, { status: 204 })
+        : new Response(JSON.stringify({ id: "p1", target: "host", state: "running" }), {
+            status: 200,
+          }),
+    );
+    const hub = new HubClient({ url: "http://vm:7878", token: null }, fetchFn);
+    const request = await hub.execRequest("a b");
+    expect(fetchFn.mock.calls[0]?.[0]).toBe("http://vm:7878/api/exec/a%20b");
+    expect(request.target).toBe("host");
+
+    const result = {
+      exit_code: 0,
+      stdout: "push ok\n",
+      stderr: "",
+      truncated: false,
+      timed_out: false,
+      duration_ms: 3,
+    };
+    await expect(hub.execResult("a b", result)).resolves.toBeUndefined();
+    expect(fetchFn.mock.calls[1]?.[0]).toBe("http://vm:7878/api/exec/a%20b/result");
+    expect(fetchFn.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify(result),
+    });
+  });
+
   it("configurações do projeto: GET e PUT no caminho escapado", async () => {
     const view = {
       settings: { docker: true, allow_hosts: [], full_network: false, allowed_commands: [] },

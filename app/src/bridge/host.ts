@@ -2,7 +2,7 @@
 // (pnpm dev sem Tauri) caem em valores neutros para a UI continuar navegável.
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import type { HubConnection, VmStatus } from "./types";
+import type { ExecResult, HubConnection, VmStatus } from "./types";
 
 const DEV_HUB_URL = "http://127.0.0.1:7878";
 
@@ -34,6 +34,13 @@ export function vmStop(): Promise<void> {
 export function openInCursor(path: string): Promise<void> {
   if (!isTauri()) return Promise.reject(new Error("só funciona no app desktop"));
   return invoke("open_in_cursor", { path });
+}
+
+/** Roda no PC o pedido `host` que o hubd guardou como aprovado (F9.10). O app desktop é o
+ * único que roda: no navegador (pnpm dev) não há como executar no host. */
+export function hostExec(id: string): Promise<ExecResult> {
+  if (!isTauri()) return Promise.reject(new Error("só funciona no app desktop"));
+  return invoke<ExecResult>("host_exec", { id });
 }
 
 /** Retângulo do âncora do painel em pixels lógicos (igual ao px do CSS). */

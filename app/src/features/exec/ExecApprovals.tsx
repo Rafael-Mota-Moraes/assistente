@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { ExecView } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { tabLabel } from "../sessions/SessionArea";
+import { approveOnHost } from "./hostExec";
 
 const EVERY_MS = 2000;
 
@@ -36,6 +37,9 @@ async function answer(request: ExecView, verb: "approve" | "always" | "deny") {
   if (!hub) return;
   try {
     if (verb === "deny") await hub.denyExec(request.id);
+    // Pedido para o PC (F9.10): o hubd não executa nada na VM; o app roda no host e
+    // devolve o resultado para o agente.
+    else if (request.target === "host") await approveOnHost(request, hub);
     else await hub.approveExec(request.id, verb === "always");
     useAppStore.setState({ execRequests: await hub.execRequests() });
   } catch (error) {
@@ -53,6 +57,8 @@ export function ExecApprovals() {
   const requests = useAppStore((s) => s.execRequests);
   const sessions = useAppStore((s) => s.sessions);
   const [showRecent, setShowRecent] = useState(false);
+  // Pedido em andamento (rodando no PC, F9.10): não aprova de novo.
+  const [busy, setBusy] = useState<string[]>([]);
 
   const pending = requests.filter((r) => r.state === "pending");
   const recent = requests.filter((r) => r.state !== "pending").slice(0, 8);
@@ -61,6 +67,14 @@ export function ExecApprovals() {
   const origin = (request: ExecView) => {
     const session = sessions.find((s) => s.id === request.session);
     return `${request.project} · ${session ? tabLabel(session) : request.session}`;
+  };
+
+  const respond = (request: ExecView, verb: "approve" | "always" | "deny") => {
+    if (busy.includes(request.id)) return;
+    setBusy((ids) => [...ids, request.id]);
+    answer(request, verb).finally(() => {
+      setBusy((ids) => ids.filter((id) => id !== request.id));
+    });
   };
 
   return (
@@ -83,39 +97,45 @@ export function ExecApprovals() {
             {request.command}
           </pre>
           <p className="truncate font-mono text-[11px] text-slate-500" title={request.cwd}>
-            em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min · na VM
+            em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min ·{" "}
+            {request.target === "host" ? "no PC" : "na VM"}
           </p>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => answer(request, "approve")}
-              className="flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-500"
+              disabled={busy.includes(request.id)}
+              onClick={() => respond(request, "approve")}
+              className="flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-50"
             >
               <Check className="size-3.5" /> Aprovar
             </button>
             <button
               type="button"
-              onClick={() => answer(request, "deny")}
-              className="flex items-center gap-1 rounded-lg border border-line bg-white/5 px-3 py-1 text-sm text-slate-200 hover:bg-white/10"
+              disabled={busy.includes(request.id)}
+              onClick={() => respond(request, "deny")}
+              className="flex items-center gap-1 rounded-lg border border-line bg-white/5 px-3 py-1 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-50"
             >
               <X className="size-3.5" /> Negar
             </button>
-            <button
-              type="button"
-              title={ALWAYS_WARNING}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Sempre permitir este comando em ${request.project}?\n\n${request.command}\n\n${ALWAYS_WARNING}`,
-                  )
-                ) {
-                  answer(request, "always");
-                }
-              }}
-              className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
-            >
-              Aprovar e sempre permitir neste projeto
-            </button>
+            {/* "Sempre permitir" é só da VM: pedido para o PC nunca roda sem clique (F9.9/F9.11). */}
+            {request.target === "vm" && (
+              <button
+                type="button"
+                title={ALWAYS_WARNING}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Sempre permitir este comando em ${request.project}?\n\n${request.command}\n\n${ALWAYS_WARNING}`,
+                    )
+                  ) {
+                    respond(request, "always");
+                  }
+                }}
+                className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
+              >
+                Aprovar e sempre permitir neste projeto
+              </button>
+            )}
           </div>
         </section>
       ))}
@@ -150,10 +170,12 @@ export function ExecApprovals() {
 }
 
 function Outcome({ request }: { request: ExecView }) {
-  const { state, result, auto_approved } = request;
+  const { state, result, auto_approved, target } = request;
   const [label, tone] =
     state === "running"
-      ? ["rodando", "text-sky-300"]
+      ? target === "host"
+        ? ["rodando no PC", "text-amber-300"]
+        : ["rodando", "text-sky-300"]
       : state === "denied"
         ? ["negado", "text-slate-400"]
         : state === "expired"

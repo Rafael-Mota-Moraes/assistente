@@ -124,6 +124,9 @@ export type ProjectSettings = {
 /** Pedido de um agente para rodar um comando fora do jail (F9.5). */
 export type ExecState = "pending" | "running" | "done" | "denied" | "expired" | "failed";
 
+/** Onde o comando de um pedido roda (F9.9): `vm` = fora do jail na VM; `host` = no PC. */
+export type ExecTarget = "vm" | "host";
+
 export type ExecResult = {
   exit_code: number | null;
   stdout: string;
@@ -132,6 +135,10 @@ export type ExecResult = {
   timed_out: boolean;
   duration_ms: number;
 };
+
+/** O que o app devolve ao hubd depois de rodar no PC (F9.10): o resultado ou o motivo da
+ * falha (o comando nem começou). */
+export type HostExecOutcome = ExecResult | { error: string };
 
 /** GET /api/exec: pendentes primeiro, depois os recentes (30 min). */
 export type ExecView = {
@@ -142,6 +149,8 @@ export type ExecView = {
   project: string;
   cwd: string;
   command: string;
+  /** `host` = pedido para o PC (F9.9): o hubd não executa, o app sim (F9.10). */
+  target: ExecTarget;
   timeout_secs: number;
   created_at: number;
   state: ExecState;

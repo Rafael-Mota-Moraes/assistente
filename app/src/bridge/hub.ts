@@ -6,6 +6,7 @@ import type {
   GitDiff,
   GitStatus,
   Health,
+  HostExecOutcome,
   HubConnection,
   KanbanBoard,
   KanbanCard,
@@ -244,6 +245,11 @@ export class HubClient {
     return this.get("/api/exec");
   }
 
+  /** Um pedido só (F9.10): o app confere com o hubd o que foi aprovado antes de rodar no PC. */
+  execRequest(id: string): Promise<ExecView> {
+    return this.get(`/api/exec/${encodeURIComponent(id)}`);
+  }
+
   /** Roda o pedido na VM; `always` grava o comando nos sempre permitidos do projeto. */
   async approveExec(id: string, always = false): Promise<void> {
     await this.request("POST", `/api/exec/${encodeURIComponent(id)}/approve`, { always });
@@ -251,6 +257,11 @@ export class HubClient {
 
   async denyExec(id: string): Promise<void> {
     await this.request("POST", `/api/exec/${encodeURIComponent(id)}/deny`);
+  }
+
+  /** Devolve ao hubd o que rodou no PC (F9.10): o agente recebe pelo long-poll. */
+  async execResult(id: string, outcome: HostExecOutcome): Promise<void> {
+    await this.request("POST", `/api/exec/${encodeURIComponent(id)}/result`, outcome);
   }
 
   /** Status do atualizador (F8.5/F8.6). */

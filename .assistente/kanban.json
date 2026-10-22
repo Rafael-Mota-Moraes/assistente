@@ -137,7 +137,8 @@
       "description": "O `remain-on-exit` da F14.3 vale para toda sessão do\n`Tmux::create`, não só para os agentes: o trabalhador (F11.6) que termina e a aba Terminal (F9.1)\ndepois do `exit` também ficam no tmux, mortos, até alguém encerrar. Com o orquestrador ligado\n(F11.11), cada tarefa concluída deixa uma aba morta. Ligar o `remain-on-exit` só no Claude e no\nOpenCode interativos; o trabalhador que termina bem fecha a própria sessão (o que falha fica, para\nver o erro); a aba Terminal fecha no `exit`. `SessionInfo` ganha `dead` (o `Listed` já sabe) para a\nUI marcar a aba morta sem abrir o terminal. Cada terminal aberto pergunta ao tmux a cada 500 ms se\no painel morreu (`terminal.rs`): ver se dá para usar o evento `pane-died` do tmux no lugar.\nPronto quando: o orquestrador com 2 tarefas concluídas não deixa sessão morta, e um Claude que sai\ncom erro continua mostrando a saída e o status. Como testar: rota com tmux real (trabalhador falso\nque sai 0 some; Claude que sai 127 fica) + `SessionArea.test.tsx`.\n\n## Depois\n\n- Notificação no celular (ntfy) quando o `dorme` termina ou escreve RELATORIO.md.\n- Acompanhar o modo dormir pelo celular (UI web servida pelo hubd através do Tailscale).\n- Mais agentes (codex, crush) — o `AgentKind` e o ai-jail já são genéricos.\n- Memória no notebook só como réplica de longa duração se o PC ficar meses off (fora do fluxo normal F5.4).\n- Duas VMs (pessoal/trabalho) se o trabalho exigir isolamento total.",
       "priority": "normal",
       "kind": "agente",
-      "column": "backlog",
+      "column": "fazendo",
+      "holder": "pessoal--assistente--opencode-1",
       "created_at": 1792678986
     }
   ],

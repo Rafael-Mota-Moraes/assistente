@@ -1,10 +1,14 @@
 // Comandos que só existem no app desktop (app/src-tauri/src/main.rs). No navegador
 // (pnpm dev sem Tauri) caem em valores neutros para a UI continuar navegável.
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import type { ExecResult, HubConnection, VmStatus } from "./types";
+import type { ExecResult, HubConnection, PickedElement, VmStatus } from "./types";
 
 const DEV_HUB_URL = "http://127.0.0.1:7878";
+
+/** Evento do modo apontar (F12.2): o Rust intercepta a navegação `assistente-pick:`. */
+export const PREVIEW_PICK_EVENT = "preview-pick";
 
 /** No app, o fetch passa pelo Rust (plugin http): o WebKit bloqueia http:// a partir de
  * tauri://localhost. Mudou o IP ou a porta da VM? Atualize capabilities/default.json. */
@@ -85,7 +89,7 @@ export function previewPanelVisible(visible: boolean): Promise<void> {
   return invoke("preview_panel_visible", { visible });
 }
 
-/** Liga/desliga o modo "apontar" na página do preview (F12.1; a seleção chega na F12.2). */
+/** Liga/desliga o modo "apontar" na página do preview (F12.1/F12.2). */
 export function previewPicker(enabled: boolean): Promise<void> {
   if (!isTauri()) return Promise.resolve();
   return invoke("preview_picker", { enabled });
@@ -104,4 +108,11 @@ export function openUrl(url: string): Promise<void> {
     return Promise.resolve();
   }
   return invoke("open_url", { url });
+}
+
+/** Assina o pick do modo apontar (F12.2). No navegador (pnpm dev) não acontece nada:
+ *  o pick vem da webview do preview, que só existe no app desktop. */
+export function listenPreviewPick(handler: (pick: PickedElement) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return Promise.resolve(() => {});
+  return listen<PickedElement>(PREVIEW_PICK_EVENT, (event) => handler(event.payload));
 }

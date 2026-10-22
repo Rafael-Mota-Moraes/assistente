@@ -1,6 +1,6 @@
 # 03 — Interface
 
-Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6, F12.1.
+Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6, F12.1, F12.2.
 
 ## Tecnologia
 
@@ -19,7 +19,7 @@ o que exige o host (`src/bridge/host.ts` ↔ `app/src-tauri/src/main.rs`):
 | `open_memory_panel` / `update_memory_panel_bounds` / `close_memory_panel` | painel da memória (F5.5): webview filha `memoria` com a web UI do ai-memory via `/memoria/entrar` do hubd, ancorada sobre a área de conteúdo principal (bounds em px de CSS vêm da UI; no Linux o wry (0.57) ignora os bounds do `add_child` — as duas webviews dividem a GtkBox da janela — então a webview principal mora num `GtkOverlay` com palco `GtkFixed` e a filha é ancorada por coordenadas de CSS via `with_webview`; fora do Linux o Rust converte px lógicos em **físicos**, pois o wry no X11 reescala lógicos pelo DPI da tela, tauri#15656); fora das capabilities, sem acesso aos comandos |
 | `open_preview_panel` / `update_preview_panel_bounds` / `close_preview_panel` | preview do projeto (F12.1): webview filha `preview` com a página do dev server (`preview_url` das configurações do projeto, F9.2), ancorada como o painel da memória; chamar `open_preview_panel` de novo recarrega a página |
 | `preview_panel_visible` | mostra/esconde a webview do preview: um modal do app (a engrenagem, F9.3) precisa ficar por cima dela, que é um widget nativo acima da UI |
-| `preview_picker` | liga/desliga o modo "apontar" na página do preview por `eval` (o gancho `window.__assistentePick`; a seleção chega na F12.2) |
+| `preview_picker` | liga/desliga o modo "apontar" na página do preview por `eval` (a API `window.__assistentePick.setEnabled` do `pick.js`, F12.2) |
 
 **Mixed content (validado em 2026-10-19):** no Linux a página do app vem de `tauri://localhost`,
 que o WebKit trata como origem segura, e `fetch` para `http://10.77.0.10` é bloqueado em
@@ -29,6 +29,45 @@ O WebSocket dos terminais (F2.3) vai ter o mesmo problema: usar `tauri-plugin-we
 
 Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o hub é
 `http://127.0.0.1:7878`, o que basta para desenvolver a UI.
+
+## Apontar (F12.2)
+
+O preview do projeto (F12.1) abre numa webview filha, fora das capabilities: a página
+apontada não alcança os comandos do app. O modo apontar é um script injetado nessa
+webview (`initialization_script`, fora do bundle do projeto, em
+`app/src-tauri/src/pick.js`):
+
+- botão flutuante **Apontar** (canto superior direito) liga o modo;
+- ligado, o elemento sob o mouse ganha contorno e o clique é tomado na **fase de
+  captura**: a página não recebe o clique, a ação do botão não dispara;
+- `Esc` cancela; um novo clique troca a seleção.
+
+O script entra em toda webview e se decide pelo rótulo (`__TAURI_INTERNALS__`): a
+janela principal (`main`) e o painel da memória (`memoria`) ficam de fora, e sem
+rótulo o botão não aparece (a dúvida vale mais que o botão sobrando).
+
+O pick (tag, id, classes, `role`/`aria`, texto curto, trecho de HTML, seletor CSS,
+caminho no DOM, retângulo, viewport/scroll e URL) sai da página por uma navegação
+`assistente-pick:<payload>`: sem IPC e sem CORS na página remota. O Rust intercepta a
+navegação (`on_navigation` do plugin `pick`, em `app/src-tauri/src/pick.rs`), descarta
+payload acima de 64 KiB, troca a URL do payload pela **URL real da webview** (a da
+página não é confiável), emite o evento para a janela principal e cancela a navegação.
+O esquema não precisa ser registrado no app: o WebKit entrega a navegação para a
+política e ela é cancelada antes de a página trocar.
+
+| Evento | Payload |
+|---|---|
+| `preview-pick` | `PickedElement` — o elemento apontado (espelha `app/src/bridge/types.ts`) |
+
+A UI abre a caixa de pedido (`features/pick/PickDialog.tsx`) com o elemento escolhido
+e o espaço para escrever o que deve mudar; o envio ao agente é a F12.4. A caixa é um
+modal: quando o preview do projeto (F12.1) existir, ela esconde o painel do preview
+(o `preview_panel_visible`), senão a webview do preview fica por cima da caixa.
+
+Para conferir na mão: sirva uma página de teste com um botão que muda de cor
+(`python3 -m http.server`), abra no preview do projeto (F12.1), ligue o **Apontar** e
+clique no botão: a cor não muda (o clique foi capturado) e a caixa de pedido abre com
+o botão escolhido.
 
 ## Layout
 

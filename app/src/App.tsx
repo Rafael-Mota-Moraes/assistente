@@ -2,6 +2,7 @@ import { AssistantButton } from "./features/assistente/AssistantPanel";
 import { ExecApprovals } from "./features/exec/ExecApprovals";
 import { MemoryButton } from "./features/memory/MemoryButton";
 import { MemoryPanel } from "./features/memory/MemoryPanel";
+import { PickDialog } from "./features/pick/PickDialog";
 import { ProfileSwitcher } from "./features/profiles/ProfileSwitcher";
 import { ProjectList } from "./features/projects/ProjectList";
 import { ProjectSettingsDialog } from "./features/projects/ProjectSettingsDialog";
@@ -48,6 +49,7 @@ export function App() {
       <GoodMorning />
       <ProjectSettingsDialog />
       <ExecApprovals />
+      <PickDialog />
     </div>
   );
 }

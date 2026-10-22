@@ -131,11 +131,6 @@ export function PreviewPanel() {
     previewPicker(novo).catch((error) =>
       useAppStore.setState({ toast: `não consegui apontar: ${mensagem(error)}` }),
     );
-    if (novo) {
-      useAppStore.setState({
-        toast: "Modo apontar ligado na página; a caixa de pedido chega na F12.2.",
-      });
-    }
   }
 
   function fechar() {

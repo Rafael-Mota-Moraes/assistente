@@ -259,3 +259,33 @@ export type GitStatus = { files: GitFileStatus[] };
 
 /** F10.1: diff de um arquivo (HEAD × árvore de trabalho). */
 export type GitDiff = { path: string; head: string | null; working: string | null };
+
+/** Elemento apontado na página do preview (F12.2). Espelha `app/src-tauri/src/pick.rs`. */
+export type PickedElement = {
+  /** Tag do elemento (`button`, `div`…). */
+  tag: string;
+  /** `id` do elemento, se tiver. */
+  id: string | null;
+  /** Classes do elemento. */
+  classes: string[];
+  /** `role` do elemento, se tiver. */
+  role: string | null;
+  /** Atributos `aria-*`, sem o prefixo (`label`, `describedby`…). */
+  aria: Record<string, string>;
+  /** Texto curto do elemento. */
+  text: string | null;
+  /** Trecho de HTML do elemento. */
+  html: string | null;
+  /** Seletor CSS estável. */
+  selector: string;
+  /** Caminho do elemento no DOM. */
+  dom_path: string;
+  /** Retângulo do elemento na viewport (px de CSS). */
+  rect: { x: number; y: number; width: number; height: number };
+  /** Tamanho da janela da página. */
+  viewport: { width: number; height: number };
+  /** Rolagem da página. */
+  scroll: { x: number; y: number };
+  /** URL real da webview (o Rust troca pela URL carregada; a do payload não vale). */
+  url: string;
+};

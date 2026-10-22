@@ -19,6 +19,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
+mod pick;
+
 fn home() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -475,15 +477,6 @@ const MEMORY_WEBVIEW: &str = "memoria";
 /// Rótulo da webview filha com o preview do projeto (F12.1).
 const PREVIEW_WEBVIEW: &str = "preview";
 
-/// Script injetado na webview do preview (F12.1): o gancho do modo "apontar".
-/// O script completo (botão flutuante, contorno e seleção) chega na F12.2; aqui o gancho
-/// só guarda o estado, para o comando ligar e desligar sem erro na página.
-const PREVIEW_PICK_HOOK: &str = r#"
-window.__assistentePick = window.__assistentePick || {
-  setEnabled: function (on) { window.__assistentePickEnabled = !!on; },
-};
-"#;
-
 /// Valida a URL da memória: só http/https e sem caracteres de controle.
 fn memory_url(url: &str) -> Result<tauri::Url, String> {
     let parsed: tauri::Url = url.parse().map_err(|e| format!("URL inválida: {e}"))?;
@@ -731,8 +724,9 @@ async fn open_preview_panel(
     let bounds = rect.bounds(scale);
     let webview = window
         .add_child(
-            tauri::webview::WebviewBuilder::new(PREVIEW_WEBVIEW, tauri::WebviewUrl::External(url))
-                .initialization_script(PREVIEW_PICK_HOOK),
+            // O script do modo apontar (`pick.js`) entra pelo plugin `pick` (F12.2), em toda
+            // webview; é ele que responde ao `preview_picker`.
+            tauri::webview::WebviewBuilder::new(PREVIEW_WEBVIEW, tauri::WebviewUrl::External(url)),
             bounds.position,
             bounds.size,
         )
@@ -768,7 +762,7 @@ async fn preview_panel_visible(app: tauri::AppHandle, visible: bool) -> Result<(
     }
 }
 
-/// Liga ou desliga o modo "apontar" na página do preview (F12.1; a seleção chega na F12.2).
+/// Liga ou desliga o modo "apontar" na página do preview (F12.1/F12.2, API do `pick.js`).
 /// O comando fala com a página por `eval`, sem IPC: a página remota não vira porta de entrada.
 #[tauri::command]
 async fn preview_picker(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
@@ -798,6 +792,9 @@ fn main() {
         .plugin(tauri_plugin_websocket::init())
         // Copiar/colar do terminal: o navigator.clipboard do WebKitGTK falha em silêncio.
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Modo apontar (F12.2): injeta o script do pick na webview e intercepta a
+        // navegação `assistente-pick:`, que traz o elemento escolhido na página.
+        .plugin(pick::plugin())
         .invoke_handler(tauri::generate_handler![
             hub_connection,
             vm_status,

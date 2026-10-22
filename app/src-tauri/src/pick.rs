@@ -26,8 +26,13 @@ const MAIN_WINDOW: &str = "main";
 pub const MAX_PAYLOAD: usize = 64 * 1024;
 
 /// Script injetado na webview do preview (fora do bundle do projeto).
-/// O codeContext.js vem antes do pick.js: o pick.js usa `window.__assistenteCodeContext.extract`.
-pub const SCRIPT: &str = include_str!("codeContext.js");
+/// O extrator do contexto de código (F12.3, o mesmo arquivo que a UI testa) vem antes do
+/// `pick.js`, que chama `window.__assistenteCodeContext.extract`.
+pub const SCRIPT: &str = concat!(
+    include_str!("../../src/features/pick/codeContext.js"),
+    "\n",
+    include_str!("pick.js")
+);
 
 /// Retângulo do elemento na viewport (px de CSS).
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -256,7 +261,7 @@ mod tests {
     }
 
     fn payload() -> String {
-        r##"{"tag":"button","id":"save","classes":["btn","primary"],"role":null,"aria":{"label":"Salvar"},"text":"Salvar","html":"<button id=\"save\">Salvar</button>","selector":"#save","dom_path":"body > main > button#save","rect":{"x":10,"y":20,"width":120,"height":32},"viewport":{"width":1280,"height":720},"scroll":{"x":0,"y":140},"url":"http://mentira.local/","code":null}"##
+        r##"{"tag":"button","id":"save","classes":["btn","primary"],"role":null,"aria":{"label":"Salvar"},"text":"Salvar","html":"<button id=\"save\">Salvar</button>","selector":"#save","dom_path":"body > main > button#save","rect":{"x":10,"y":20,"width":120,"height":32},"viewport":{"width":1280,"height":720},"scroll":{"x":0,"y":140},"url":"http://mentira.local/","code":{"react":true,"component":"Botao","stack":["Botao","App"],"source":{"file":"/src/features/x/Botao.tsx","line":42,"column":7}}}"##
             .to_owned()
     }
 
@@ -282,6 +287,22 @@ mod tests {
         assert_eq!(pick.scroll.y, 140.0);
         // A URL do payload não vale: a real da webview entra no lugar.
         assert_eq!(pick.url, "http://localhost:5173/");
+        // O contexto de código (F12.3) passa adiante como veio da página.
+        let code = pick.code.expect("contexto de código");
+        assert_eq!(code.component.as_deref(), Some("Botao"));
+        assert_eq!(code.stack, vec!["Botao", "App"]);
+        let source = code.source.expect("fonte");
+        assert_eq!(source.file, "/src/features/x/Botao.tsx");
+        assert_eq!(source.line, Some(42));
+    }
+
+    #[test]
+    fn o_script_injeta_o_extrator_antes_do_apontar() {
+        let extractor = SCRIPT
+            .find("__assistenteCodeContext =")
+            .expect("extrator no script");
+        let pick = SCRIPT.find("__assistentePick").expect("apontar no script");
+        assert!(extractor < pick, "o extrator tem que vir antes do pick.js");
     }
 
     #[test]

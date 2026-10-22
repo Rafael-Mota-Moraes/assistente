@@ -12,11 +12,6 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Onde o elemento apontado está: o `arquivo:linha` (F12.3), o componente ou o caminho no DOM. */
-function place(pick: PickDetail): string | null {
-  return pick.source ?? pick.component ?? pick.dom_path ?? null;
-}
-
 /** Uma linha que descreve o elemento: seletor e texto. */
 function describe(pick: PickDetail): string {
   const parts = [pick.selector, pick.text && `"${pick.text}"`].filter(Boolean);
@@ -33,8 +28,6 @@ export function PickDialog() {
   const hub = useAppStore((s) => s.hub);
   const sessions = useAppStore((s) => s.sessions);
   const activeSession = useAppStore((s) => s.activeSession);
-  const projects = useAppStore((s) => s.projects);
-  const activeProfile = useAppStore((s) => s.activeProfile);
 
   const [request, setRequest] = useState("");
   const [mode, setMode] = useState<PickTarget>("sessao");
@@ -48,7 +41,6 @@ export function PickDialog() {
 
   const profile = target?.profile ?? "";
   const project = target?.project ?? "";
-  const projectPath = projects.find((p) => p.name === project)?.path;
 
   /** As sessões de agente do projeto: a aba Terminal nunca recebe o pedido. */
   const agents = useMemo(
@@ -174,15 +166,10 @@ export function PickDialog() {
             <dt className="w-20 shrink-0 text-slate-500">Elemento</dt>
             <dd className="truncate font-mono">{describe(pick)}</dd>
           </div>
-          {place(pick) && (
-            <div className="flex gap-2">
-              <dt className="w-20 shrink-0 text-slate-500">Onde</dt>
-              <dd className="truncate font-mono">{place(pick)}</dd>
-            </div>
-          )}
         </dl>
 
-        <PickCodeContext pick={pick} projectRoot={projectPath} />
+        {/* Onde está: o `arquivo:linha` em dev, ou o aviso de procurar (F12.3). */}
+        <PickCodeContext pick={pick} />
 
         <label className="flex flex-col gap-1 text-sm text-slate-300">
           O que quer mudar

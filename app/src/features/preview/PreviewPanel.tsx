@@ -113,12 +113,14 @@ export function PreviewPanel() {
     if (!profile || !project) return;
     let stop: (() => void) | undefined;
     let gone = false;
-    void listenPreviewPick((picked) => openPick(profile, project, toPickDetail(picked))).then(
-      (unlisten) => {
-        if (gone) unlisten();
-        else stop = unlisten;
-      },
-    );
+    void listenPreviewPick((picked) => {
+      // A raiz do projeto deixa o `arquivo:linha` (F12.3) relativo ao projeto.
+      const root = useAppStore.getState().projects.find((p) => p.name === project)?.path;
+      openPick(profile, project, toPickDetail(picked, root));
+    }).then((unlisten) => {
+      if (gone) unlisten();
+      else stop = unlisten;
+    });
     return () => {
       gone = true;
       stop?.();

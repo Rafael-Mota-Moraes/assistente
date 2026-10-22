@@ -1476,6 +1476,13 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+        // E fica gravado na pasta do perfil, que é o que o diagnóstico lista (F14.1).
+        let arquivo = hub
+            .home
+            .join(".assistente/perfis/pessoal/explorar")
+            .join(format!("{}.md", info["id"].as_str().unwrap()));
+        let prompt = std::fs::read_to_string(&arquivo).unwrap();
+        assert!(prompt.contains("montar o quadro de tarefas"), "{prompt}");
     }
 
     #[tokio::test]

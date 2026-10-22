@@ -160,26 +160,31 @@ export function visibleProjectSessions(
   );
 }
 
-/** Indica se há alguma sobreposição aberta que precisa ficar por cima das webviews filhas
- * (preview F12.1, memória F5.5): elas são widgets nativos, por cima de toda a UI (F12.6).
- * Inclui: configurações do projeto, caixa de apontar, "Bom dia", painel do Assistente,
- * estado do ai-memory, avisos (toast) e pedidos de execução pendentes. */
-export function anyOverlayOpen(state: Pick<
-  State,
-  | "projectSettings"
-  | "pick"
-  | "morning"
-  | "assistantPanelOpen"
-  | "memoryStatusOpen"
-  | "toast"
-  | "execRequests"
->): boolean {
+/** Modais do app que ficariam embaixo das webviews filhas (preview F12.1, memória F5.5),
+ * que são widgets nativos por cima de toda a UI (F12.6): configurações do projeto, caixa do
+ * apontar, "Bom dia", painel do Assistente e estado do ai-memory. */
+export function anyModalOpen(
+  state: Pick<
+    State,
+    "projectSettings" | "pick" | "morning" | "assistantPanelOpen" | "memoryStatusOpen"
+  >,
+): boolean {
   return (
     state.projectSettings !== null ||
     state.pick !== null ||
     state.morning !== null ||
     state.assistantPanelOpen ||
-    state.memoryStatusOpen ||
+    state.memoryStatusOpen
+  );
+}
+
+/** Qualquer sobreposição que precisa ficar por cima da webview do preview (F12.6): os modais
+ * de `anyModalOpen`, o aviso (toast) e os pedidos de execução pendentes (F9.7/F9.10). */
+export function anyOverlayOpen(
+  state: Parameters<typeof anyModalOpen>[0] & Pick<State, "toast" | "execRequests">,
+): boolean {
+  return (
+    anyModalOpen(state) ||
     state.toast !== null ||
     state.execRequests.some((r) => r.state === "pending")
   );
@@ -187,10 +192,9 @@ export function anyOverlayOpen(state: Pick<
 
 /** A webview do preview (F12.1) só existe com a aba "Preview" do projeto em foco: o que está
  * embaixo dela some. Serve para o app não desenhar por baixo da webview (F12.6). */
-export function previewFocused(state: Pick<
-  State,
-  "activeView" | "activeProfile" | "activeProject"
->): boolean {
+export function previewFocused(
+  state: Pick<State, "activeView" | "activeProfile" | "activeProject">,
+): boolean {
   if (state.activeView?.kind !== "preview") return false;
   if (state.activeProfile === null || state.activeProject === null) return false;
   return state.activeView.key === viewKey(state.activeProfile, state.activeProject);

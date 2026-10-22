@@ -10,7 +10,7 @@ import {
   previewPicker,
   updatePreviewPanelBounds,
 } from "../../bridge/host";
-import { closeView, anyOverlayOpen, openPick, useAppStore, viewKey } from "../../store";
+import { anyOverlayOpen, closeView, openPick, useAppStore, viewKey } from "../../store";
 import { toPickDetail } from "../pick/detail";
 
 /** Retângulo do âncora em pixels lógicos (igual ao px do CSS). */

@@ -8,7 +8,7 @@ import {
   type PanelRect,
   updateMemoryPanelBounds,
 } from "../../bridge/host";
-import { anyOverlayOpen, useAppStore } from "../../store";
+import { anyModalOpen, useAppStore } from "../../store";
 
 /** Retângulo do âncora em pixels lógicos (igual ao px do CSS). */
 function rectOf(anchor: HTMLElement): PanelRect {
@@ -23,18 +23,37 @@ export function MemoryPanel() {
   const hub = useAppStore((s) => s.hub);
   const memory = useAppStore((s) => s.memory);
   const open = useAppStore((s) => s.memoryPanelOpen);
-  const overlayOpen = useAppStore(anyOverlayOpen);
+  const modalOpen = useAppStore(anyModalOpen);
+  const pending = useAppStore((s) =>
+    s.execRequests
+      .filter((r) => r.state === "pending")
+      .map((r) => r.id)
+      .join(","),
+  );
   const anchorRef = useRef<HTMLDivElement | null>(null);
+  /** Modais React (Bom dia, configurações, Assistente, estado do ai-memory, caixa do apontar)
+   * e cartões de aprovação ficariam ATRÁS da webview filha; então sobrepõem → fecha o painel
+   * (F12.6). Aqui o painel fecha (a webview é o painel inteiro); no preview (F12.1), que tem
+   * chrome em volta, a webview é que some e volta. `seen` guarda o que já estava pendente no
+   * instante da abertura: pendência nova sim fecha o painel. O aviso (toast) não fecha: some
+   * sozinho, e os erros do próprio painel viram aviso. */
+  const seen = useRef<string[] | null>(null);
 
-  /** Qualquer sobreposição aberta (Bom dia, configurações, Assistente, aviso, pedidos
-   * pendentes): fecha o painel da memória, pois a webview filha ficaria por cima (F12.6).
-   * Aqui o painel fecha (a webview é o painel inteiro); no preview (F12.1), que tem chrome
-   * em volta, a webview é que some e volta. */
   useEffect(() => {
-    if (open && overlayOpen) {
+    if (!open) {
+      seen.current = null;
+      return;
+    }
+    if (seen.current === null) seen.current = pending.split(",").filter(Boolean);
+    if (modalOpen) {
+      useAppStore.setState({ memoryPanelOpen: false });
+      return;
+    }
+    const known = seen.current;
+    if (pending.split(",").some((id) => id && !known.includes(id))) {
       useAppStore.setState({ memoryPanelOpen: false });
     }
-  }, [open, overlayOpen]);
+  }, [open, modalOpen, pending]);
 
   const url = hub ? hub.memoryLoginUrl() : "";
 

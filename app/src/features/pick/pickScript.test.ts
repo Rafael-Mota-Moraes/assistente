@@ -64,14 +64,27 @@ function install() {
   return { alvo, acoes };
 }
 
+/** O app injeta o `__TAURI_INTERNALS__` com o rótulo da webview. */
+function comRotulo(label: string | null) {
+  if (label === null) {
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    return;
+  }
+  (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+    metadata: { currentWebview: { label } },
+  };
+}
+
 describe("script do modo apontar", () => {
   beforeEach(() => {
     delete (window as unknown as { __assistentePick?: PickApi }).__assistentePick;
+    comRotulo("preview");
   });
 
   afterEach(() => {
     api()?.remove();
     delete (window as unknown as { __assistentePick?: PickApi }).__assistentePick;
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     document.body.innerHTML = "";
   });
 
@@ -160,5 +173,23 @@ describe("script do modo apontar", () => {
     expect(contorno.style.display).toBe("block");
     expect(contorno.style.left).toBe("5px");
     expect(contorno.style.width).toBe("70px");
+  });
+
+  it("a janela principal e o painel da memória não ganham o botão", () => {
+    for (const label of ["main", "memoria"]) {
+      comRotulo(label);
+      new Function(SCRIPT)();
+      expect(document.querySelector("[data-assistente-pick='button']")).toBeNull();
+      expect(
+        (window as unknown as { __assistentePick?: PickApi }).__assistentePick,
+      ).toBeUndefined();
+    }
+  });
+
+  it("sem o rótulo da webview o script não faz nada", () => {
+    comRotulo(null);
+    new Function(SCRIPT)();
+    expect(document.querySelector("[data-assistente-pick='button']")).toBeNull();
+    expect((window as unknown as { __assistentePick?: PickApi }).__assistentePick).toBeUndefined();
   });
 });

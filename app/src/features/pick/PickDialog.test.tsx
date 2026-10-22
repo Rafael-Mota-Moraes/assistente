@@ -1,8 +1,25 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import type { PickedElement } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { PickDialog } from "./PickDialog";
+
+// O Rust emite o evento `preview-pick`; a UI escuta pelo mesmo `listen` do Tauri.
+const { ouvintes } = vi.hoisted(() => ({
+  ouvintes: [] as ((event: { payload: PickedElement }) => void)[],
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => true,
+  invoke: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (_evento: string, handler: (event: { payload: PickedElement }) => void) => {
+    ouvintes.push(handler);
+    return () => {};
+  }),
+}));
 
 const pick: PickedElement = {
   tag: "button",
@@ -63,5 +80,18 @@ describe("PickDialog", () => {
   it("sem apontar não abre nada", () => {
     render(<PickDialog />);
     expect(screen.queryByRole("dialog", { name: "Apontar elemento" })).not.toBeInTheDocument();
+  });
+
+  it("o evento do Rust abre a caixa de pedido com o elemento", async () => {
+    render(<PickDialog />);
+    await waitFor(() => expect(ouvintes.length).toBeGreaterThan(0));
+
+    act(() => ouvintes[ouvintes.length - 1]({ payload: pick }));
+
+    expect(screen.getByRole("dialog", { name: "Apontar elemento" })).toBeInTheDocument();
+    // O id aparece na linha do elemento e no seletor: "#salvar" duas vezes.
+    expect(screen.getAllByText("#salvar")).toHaveLength(2);
+    expect(screen.getByText("body > main > button#salvar")).toBeInTheDocument();
+    expect(useAppStore.getState().pick).toEqual(pick);
   });
 });

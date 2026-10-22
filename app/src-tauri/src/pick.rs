@@ -83,6 +83,17 @@ pub struct PickedElement {
     pub url: String,
 }
 
+/// O que o Rust faz com uma navegação.
+#[derive(Debug, PartialEq)]
+pub enum Navigation {
+    /// Não é um pick: a navegação continua.
+    Other,
+    /// Pick válido: emitir para o app e cancelar a navegação.
+    Pick(Box<PickedElement>),
+    /// Pick quebrado (payload grande demais ou inválido): cancelar e avisar o motivo.
+    Broken(String),
+}
+
 /// Interpreta a URL de navegação. `Ok(None)` = não é um pick.
 ///
 /// O payload é o JSON do pick codificado com `encodeURIComponent` (o que o script
@@ -113,11 +124,6 @@ pub fn attach_real_url(mut pick: PickedElement, real_url: &str) -> PickedElement
     pick
 }
 
-/// Interpreta a navegação e junta o pick com a URL real da webview.
-pub fn pick_from_navigation(url: &str, real_url: &str) -> Result<Option<PickedElement>, String> {
-    Ok(parse_pick(url)?.map(|pick| attach_real_url(pick, real_url)))
-}
-
 /// Decodifica `%XX` (o que o `encodeURIComponent` do script produz).
 fn percent_decode(input: &str) -> Result<String, String> {
     let bytes = input.as_bytes();
@@ -138,6 +144,18 @@ fn percent_decode(input: &str) -> Result<String, String> {
         }
     }
     String::from_utf8(out).map_err(|_| "payload do pick não é UTF-8".to_owned())
+}
+
+/// Lê a navegação e diz o que fazer: o pick a emitir e se a navegação é cancelada.
+///
+/// A URL real da webview entra no lugar da URL do payload: a página remota não pode
+/// escolher a URL que o app mostra.
+pub fn intercept(url: &str, real_url: &str) -> Navigation {
+    match parse_pick(url) {
+        Ok(None) => Navigation::Other,
+        Ok(Some(pick)) => Navigation::Pick(Box::new(attach_real_url(pick, real_url))),
+        Err(e) => Navigation::Broken(e),
+    }
 }
 
 /// Plugin do modo apontar: injeta o script na webview e intercepta a navegação do pick.
@@ -166,15 +184,18 @@ pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
                 .ok()
                 .and_then(|cache| cache.get(webview.label()).cloned())
                 .unwrap_or_default();
-            match pick_from_navigation(url.as_str(), &real_url) {
-                Ok(Some(pick)) => {
-                    let _ = webview.app_handle().emit_to(MAIN_WINDOW, PICK_EVENT, pick);
+            match intercept(url.as_str(), &real_url) {
+                // O pick não vira uma página: a navegação é sempre cancelada.
+                Navigation::Other => true,
+                Navigation::Pick(pick) => {
+                    let _ = webview.app_handle().emit_to(MAIN_WINDOW, PICK_EVENT, *pick);
+                    false
                 }
-                Ok(None) => {}
-                Err(e) => eprintln!("apontar: {e}"),
+                Navigation::Broken(e) => {
+                    eprintln!("apontar: {e}");
+                    false
+                }
             }
-            // O pick não vira uma página: a navegação é sempre cancelada.
-            false
         })
         .build()
 }
@@ -216,9 +237,10 @@ mod tests {
 
     #[test]
     fn le_o_pick_e_troca_a_url_do_payload_pela_url_real() {
-        let pick = pick_from_navigation(&navigation(&payload()), "http://localhost:5173/")
-            .expect("pick válido")
-            .expect("é um pick");
+        let Navigation::Pick(pick) = intercept(&navigation(&payload()), "http://localhost:5173/")
+        else {
+            panic!("esperava um pick");
+        };
         assert_eq!(pick.tag, "button");
         assert_eq!(pick.id.as_deref(), Some("save"));
         assert_eq!(pick.classes, vec!["btn", "primary"]);
@@ -237,29 +259,46 @@ mod tests {
     fn uma_navegação_comum_não_e_pick() {
         assert_eq!(parse_pick("http://localhost:5173/").unwrap(), None);
         assert_eq!(parse_pick("assistente-pickoutro://x").unwrap(), None);
+        assert_eq!(
+            intercept("http://localhost:5173/", "http://localhost:5173/"),
+            Navigation::Other
+        );
     }
 
     #[test]
     fn payload_acima_do_limite_e_descartado() {
         let url = format!("{PICK_SCHEME}:{}", "a".repeat(MAX_PAYLOAD + 1));
-        let error = pick_from_navigation(&url, "http://localhost:5173/").unwrap_err();
+        let Navigation::Broken(error) = intercept(&url, "http://localhost:5173/") else {
+            panic!("esperava um pick quebrado");
+        };
         assert!(error.contains("grande demais"), "{error}");
     }
 
     #[test]
     fn payload_quebrado_e_erro() {
-        let error = pick_from_navigation(&navigation("{não é json"), "http://x/").unwrap_err();
+        let Navigation::Broken(error) = intercept(&navigation("{não é json"), "http://x/") else {
+            panic!("esperava um pick quebrado");
+        };
         assert!(error.contains("inválido"), "{error}");
     }
 
     #[test]
     fn a_decodificação_preserva_o_acento() {
-        let pick = pick_from_navigation(
+        let Navigation::Pick(pick) = intercept(
             &navigation(r#"{"tag":"button","text":"Salvar ação"}"#),
             "http://localhost:5173/",
-        )
-        .unwrap()
-        .unwrap();
+        ) else {
+            panic!("esperava um pick");
+        };
         assert_eq!(pick.text.as_deref(), Some("Salvar ação"));
+    }
+
+    #[test]
+    fn a_url_da_webview_vazia_nao_derruba_o_pick() {
+        // A webview ainda não carregou página: o pick vem sem URL, mas não quebra.
+        let Navigation::Pick(pick) = intercept(&navigation(&payload()), "") else {
+            panic!("esperava um pick");
+        };
+        assert_eq!(pick.url, "");
     }
 }

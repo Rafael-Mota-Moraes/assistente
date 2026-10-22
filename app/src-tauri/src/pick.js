@@ -16,11 +16,14 @@
   // Webviews que não são alvo de apontar: a UI do app e o painel da memória.
   const IGNORED_LABELS = ["main", "memoria"];
 
+  // O rótulo da webview vem do app (o Rust injeta o `__TAURI_INTERNALS__`).
+  // Sem rótulo não dá para saber se esta webview é alvo de apontar: o botão
+  // flutuante não aparece (a dúvida vale mais que o botão sobrando).
   const internals = window.__TAURI_INTERNALS__;
-  const label =
-    internals && internals.metadata && internals.metadata.currentWebview
-      ? internals.metadata.currentWebview.label
-      : "";
+  const metadata = internals ? internals.metadata : null;
+  const current = metadata ? metadata.currentWebview : null;
+  const label = current ? current.label : null;
+  if (!label) return;
   if (IGNORED_LABELS.indexOf(label) >= 0) return;
   if (window[API_KEY]) return;
 

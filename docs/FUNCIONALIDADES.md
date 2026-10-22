@@ -166,6 +166,11 @@ nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" 
   Pronto quando: aprovar um `git push` pedido com `--pc` empurra do PC e o agente recebe saída e código. Como testar: vitest com hub fake + teste de rota do resultado.
 - [ ] **F9.11 Cuidados do modo PC.** Card em vermelho com "vai rodar no seu PC", comando e pasta por inteiro; sem "aprovar e sempre permitir" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).
   Pronto quando: nenhum caminho aprova pedido `host` sem clique (fora da lista exata) e todo pedido executado fica no registro. Como testar: vitest do card e da lista; revisão da spec 05.
+  Revisão (2026-10-22): a T3 do quadro fechou sem código (o único commit era o merge da F9.9). Já
+  existe, da F9.9: nada de "sempre permitir" para `host`, na UI e no hubd (`approve` com `always`
+  responde 400). Falta o resto acima e mais: o hubd marca o pedido `host` como pego pelo app (estado
+  ou campo novo em `exec.rs`, devolvido só uma vez ao `host_exec`), para um segundo `host_exec` do
+  mesmo pedido aprovado não rodar o comando de novo (hoje só o `busy` do `ExecApprovals` segura).
 - [ ] **F9.12 Validação no PC real** *(humano)*. Do jail, `fora-do-jail --pc 'git push'` empurra com a chave do PC após aprovar; negar devolve 126; com o app fechado o pedido expira.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
 
@@ -296,16 +301,42 @@ comandos do app.
   Pronto quando: colar a URL do dev server na engrenagem e clicar em Visualizar abre o app dentro do Assistente, sem fechar a sessão.
   Como testar: `./dev just hubd` + `vite --host` de um projeto de teste e o painel no app.
   Feito: `preview_url` no `ProjectSettings` do hub-core (validado no `PUT`, sem credenciais) e no espelho da UI; aba "Preview" no projeto (botão "Visualizar" junto dos agentes, com a sessão viva); webview filha `preview` ancorada como a da memória, fora das capabilities; o modal da engrenagem esconde a webview. O modo apontar tem o comando e o gancho na página; a seleção é da F12.2.
-- [ ] **F12.2 Modo apontar.** Script injetado na webview do preview (`initialization_script`, fora do bundle do projeto): botão flutuante "Apontar", contorno no elemento sob o mouse, clique capturado na fase de captura (sem disparar o clique da página), Esc cancela e um novo clique troca a seleção. O pick leva tag, id, classes, `role`/`aria`, texto curto, trecho de HTML curto, seletor CSS estável, caminho no DOM, retângulo, viewport/scroll e URL; chega ao app por uma navegação `assistente-pick:` interceptada com `on_navigation` no Rust, que descarta payload acima do limite, anexa a URL real da webview (não confia na URL do payload), emite o evento e cancela a navegação — sem IPC e sem CORS na página remota. Testes: parser do pick e interceptação em Rust; `PickDialog.test.tsx` com pick fake; manual com app de teste.
+- [x] **F12.2 Modo apontar.** Script injetado na webview do preview (`initialization_script`, fora do bundle do projeto): botão flutuante "Apontar", contorno no elemento sob o mouse, clique capturado na fase de captura (sem disparar o clique da página), Esc cancela e um novo clique troca a seleção. O pick leva tag, id, classes, `role`/`aria`, texto curto, trecho de HTML curto, seletor CSS estável, caminho no DOM, retângulo, viewport/scroll e URL; chega ao app por uma navegação `assistente-pick:` interceptada com `on_navigation` no Rust, que descarta payload acima do limite, anexa a URL real da webview (não confia na URL do payload), emite o evento e cancela a navegação — sem IPC e sem CORS na página remota. Testes: parser do pick e interceptação em Rust; `PickDialog.test.tsx` com pick fake; manual com app de teste.
   Pronto quando: apontar um botão no app rodando abre a caixa de pedido com o elemento certo, e o botão da página não dispara a ação.
   Como testar: app de teste com um botão que muda de cor; apontar e conferir que nada mudou antes de enviar.
+  Feito: `app/src-tauri/src/pick.js` (injetado pelo plugin `pick` em toda webview; fica de fora a
+  `main` e a `memoria`) e `pick.rs` (parser, limite de 64 KiB, URL real, evento `preview-pick`). O
+  `PreviewPanel` escuta o evento e abre a caixa do F12.4 (`features/pick/detail.ts` converte o pick),
+  esconde a webview enquanto ela está aberta, e o botão de apontar da barra liga o script por
+  `setEnabled`. Testes: `pick::tests`, `pickScript.test.ts`, `detail.test.ts` e `PreviewPanel.test.tsx`.
 - [ ] **F12.3 Contexto de código.** No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.
   Pronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.
   Como testar: vitest com DOM fake + um build de produção.
-  Nota (F12.3): o payload do pick leva `code` (`{react, component, stack, source}`), montado pelo script da página (`app/src/features/pick/codeContext.js`, injetado na webview do preview junto com o script do modo apontar): `window.__assistenteCodeContext.extract(element)`. O app vira o `/src/…` em caminho do projeto e escreve o pedido em `app/src/features/pick/context.ts` e `prompt.ts`. No React 19 o `_debugSource` não existe mais: o arquivo:linha sai do `_debugStack` do fiber (a pilha do JSX, pulando o frame do próprio React).
+  Revisão (2026-10-22): o código existe e tem testes, mas não está ligado. `codeContext.js` (sobe
+  pelo fiber; `_debugSource` até o React 18, `_debugStack` no 19), `context.ts` (`toProjectPath`,
+  aviso de busca), `prompt.ts` e `PickCodeContext.tsx`, todos em `app/src/features/pick/`. Falta:
+  injetar `codeContext.js` antes do `pick.js` (no `SCRIPT` do `pick.rs`); o `pick.js` mandar
+  `code: window.__assistenteCodeContext.extract(element)`; `PickedElement` (TS e `pick.rs`) ganhar
+  `code`; o `toPickDetail` preencher `source` (`toProjectPath`, com a raiz do projeto),
+  `component` e `components`; a caixa do F12.4 mostrar o `PickCodeContext`. E arrumar o que sobrou
+  da T6: um tipo de pick só (hoje `PickedElement`, `PickElement` de `pick/types.ts` e `PickDetail`)
+  e um prompt só (o do hubd, `hub_core::pick`; `prompt.ts` sai, e o aviso de busca do hubd usa o
+  texto/classe/componente como o `searchInstruction`).
 - [x] **F12.4 Enviar ao agente.** `POST /api/projects/{perfil}/{projeto}/picks`: escreve `.assistente/picks/<data-hora>.md` com o detalhe do pick (fora do git via `.git/info/exclude`, como o `.ai-jail` da F0.5), monta o prompt curto (URL, onde, seletor, texto, pedido) e entrega no alvo escolhido no modal: **sessão** (só de agente, nunca a aba Terminal; confere que é do projeto e está viva, cola no prompt com `set-buffer` + `paste-buffer` **sem Enter** — Enter é seu, para não aprovar pergunta pendente nem executar texto no shell) ou **quadro** (card no backlog da F11.1, autossuficiente: o clone do notebook não tem o arquivo local). O modal mostra o prompt que será enviado, deixa editar o texto e escolher a sessão (padrão: a aba ativa do projeto); ao colar, a UI leva para a aba e avisa "confirme no terminal". Testes: rota com tmux real (colar e ler de volta, sem o pedido rodar sozinho), card fake, guards (texto vazio, sessão de outro projeto ou tipo shell, sessão/projeto inexistente), `PickDialog.test.tsx` (envio, erro, troca de alvo).
   Pronto quando: apontar um botão, escrever "deixa verde" e enviar faz o texto aparecer no prompt da sessão; depois do seu Enter, o agente edita o arquivo certo.
   Como testar: rota com tmux real + manual.
+  Feito: `crates/hubd/src/api/picks.rs` + `hub_core::pick` (prompt, card e arquivo) e a caixa em
+  `features/pick/PickDialog.tsx`, aberta pelo pick da F12.2 (ligada no merge da revisão de
+  2026-10-22: a T7 tinha a caixa, mas nada a abria). Sessão com painel morto (F14.3) responde 409.
+- [ ] **F12.6 O preview não cobre o app.** A webview do preview é um widget nativo por cima de toda a
+  UI: hoje ela só some com a engrenagem e com a caixa do apontar. Ficam por baixo dela o painel de
+  pedidos (`ExecApprovals`, no canto inferior direito, inclusive os pedidos para o PC da F9.10), o
+  `Toast`, o "Bom dia" (F6.6) e o painel do Assistente (F8). Esconder a webview enquanto qualquer
+  sobreposição estiver aberta (um seletor só no store, usado pelo `PreviewPanel`), ou reservar o
+  canto dos pedidos fora do retângulo dela. O painel da memória (F5.5) tem o mesmo padrão: conferir.
+  Pronto quando: com o preview aberto, um pedido novo do agente aparece e dá para aprovar sem fechar
+  o preview. Como testar: `PreviewPanel.test.tsx` (pedido pendente esconde a webview; sem pedido,
+  ela volta).
 - [ ] **F12.5 Validação na VM real** *(humano)*. Dev server na aba Terminal (F9.1), preview aberto e dois apontamentos (um botão e um texto); enviar para a sessão e conferir o hot reload depois do Enter; repetir com o agente ocupado e com a sessão fechada (erro claro + card no quadro); build de produção sem `_debugSource`; conferir que a página do preview não chama comando do app (nenhuma capability aponta para a origem dela).
   Pronto quando: o ciclo apontar → descrever → confirmar no terminal → ver a mudança leva menos de um minuto e a webview do preview continua sem comandos do app.
   Como testar: manual *(humano)*.
@@ -366,6 +397,17 @@ comandos do app.
   `exec_token_of_a_dead_session_is_refused`, `pane_state_knows_the_status_of_a_dead_pane`,
   `pane_state_tells_alive_from_dead`, `dead_session_shows_the_output_and_the_exit_status`,
   `session_that_dies_with_the_tab_open_sends_the_status` e `TerminalView.test.tsx`.
+- [ ] **F14.4 Sessão morta não fica para sempre.** O `remain-on-exit` da F14.3 vale para toda sessão do
+  `Tmux::create`, não só para os agentes: o trabalhador (F11.6) que termina e a aba Terminal (F9.1)
+  depois do `exit` também ficam no tmux, mortos, até alguém encerrar. Com o orquestrador ligado
+  (F11.11), cada tarefa concluída deixa uma aba morta. Ligar o `remain-on-exit` só no Claude e no
+  OpenCode interativos; o trabalhador que termina bem fecha a própria sessão (o que falha fica, para
+  ver o erro); a aba Terminal fecha no `exit`. `SessionInfo` ganha `dead` (o `Listed` já sabe) para a
+  UI marcar a aba morta sem abrir o terminal. Cada terminal aberto pergunta ao tmux a cada 500 ms se
+  o painel morreu (`terminal.rs`): ver se dá para usar o evento `pane-died` do tmux no lugar.
+  Pronto quando: o orquestrador com 2 tarefas concluídas não deixa sessão morta, e um Claude que sai
+  com erro continua mostrando a saída e o status. Como testar: rota com tmux real (trabalhador falso
+  que sai 0 some; Claude que sai 127 fica) + `SessionArea.test.tsx`.
 
 ## Depois
 

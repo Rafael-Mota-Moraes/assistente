@@ -103,7 +103,7 @@
     }
   ],
   "orchestrator": {
-    "enabled": false,
+    "enabled": true,
     "max_workers": 4
   }
 }

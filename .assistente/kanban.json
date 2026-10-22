@@ -122,7 +122,7 @@
       "title": "F12.6 O preview não cobre o app",
       "description": "A webview do preview é um widget nativo por cima de toda a\nUI: hoje ela só some com a engrenagem e com a caixa do apontar. Ficam por baixo dela o painel de\npedidos (`ExecApprovals`, no canto inferior direito, inclusive os pedidos para o PC da F9.10), o\n`Toast`, o \"Bom dia\" (F6.6) e o painel do Assistente (F8). Esconder a webview enquanto qualquer\nsobreposição estiver aberta (um seletor só no store, usado pelo `PreviewPanel`), ou reservar o\ncanto dos pedidos fora do retângulo dela. O painel da memória (F5.5) tem o mesmo padrão: conferir.\nPronto quando: com o preview aberto, um pedido novo do agente aparece e dá para aprovar sem fechar\no preview. Como testar: `PreviewPanel.test.tsx` (pedido pendente esconde a webview; sem pedido,\nela volta).",
       "priority": "normal",
-      "kind": "manual",
+      "kind": "agente",
       "column": "backlog",
       "created_at": 1792678986
     },

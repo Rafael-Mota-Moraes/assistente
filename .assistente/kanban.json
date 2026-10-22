@@ -159,8 +159,8 @@
       "description": "A webview do preview é um widget nativo por cima de toda a\nUI: hoje ela só some com a engrenagem e com a caixa do apontar. Ficam por baixo dela o painel de\npedidos (`ExecApprovals`, no canto inferior direito, inclusive os pedidos para o PC da F9.10), o\n`Toast`, o \"Bom dia\" (F6.6) e o painel do Assistente (F8). Esconder a webview enquanto qualquer\nsobreposição estiver aberta (um seletor só no store, usado pelo `PreviewPanel`), ou reservar o\ncanto dos pedidos fora do retângulo dela. O painel da memória (F5.5) tem o mesmo padrão: conferir.\nPronto quando: com o preview aberto, um pedido novo do agente aparece e dá para aprovar sem fechar\no preview. Como testar: `PreviewPanel.test.tsx` (pedido pendente esconde a webview; sem pedido,\nela volta).\n\nRevisão (2026-10-22): Revisão QA (2026-10-22): a branch agente/T13 tem o seletor anyOverlayOpen no store (engrenagem, apontar, Bom dia, painel do Assistente e estado do ai-memory movidos para o store, toast, pedidos pendentes), usado pelo PreviewPanel (esconde e mostra a webview) e pelo MemoryPanel. Não passa: (1) ./dev just check vermelho no biome (formatação de anyOverlayOpen/previewFocused em store.ts e ordem do import em PreviewPanel.tsx); (2) falta o teste pedido em PreviewPanel.test.tsx (pedido pendente esconde a webview; sem pedido, ela volta) — o arquivo não foi mexido; (3) regressão no MemoryPanel: antes, pedido que já estava pendente quando o painel abriu não o fechava (ref seen); agora qualquer pendente fecha na hora, então o painel da memória não abre enquanto houver pedido pendente; (4) docs/FUNCIONALIDADES.md (F12.6) não foi marcado.",
       "priority": "normal",
       "kind": "agente",
-      "column": "backlog",
-      "blocked": "\u001b[91m\u001b[1mError: \u001b[0mFree usage limit reached. Subscribe to OpenCode Go to keep going: https://opencode.ai/go",
+      "column": "fazendo",
+      "holder": "pessoal--assistente--claude-5",
       "created_at": 1792678986
     },
     {

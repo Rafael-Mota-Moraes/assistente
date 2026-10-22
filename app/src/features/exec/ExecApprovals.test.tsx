@@ -15,6 +15,7 @@ const request = (id: string, extra: Partial<ExecView> = {}): ExecView => ({
   timeout_secs: 600,
   created_at: 0,
   state: "pending",
+  target: "vm",
   auto_approved: false,
   result: null,
   ...extra,
@@ -76,6 +77,15 @@ describe("ExecApprovals", () => {
     expect(hub.approveExec).not.toHaveBeenCalled();
     fireEvent.click(always);
     await vi.waitFor(() => expect(hub.approveExec).toHaveBeenCalledWith("p1", true));
+  });
+
+  it("pedido para o PC (F9.9) mostra 'no PC' e não oferece 'sempre permitir'", async () => {
+    const hub = connect([request("h1", { target: "host", command: "git push" })]);
+    const card = await screen.findByRole("region", { name: /Pedido de game · Claude 1/ });
+    expect(within(card).getByText(/no PC/)).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /sempre permitir/ })).not.toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button", { name: "Aprovar" }));
+    await vi.waitFor(() => expect(hub.approveExec).toHaveBeenCalledWith("h1", false));
   });
 
   it("recentes ficam recolhidos e mostram o resultado", async () => {

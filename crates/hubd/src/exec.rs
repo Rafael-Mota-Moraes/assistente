@@ -4,7 +4,7 @@
 //! pedidos, e o cliente `fora-do-jail` avisa para pedir de novo.
 //! Spec: docs/specs/05-sandbox.md ("Fora do jail")
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -30,6 +30,16 @@ impl ExecState {
     }
 }
 
+/// Onde o comando roda. `Host` (F9.9, pedido com `--pc`): o hubd nunca executa na VM; o app
+/// roda no PC depois da aprovação, no mesmo caminho da pasta do projeto (virtiofs).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecTarget {
+    #[default]
+    Vm,
+    Host,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ExecResult {
     /// `None` quando o processo morreu por sinal (timeout) ou nem começou.
@@ -51,6 +61,8 @@ pub struct ExecView {
     pub project: String,
     pub cwd: PathBuf,
     pub command: String,
+    /// `host` = pedido para o PC (F9.9): o hubd não executa, o app sim (F9.10).
+    pub target: ExecTarget,
     pub timeout_secs: u64,
     pub created_at: u64,
     pub state: ExecState,
@@ -101,6 +113,7 @@ pub struct NewRequest {
     pub project: String,
     pub cwd: PathBuf,
     pub command: String,
+    pub target: ExecTarget,
     pub env: Vec<(String, String)>,
     pub timeout_secs: Option<u64>,
     pub auto_approved: bool,
@@ -191,7 +204,9 @@ impl ExecStore {
             .unwrap_or(self.limits.default_timeout)
             .clamp(Duration::from_secs(1), self.limits.max_timeout);
         let id = new_id();
-        let state = if request.auto_approved {
+        // Pedido para o PC (F9.9) nunca roda sozinho: sem "sempre permitir", sem job na VM.
+        let auto_approved = request.auto_approved && request.target == ExecTarget::Vm;
+        let state = if auto_approved {
             ExecState::Running
         } else {
             ExecState::Pending
@@ -203,13 +218,14 @@ impl ExecStore {
             project: request.project,
             cwd: request.cwd,
             command: request.command,
+            target: request.target,
             timeout_secs: timeout.as_secs(),
             created_at: unix_now(),
             state,
-            auto_approved: request.auto_approved,
+            auto_approved,
             result: None,
         };
-        let job = request.auto_approved.then(|| job_of(&view, &request.env));
+        let job = auto_approved.then(|| job_of(&view, &request.env));
         let (state_tx, _) = watch::channel(state);
         entries.insert(
             id,
@@ -244,8 +260,9 @@ impl ExecStore {
         entries.get(id).map(|e| e.view.clone())
     }
 
-    /// Pendente → rodando; devolve o job para quem aprovou disparar.
-    pub fn approve(&self, id: &str) -> Result<ExecJob, ExecError> {
+    /// Pendente → rodando; devolve o job para quem aprovou disparar. Pedido para o PC (F9.9)
+    /// devolve `None`: o hubd não roda nada na VM, o app executa no host (F9.10).
+    pub fn approve(&self, id: &str) -> Result<Option<ExecJob>, ExecError> {
         let mut entries = self.lock();
         Self::gc(&mut entries, &self.limits);
         let entry = entries.get_mut(id).ok_or(ExecError::NotFound)?;
@@ -254,7 +271,7 @@ impl ExecStore {
         }
         entry.view.state = ExecState::Running;
         entry.state_tx.send_replace(ExecState::Running);
-        Ok(job_of(&entry.view, &entry.env))
+        Ok((entry.view.target == ExecTarget::Vm).then(|| job_of(&entry.view, &entry.env)))
     }
 
     pub fn deny(&self, id: &str) -> Result<ExecView, ExecError> {
@@ -470,6 +487,7 @@ mod tests {
             project: "x".into(),
             cwd: std::env::temp_dir(),
             command: command.into(),
+            target: ExecTarget::Vm,
             env: vec![("ASSISTENTE_TESTE".into(), "sim".into())],
             timeout_secs: None,
             auto_approved: false,
@@ -551,7 +569,7 @@ mod tests {
             .unwrap();
         assert_eq!(waited.state, ExecState::Pending);
 
-        let job = store.approve(&view.id).unwrap();
+        let job = store.approve(&view.id).unwrap().unwrap();
         assert_eq!(job.env, [("ASSISTENTE_TESTE".into(), "sim".into())]);
         assert_eq!(
             store.approve(&view.id).unwrap_err(),
@@ -642,5 +660,42 @@ mod tests {
         assert!(resolve_cwd(&project, Some(&escape)).is_err());
         assert!(resolve_cwd(&project, Some("/etc")).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Pedido com `--pc` (F9.9): aparece com o alvo, nunca é auto-aprovado e o hubd não gera
+    /// job para a VM — quem executa é o app no PC (F9.10). Sem resposta, expira como os outros.
+    #[tokio::test]
+    async fn host_requests_wait_for_the_app_and_never_run_on_the_vm() {
+        let store = ExecStore::new(ExecLimits {
+            pending_ttl: Duration::from_millis(100),
+            ..ExecLimits::default()
+        });
+        let (view, job) = store
+            .submit(NewRequest {
+                target: ExecTarget::Host,
+                auto_approved: true,
+                ..request("s1", "git push")
+            })
+            .unwrap();
+        assert_eq!(view.target, ExecTarget::Host);
+        assert_eq!(view.state, ExecState::Pending);
+        assert!(!view.auto_approved, "pedido para o PC nunca roda sozinho");
+        assert!(job.is_none(), "o hubd não gera job de VM para o PC");
+        // Aprovar só marca como rodando: o app executa no PC e devolve o resultado (F9.10).
+        assert!(store.approve(&view.id).unwrap().is_none());
+        assert_eq!(store.get(&view.id).unwrap().state, ExecState::Running);
+
+        // Um pendente sem resposta expira como qualquer outro.
+        let (waiting, _) = store
+            .submit(NewRequest {
+                target: ExecTarget::Host,
+                ..request("s1", "ls")
+            })
+            .unwrap();
+        let waited = store
+            .wait(&waiting.id, Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(waited.state, ExecState::Expired);
     }
 }

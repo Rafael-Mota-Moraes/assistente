@@ -75,8 +75,9 @@ do projeto não é confiável e só pode restringir o sandbox, nunca afrouxar.
 
 ## Fora do jail (F9)
 
-O que o jail bloqueia (Docker, hosts fora da lista, `git push` por ssh, `sudo`) tem três saídas,
-nenhuma no PC: a VM continua sendo a fronteira.
+O que o jail bloqueia (Docker, hosts fora da lista, `git push` por ssh, `sudo`) tem três
+saídas na VM (a VM continua sendo a fronteira) e uma no PC, a mais restrita de todas
+(F9.9–F9.12).
 
 - **Aba Terminal (F9.1).** `bash -l` no tmux, sem ai-jail, na pasta do projeto e com o env do
   perfil (identidade git, `GIT_SSH_COMMAND`). Equivale a você digitando na VM.
@@ -91,6 +92,28 @@ nenhuma no PC: a VM continua sendo a fronteira.
   `instructions` do opencode, gravadas pelo `configurar-agentes.sh`). O pedido aparece no app,
   você aprova e o hubd roda o comando na VM, fora do jail, na pasta atual do agente e com o env
   do perfil. A saída e o código voltam ao agente (126 = negado). API e limites: spec 02.
+- **Pedido no PC (F9.9–F9.12).** `"$ASSISTENTE_FORA_DO_JAIL" --pc '<comando>'` manda
+  `target: "host"` na API dos agentes: o hubd guarda o alvo, mostra o card em `/api/exec` e
+  **nunca executa** o pedido na VM. Ele fica pendente (e expira em 10 min, como os outros)
+  até você aprovar no app; aí o **app no PC** roda o comando (`bash -lc`, timeout, saída
+  truncada — F9.10) e a saída e o código voltam ao agente pelo hubd
+  (`POST /api/exec/{id}/result`). Caminho de trabalho = pasta do projeto: a VM o monta por
+  virtiofs no mesmo caminho do PC, então o `cwd` pedido pelo agente vale dos dois lados.
+  É a fronteira mais forte do sistema (R3): nada roda no PC sem clique, não existe
+  "sempre permitir" para `host` e tudo que rodou fica no registro do host (F9.11).
+
+### No PC (F9.9)
+
+Para o que só funciona no PC (a chave SSH do GitHub, os logins), o pedido sai da VM mas a
+decisão é do app:
+
+- **O hubd não executa pedidos `host`.** `submit` nunca os auto-aprova (mesmo que o comando
+  case com `allowed_commands`), `approve` só muda o estado para `running` e não gera job, e
+  `always` responde 400. Quem executa é o app, via comando de host (F9.10), que devolve o
+  resultado ao hubd; sem app (ou sem aprovação), o pedido expira como qualquer pendente.
+- **O card no app** mostra `target` (`ExecView`), o comando e a pasta por inteiro; a UI
+  distingue "no PC" de "na VM" e esconde "sempre permitir" (o card em vermelho e o registro
+  local são a F9.11).
 
 ### Segurança do "fora do jail"
 
@@ -102,9 +125,10 @@ nenhuma no PC: a VM continua sendo a fronteira.
   e expiração evitam enxurrada.
 - **"Sempre permitir" é casamento exato**, e é uma fuga quando o comando roda arquivos do
   projeto (`./dev`, `make`, `npm run`, scripts): o agente edita o arquivo e roda o que quiser.
-  A UI avisa antes de gravar.
+  A UI avisa antes de gravar. Não existe para pedidos `host`: o PC não tem "sempre" (F9.11).
 - **O comando aprovado roda como o seu usuário na VM:** enxerga os dados de todos os perfis
-  (como a aba Terminal). Nunca roda no PC.
+  (como a aba Terminal). Pedidos `host` não rodam na VM de forma alguma: o hubd só os
+  encaminha ao app, que decide no PC (F9.9–F9.10).
 - **Rede completa** tira os `--forward-port`; se o `--network` compartilhar a rede da VM, o
   agente alcança a 7878 (exige token), a 7879 e a LAN. A validar (F9.8).
 

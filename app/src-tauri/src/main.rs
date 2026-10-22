@@ -330,9 +330,17 @@ async fn hub_get(url: &str, token: &str, path: &str) -> Result<serde_json::Value
     serde_json::from_slice(&body).map_err(|e| format!("resposta do hubd ilegível: {e}"))
 }
 
+/// O id do pedido vem da UI: só o id do hubd (hex) vale, para não virar outra rota.
+fn valid_request_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 /// Comando do app: roda no PC o pedido `host` que você aprovou (F9.10).
 #[tauri::command]
 async fn host_exec(id: String) -> Result<HostExecResult, String> {
+    if !valid_request_id(&id) {
+        return Err("id de pedido inválido".into());
+    }
     let config = load_config()?;
     let (url, token) = hub_url_and_token(&config)?;
     // Nada roda sem aprovação: o hubd diz o que foi aprovado (alvo, estado, comando e pasta).
@@ -706,3 +714,4 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Assistente");
 }
+

@@ -80,6 +80,9 @@ pub struct ExecLimits {
     pub max_output: usize,
     pub default_timeout: Duration,
     pub max_timeout: Duration,
+    /// Folga depois do timeout do pedido para o PC: o app tinha esse tempo para rodar
+    /// e devolver o resultado (F9.10). Passou disso, o pedido expira.
+    pub host_grace: Duration,
 }
 
 impl Default for ExecLimits {
@@ -92,6 +95,7 @@ impl Default for ExecLimits {
             max_output: 64 * 1024,
             default_timeout: Duration::from_secs(10 * 60),
             max_timeout: Duration::from_secs(60 * 60),
+            host_grace: Duration::from_secs(60),
         }
     }
 }
@@ -124,6 +128,8 @@ pub enum ExecError {
     NotFound,
     /// O pedido não está mais pendente (já aprovado, negado ou expirado).
     NotPending(ExecState),
+    /// O pedido não é para o PC: só o app devolve resultado de pedido `host` (F9.10).
+    NotHost,
     TooMany,
 }
 
@@ -131,6 +137,8 @@ struct Entry {
     view: ExecView,
     env: Vec<(String, String)>,
     created: Instant,
+    /// Quando o pedido foi aprovado (o app no PC começa a rodar aqui, F9.10).
+    approved: Option<Instant>,
     finished: Option<Instant>,
     state_tx: watch::Sender<ExecState>,
 }
@@ -167,9 +175,22 @@ impl ExecStore {
     fn gc(entries: &mut HashMap<String, Entry>, limits: &ExecLimits) {
         let now = Instant::now();
         for entry in entries.values_mut() {
+            let mut expire = false;
             if entry.view.state == ExecState::Pending
                 && now.duration_since(entry.created) > limits.pending_ttl
             {
+                expire = true;
+            }
+            // Pedido para o PC aprovado e sem resultado: o app pode ter morrido com o
+            // pedido rodando (F9.10). Passou do timeout (mais a folga), expira.
+            if entry.view.state == ExecState::Running && entry.view.target == ExecTarget::Host {
+                let approved = entry.approved.unwrap_or(entry.created);
+                let deadline = Duration::from_secs(entry.view.timeout_secs) + limits.host_grace;
+                if now.duration_since(approved) > deadline {
+                    expire = true;
+                }
+            }
+            if expire {
                 entry.view.state = ExecState::Expired;
                 entry.finished = Some(now);
                 entry.state_tx.send_replace(ExecState::Expired);
@@ -233,6 +254,7 @@ impl ExecStore {
                 view: view.clone(),
                 env: request.env,
                 created: Instant::now(),
+                approved: None,
                 finished: None,
                 state_tx,
             },
@@ -270,6 +292,7 @@ impl ExecStore {
             return Err(ExecError::NotPending(entry.view.state));
         }
         entry.view.state = ExecState::Running;
+        entry.approved = Some(Instant::now());
         entry.state_tx.send_replace(ExecState::Running);
         Ok((entry.view.target == ExecTarget::Vm).then(|| job_of(&entry.view, &entry.env)))
     }
@@ -294,6 +317,32 @@ impl ExecStore {
         let Some(entry) = entries.get_mut(id) else {
             return;
         };
+        Self::finish_entry(entry, result);
+    }
+
+    /// Resultado que o app no PC devolve (F9.10). Só vale para pedido `host` já aprovado
+    /// (rodando): pedido da VM tem o resultado do hubd, e pendente ainda não foi aprovado.
+    pub fn finish_host(
+        &self,
+        id: &str,
+        result: Result<ExecResult, String>,
+    ) -> Result<(), ExecError> {
+        let mut entries = self.lock();
+        Self::gc(&mut entries, &self.limits);
+        let entry = entries.get_mut(id).ok_or(ExecError::NotFound)?;
+        if entry.view.target != ExecTarget::Host {
+            return Err(ExecError::NotHost);
+        }
+        if entry.view.state != ExecState::Running {
+            return Err(ExecError::NotPending(entry.view.state));
+        }
+        Self::finish_entry(entry, result);
+        Ok(())
+    }
+
+    /// Grava o resultado e fecha o pedido: `Done` (com o resultado) ou `Failed` (nem
+    /// conseguiu rodar).
+    fn finish_entry(entry: &mut Entry, result: Result<ExecResult, String>) {
         let state = match result {
             Ok(result) => {
                 entry.view.result = Some(result);
@@ -319,13 +368,22 @@ impl ExecStore {
             Self::gc(&mut entries, &self.limits);
             let entry = entries.get(id)?;
             // Pendente que expira no meio da espera: o gc só roda em chamadas, então acorda a
-            // tempo de expirar.
-            let expires_in = (entry.view.state == ExecState::Pending).then(|| {
-                self.limits
-                    .pending_ttl
-                    .saturating_sub(entry.created.elapsed())
-                    + Duration::from_millis(50)
-            });
+            // tempo de expirar. Pedido do PC aprovado sem resultado também tem prazo (F9.10).
+            let expires_in = match entry.view.state {
+                ExecState::Pending => Some(
+                    self.limits
+                        .pending_ttl
+                        .saturating_sub(entry.created.elapsed())
+                        + Duration::from_millis(50),
+                ),
+                ExecState::Running if entry.view.target == ExecTarget::Host => {
+                    let approved = entry.approved.unwrap_or(entry.created);
+                    let deadline =
+                        Duration::from_secs(entry.view.timeout_secs) + self.limits.host_grace;
+                    Some(deadline.saturating_sub(approved.elapsed()) + Duration::from_millis(50))
+                }
+                _ => None,
+            };
             (entry.state_tx.subscribe(), expires_in)
         };
         let wait = expires_in.map_or(wait, |left| wait.min(left));
@@ -697,5 +755,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(waited.state, ExecState::Expired);
+    }
+
+    /// F9.10: o resultado do app só entra em pedido `host` já aprovado. Pedido da VM é
+    /// recusado, pendente também, e o aprovado sem resultado (app morreu) expira.
+    #[tokio::test]
+    async fn host_result_is_only_accepted_for_an_approved_host_request() {
+        let store = ExecStore::new(ExecLimits {
+            host_grace: Duration::from_millis(50),
+            ..ExecLimits::default()
+        });
+        let (host, _) = store
+            .submit(NewRequest {
+                target: ExecTarget::Host,
+                ..request("s1", "git push")
+            })
+            .unwrap();
+        // Ainda pendente: ninguém aprovou no app.
+        assert_eq!(
+            store
+                .finish_host(&host.id, Ok(ExecResult::default()))
+                .unwrap_err(),
+            ExecError::NotPending(ExecState::Pending)
+        );
+        store.approve(&host.id).unwrap();
+        // Pedido da VM: o resultado vem do hubd, não do app.
+        let (vm, _) = store.submit(request("s1", "ls")).unwrap();
+        assert_eq!(
+            store
+                .finish_host(&vm.id, Ok(ExecResult::default()))
+                .unwrap_err(),
+            ExecError::NotHost
+        );
+        // Aprovado: o resultado do app entra.
+        let result = ExecResult {
+            exit_code: Some(0),
+            stdout: "ok\n".into(),
+            ..ExecResult::default()
+        };
+        store.finish_host(&host.id, Ok(result)).unwrap();
+        let done = store.get(&host.id).unwrap();
+        assert_eq!(done.state, ExecState::Done);
+        assert_eq!(done.result.unwrap().stdout, "ok\n");
+
+        // O app não conseguiu rodar: o agente recebe o erro.
+        let (broken, _) = store
+            .submit(NewRequest {
+                target: ExecTarget::Host,
+                ..request("s1", "git push")
+            })
+            .unwrap();
+        store.approve(&broken.id).unwrap();
+        store
+            .finish_host(&broken.id, Err("não consegui iniciar o bash".into()))
+            .unwrap();
+        let failed = store.get(&broken.id).unwrap();
+        assert_eq!(failed.state, ExecState::Failed);
+        assert_eq!(failed.result.unwrap().stderr, "não consegui iniciar o bash");
+
+        // Aprovado e sem resultado (o app morreu): expira, o agente não espera para sempre.
+        let (lost, _) = store
+            .submit(NewRequest {
+                target: ExecTarget::Host,
+                timeout_secs: Some(1),
+                ..request("s1", "git push")
+            })
+            .unwrap();
+        store.approve(&lost.id).unwrap();
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        let expired = store.wait(&lost.id, Duration::from_secs(5)).await.unwrap();
+        assert_eq!(expired.state, ExecState::Expired);
     }
 }

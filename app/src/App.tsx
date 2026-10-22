@@ -48,8 +48,8 @@ export function App() {
       <Toast />
       <GoodMorning />
       <ProjectSettingsDialog />
-      <ExecApprovals />
       <PickDialog />
+      <ExecApprovals />
     </div>
   );
 }

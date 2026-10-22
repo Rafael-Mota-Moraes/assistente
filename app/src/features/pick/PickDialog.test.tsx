@@ -1,97 +1,163 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { PickedElement } from "../../bridge/types";
+import type { HubClient } from "../../bridge/hub";
+import type { PickDetail } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { PickDialog } from "./PickDialog";
 
-// O Rust emite o evento `preview-pick`; a UI escuta pelo mesmo `listen` do Tauri.
-const { ouvintes } = vi.hoisted(() => ({
-  ouvintes: [] as ((event: { payload: PickedElement }) => void)[],
-}));
-
-vi.mock("@tauri-apps/api/core", () => ({
-  isTauri: () => true,
-  invoke: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_evento: string, handler: (event: { payload: PickedElement }) => void) => {
-    ouvintes.push(handler);
-    return () => {};
-  }),
-}));
-
-const pick: PickedElement = {
-  tag: "button",
-  id: "salvar",
-  classes: ["btn", "primary"],
-  role: null,
-  aria: { label: "Salvar" },
+const pick: PickDetail = {
+  url: "http://localhost:5173",
+  selector: "button.salvar",
   text: "Salvar",
-  html: '<button id="salvar" class="btn primary">Salvar</button>',
-  selector: "#salvar",
-  dom_path: "body > main > button#salvar",
-  rect: { x: 10, y: 20, width: 120, height: 32 },
-  viewport: { width: 1280, height: 720 },
-  scroll: { x: 0, y: 140 },
-  url: "http://localhost:5173/",
+  html: '<button class="salvar">Salvar</button>',
+  tag: "button",
+  source: "src/features/x/Botao.tsx:42",
 };
 
-function open(picked: PickedElement = pick) {
-  useAppStore.setState({ pick: picked });
+const sessions = [
+  {
+    id: "pessoal--game--claude-1",
+    profile: "pessoal",
+    project: "game",
+    agent: "claude" as const,
+    created_at: 0,
+    attached: 1,
+  },
+  {
+    id: "pessoal--game--opencode-1",
+    profile: "pessoal",
+    project: "game",
+    agent: "opencode" as const,
+    created_at: 0,
+    attached: 0,
+  },
+  {
+    id: "pessoal--game--shell-1",
+    profile: "pessoal",
+    project: "game",
+    agent: "shell" as const,
+    created_at: 0,
+    attached: 0,
+  },
+];
+
+function open() {
+  const hub = {
+    previewPick: vi.fn().mockResolvedValue({
+      prompt:
+        "Apontei na página http://localhost:5173 o elemento button.salvar. Pedido: deixa verde.",
+    }),
+    sendPick: vi.fn().mockResolvedValue({
+      target: "sessao",
+      session: "pessoal--game--claude-1",
+      prompt:
+        "Apontei na página http://localhost:5173 o elemento button.salvar. Pedido: deixa verde.",
+      file: ".assistente/picks/2026-10-22-11-44-05.md",
+    }),
+  };
+  useAppStore.setState({
+    hub: hub as unknown as HubClient,
+    pick: { profile: "pessoal", project: "game", pick },
+    sessions,
+    activeSession: "pessoal--game--claude-1",
+  });
   render(<PickDialog />);
+  return hub;
 }
 
 describe("PickDialog", () => {
-  it("mostra o elemento apontado e o espaço do pedido", () => {
-    open();
-    expect(screen.getByRole("dialog", { name: "Apontar elemento" })).toBeInTheDocument();
-    // O id aparece na linha do elemento e o seletor logo abaixo: "#salvar" duas vezes.
-    expect(screen.getAllByText("#salvar")).toHaveLength(2);
-    expect(screen.getByText("Salvar")).toBeInTheDocument();
-    expect(screen.getByText("body > main > button#salvar")).toBeInTheDocument();
-    expect(screen.getByText("label=Salvar")).toBeInTheDocument();
-    expect(screen.getByText("120×32 em (10, 20)")).toBeInTheDocument();
-    expect(screen.getByText("1280×720, rolagem (0, 140)")).toBeInTheDocument();
-    expect(screen.getByText("http://localhost:5173/")).toBeInTheDocument();
+  it("mostra o prompt e manda o pedido para a sessão escolhida", async () => {
+    const hub = open();
+
+    // O prompt que o hubd monta aparece no modal.
     expect(
-      screen.getByText('<button id="salvar" class="btn primary">Salvar</button>'),
+      await screen.findByText(/Apontei na página http:\/\/localhost:5173/),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("O que você quer que mude?")).toBeInTheDocument();
+    // A aba Terminal não pode receber o pedido.
+    expect(screen.queryByRole("option", { name: "pessoal--game--shell-1" })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("O que quer mudar"), {
+      target: { value: "deixa verde" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() =>
+      expect(hub.sendPick).toHaveBeenCalledWith("pessoal", "game", {
+        target: "sessao",
+        session: "pessoal--game--claude-1",
+        request: "deixa verde",
+        pick,
+      }),
+    );
+    // O modal fecha, a aba vai para a frente e o aviso manda confirmar no terminal.
+    await waitFor(() => expect(useAppStore.getState().pick).toBeNull());
+    expect(useAppStore.getState().activeSession).toBe("pessoal--game--claude-1");
+    expect(useAppStore.getState().toast).toMatch(/confirme no terminal/i);
   });
 
-  it("cancelar fecha a caixa de pedido", () => {
-    open();
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
-    expect(useAppStore.getState().pick).toBeNull();
-    expect(screen.queryByRole("dialog", { name: "Apontar elemento" })).not.toBeInTheDocument();
+  it("troca de alvo: o pedido vira card no quadro", async () => {
+    const hub = open();
+    hub.sendPick.mockResolvedValue({
+      target: "quadro",
+      card: {
+        id: "T7",
+        title: "deixa verde",
+        description: "",
+        priority: "normal",
+        kind: "manual",
+        column: "backlog",
+        created_at: 0,
+      },
+      prompt: "Apontei…",
+      file: ".assistente/picks/2026-10-22-11-44-05.md",
+    });
+
+    await screen.findByText(/Apontei na página/);
+    fireEvent.click(screen.getByRole("radio", { name: /Quadro/ }));
+    // Com o quadro, não há sessão para escolher.
+    expect(screen.queryByLabelText("Sessão que recebe o pedido")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("O que quer mudar"), {
+      target: { value: "deixa verde" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() =>
+      expect(hub.sendPick).toHaveBeenCalledWith("pessoal", "game", {
+        target: "quadro",
+        session: null,
+        request: "deixa verde",
+        pick,
+      }),
+    );
+    await waitFor(() => expect(useAppStore.getState().pick).toBeNull());
+    expect(useAppStore.getState().toast).toMatch(/T7/);
   });
 
-  it("um apontamento novo começa com o pedido em branco", () => {
-    open();
-    const campo = screen.getByLabelText("O que você quer que mude?");
-    fireEvent.change(campo, { target: { value: "deixa verde" } });
-    expect(campo).toHaveValue("deixa verde");
+  it("erro ao enviar fica no modal", async () => {
+    const hub = open();
+    hub.sendPick.mockRejectedValueOnce(new Error("a sessão escolhida é de outro projeto"));
 
-    act(() => useAppStore.setState({ pick: { ...pick, id: "outro" } }));
-    expect(screen.getByLabelText("O que você quer que mude?")).toHaveValue("");
+    await screen.findByText(/Apontei na página/);
+    fireEvent.change(screen.getByLabelText("O que quer mudar"), {
+      target: { value: "deixa verde" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    expect(await screen.findByText("a sessão escolhida é de outro projeto")).toBeInTheDocument();
+    // O modal continua aberto, com o texto que o usuário escreveu.
+    expect(useAppStore.getState().pick).not.toBeNull();
+    expect(screen.getByLabelText("O que quer mudar")).toHaveValue("deixa verde");
   });
 
-  it("sem apontar não abre nada", () => {
-    render(<PickDialog />);
-    expect(screen.queryByRole("dialog", { name: "Apontar elemento" })).not.toBeInTheDocument();
-  });
-
-  it("o evento do Rust abre a caixa de pedido com o elemento", async () => {
-    render(<PickDialog />);
-    await waitFor(() => expect(ouvintes.length).toBeGreaterThan(0));
-
-    act(() => ouvintes[ouvintes.length - 1]({ payload: pick }));
-
-    expect(screen.getByRole("dialog", { name: "Apontar elemento" })).toBeInTheDocument();
-    // O id aparece na linha do elemento e no seletor: "#salvar" duas vezes.
-    expect(screen.getAllByText("#salvar")).toHaveLength(2);
-    expect(screen.getByText("body > main > button#salvar")).toBeInTheDocument();
-    expect(useAppStore.getState().pick).toEqual(pick);
+  it("sem texto não há o que enviar", async () => {
+    const hub = open();
+    await screen.findByText(/Apontei na página/);
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("O que quer mudar"), {
+      target: { value: "   " },
+    });
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeDisabled();
+    expect(hub.sendPick).not.toHaveBeenCalled();
   });
 });

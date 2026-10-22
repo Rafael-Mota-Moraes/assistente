@@ -313,6 +313,64 @@ impl Tmux {
         ]))
         .await
     }
+
+    /// Cola `text` no prompt da sessão, **sem Enter** (F12.4).
+    ///
+    /// `set-buffer` + `paste-buffer -r`: o Enter é do usuário, para não aprovar uma pergunta
+    /// pendente do agente nem executar texto no shell. O texto vai em uma linha só (uma
+    /// quebra no buffer entra como Enter).
+    pub async fn paste(&self, id: &str, text: &str) -> Result<(), String> {
+        let line = one_line(text);
+        if line.is_empty() {
+            return Err("o texto para colar está vazio".into());
+        }
+        let pane = self
+            .pane_of(id)
+            .await
+            .map_err(|e| format!("a sessão {id} não está viva: {e}"))?;
+        // O buffer tem nome: o buffer de cópia do usuário não é mexido.
+        self.run(&args(&["set-buffer", "-b", BUFFER, "--", &line]))
+            .await?;
+        self.run(&args(&[
+            "paste-buffer",
+            "-b",
+            BUFFER,
+            "-p",
+            "-r",
+            "-t",
+            &pane,
+        ]))
+        .await
+        .map(|_| ())
+    }
+
+    /// O painel da sessão (é nele que o agente roda).
+    async fn pane_of(&self, id: &str) -> Result<String, String> {
+        let out = self
+            .run(&args(&[
+                "list-panes",
+                // `-s`: todas as janelas da sessão, não só a atual.
+                "-s",
+                "-t",
+                &format!("={id}"),
+                "-F",
+                "#{pane_id}",
+            ]))
+            .await?;
+        out.lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("a sessão {id} não tem painel"))
+    }
+}
+
+/// O buffer do tmux onde o pick vai antes de ser colado.
+const BUFFER: &str = "assistente-pick";
+
+/// Uma linha só: no tmux, uma quebra no buffer vale como Enter (F12.4).
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// O erro do tmux que quer dizer "não há servidor": nenhum, ou um que acabou de encerrar (o
@@ -634,6 +692,65 @@ pub(crate) mod tests {
         // O tmux 3.4 perde o SIGCHLD do painel morto em ~5% das vezes: o `pane_state` tem de
         // recuperar o status de saída mesmo assim (o `reap`).
         assert_eq!(t.tmux.pane_state(&info.id).await, PaneState::Dead(Some(42)));
+    }
+
+    #[tokio::test]
+    async fn paste_puts_the_text_in_the_prompt_without_pressing_enter() {
+        let t = TestTmux::new("colar");
+        let out = t.dir.join("recebido.txt");
+        let script = format!("cat > {}", out.display());
+        let id = "pessoal--x--claude-1";
+        t.tmux
+            .create(&t.plan(id, &script), &spec("x", AgentKind::Claude), None)
+            .await
+            .unwrap();
+        t.tmux.paste(id, "deixa verde").await.unwrap();
+        // O texto entrou no prompt, mas o Enter é do usuário: o `cat` não recebeu nada.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let received = std::fs::read_to_string(&out).unwrap_or_default();
+        assert!(received.is_empty(), "o texto rodou sozinho: {received}");
+        // Com o Enter, o texto chega.
+        t.tmux
+            .run(&args(&["send-keys", "-t", id, "Enter"]))
+            .await
+            .unwrap();
+        assert_eq!(wait_for_file(&out).await.trim(), "deixa verde");
+    }
+
+    #[tokio::test]
+    async fn paste_needs_a_live_session_and_a_text() {
+        let t = TestTmux::new("colar-erro");
+        let err = t
+            .tmux
+            .paste("pessoal--x--claude-1", "oi")
+            .await
+            .unwrap_err();
+        assert!(err.contains("não está viva"), "{err}");
+        let id = "pessoal--x--claude-1";
+        t.tmux
+            .create(&t.plan(id, "sleep 30"), &spec("x", AgentKind::Claude), None)
+            .await
+            .unwrap();
+        assert!(t.tmux.paste(id, "   ").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn paste_breaks_the_text_in_one_line() {
+        let t = TestTmux::new("colar-linha");
+        let out = t.dir.join("recebido.txt");
+        let script = format!("cat > {}", out.display());
+        let id = "pessoal--x--claude-1";
+        t.tmux
+            .create(&t.plan(id, &script), &spec("x", AgentKind::Claude), None)
+            .await
+            .unwrap();
+        t.tmux.paste(id, "deixa\nverde").await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let received = std::fs::read_to_string(&out).unwrap_or_default();
+        assert!(
+            received.is_empty(),
+            "a quebra linha virou Enter: {received}"
+        );
     }
 
     #[test]

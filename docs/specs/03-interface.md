@@ -1,6 +1,6 @@
 # 03 — Interface
 
-Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6, F12.1, F12.2.
+Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6, F12.1, F12.2, F12.4.
 
 ## Tecnologia
 
@@ -34,10 +34,11 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
 
 O preview do projeto (F12.1) abre numa webview filha, fora das capabilities: a página
 apontada não alcança os comandos do app. O modo apontar é um script injetado nessa
-webview (`initialization_script`, fora do bundle do projeto, em
+webview (`js_init_script` do plugin `pick`, fora do bundle do projeto, em
 `app/src-tauri/src/pick.js`):
 
-- botão flutuante **Apontar** (canto superior direito) liga o modo;
+- botão flutuante **Apontar** (canto superior direito) liga o modo, e o botão de apontar da
+  barra do preview faz o mesmo pelo `preview_picker` (`window.__assistentePick.setEnabled`);
 - ligado, o elemento sob o mouse ganha contorno e o clique é tomado na **fase de
   captura**: a página não recebe o clique, a ação do botão não dispara;
 - `Esc` cancela; um novo clique troca a seleção.
@@ -59,10 +60,11 @@ política e ela é cancelada antes de a página trocar.
 |---|---|
 | `preview-pick` | `PickedElement` — o elemento apontado (espelha `app/src/bridge/types.ts`) |
 
-A UI abre a caixa de pedido (`features/pick/PickDialog.tsx`) com o elemento escolhido
-e o espaço para escrever o que deve mudar; o envio ao agente é a F12.4. A caixa é um
-modal: quando o preview do projeto (F12.1) existir, ela esconde o painel do preview
-(o `preview_panel_visible`), senão a webview do preview fica por cima da caixa.
+O `PreviewPanel` escuta o evento e abre a caixa de pedido do F12.4
+(`features/pick/PickDialog.tsx`) para o projeto do preview; o `PickedElement` vira o
+`PickDetail` que o hubd recebe em `features/pick/detail.ts`. Enquanto a caixa está aberta,
+a webview do preview fica escondida (`preview_panel_visible`), senão ela ficaria por cima da
+caixa; e o Esc da caixa (ou de um campo) não fecha o preview.
 
 Para conferir na mão: sirva uma página de teste com um botão que muda de cor
 (`python3 -m http.server`), abra no preview do projeto (F12.1), ligue o **Apontar** e
@@ -103,6 +105,27 @@ o botão escolhido.
   React; a webview filha preenche o retângulo e acompanha o redimensionamento da janela.
   A URL se edita na engrenagem, com a dica de que o endereço é visto do PC: projeto rodando
   na VM usa o IP dela.
+
+## Apontar e pedir (F12.4)
+
+O modal do apontamento (`app/src/features/pick/PickDialog.tsx`) mostra o elemento apontado (URL,
+seletor, texto e onde ele está), deixa editar o recado e escolher para onde o pedido vai:
+
+| Alvo | O que o hubd faz |
+|---|---|
+| **Sessão** | Confere que a sessão é de agente (a aba Terminal nunca recebe), do projeto e está viva (painel morto da F14.3 = 409); cola o prompt no prompt do agente com `set-buffer` + `paste-buffer`, **sem Enter** (o Enter é do usuário: não aprova pergunta pendente nem executa texto no shell). A UI leva para a aba e avisa "confirme no terminal" |
+| **Quadro** | Vira card no backlog (F11.1), com o texto inteiro: o clone do notebook não tem o arquivo do pick |
+
+Rotas (o token do hub, como as outras):
+
+- `POST /api/projects/{perfil}/{projeto}/picks` — envia o pedido. Devolve o prompt usado, a
+  sessão (ou o card) e o arquivo do pick.
+- `POST /api/projects/{perfil}/{projeto}/picks/preview` — só o prompt que será enviado, para o
+  modal mostrar antes de mandar (o prompt é do hubd: URL, onde, seletor, texto e pedido, em uma
+  linha só).
+
+O detalhe do pick fica em `.assistente/picks/<data-hora>.md`, dentro do projeto e fora do git
+(`info/exclude`, como o `.ai-jail` da F0.5).
 
 ## Estados
 

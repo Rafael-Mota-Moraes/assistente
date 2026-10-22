@@ -15,6 +15,10 @@ import type {
   MainApplyResult,
   MemoryStatus,
   NotebookStatus,
+  PickDetail,
+  PickPreview,
+  PickRequest,
+  PickResult,
   ProfileView,
   Project,
   ProjectSettings,
@@ -43,6 +47,10 @@ function kanbanPath(profile: string, project: string): string {
 
 function settingsPath(profile: string, project: string): string {
   return `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/settings`;
+}
+
+function picksPath(profile: string, project: string): string {
+  return `/api/projects/${encodeURIComponent(profile)}/${encodeURIComponent(project)}/picks`;
 }
 
 /** Cliente HTTP do hubd. O WebSocket dos terminais fica em terminal.ts. */
@@ -136,6 +144,20 @@ export class HubClient {
   /** Configurações do projeto que afrouxam o jail (F9.2). */
   projectSettings(profile: string, project: string): Promise<ProjectSettingsView> {
     return this.get(settingsPath(profile, project));
+  }
+
+  /** Envia o pedido apontado na tela (F12.4): cola na sessão do agente ou vira card no quadro. */
+  sendPick(profile: string, project: string, body: PickRequest): Promise<PickResult> {
+    return this.request("POST", picksPath(profile, project), body);
+  }
+
+  /** O prompt que o agente vai receber (F12.4): o modal mostra antes de enviar. */
+  previewPick(
+    profile: string,
+    project: string,
+    body: { pick: PickDetail; request: string },
+  ): Promise<PickPreview> {
+    return this.request("POST", `${picksPath(profile, project)}/preview`, body);
   }
 
   /** F10.1: árvore de arquivos do projeto. */

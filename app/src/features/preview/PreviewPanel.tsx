@@ -3,13 +3,15 @@ import { Crosshair, Eye, RotateCw, Settings, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   closePreviewPanel,
+  listenPreviewPick,
   openPreviewPanel,
   type PanelRect,
   previewPanelVisible,
   previewPicker,
   updatePreviewPanelBounds,
 } from "../../bridge/host";
-import { closeView, useAppStore, viewKey } from "../../store";
+import { closeView, openPick, useAppStore, viewKey } from "../../store";
+import { toPickDetail } from "../pick/detail";
 
 /** Retângulo do âncora em pixels lógicos (igual ao px do CSS). */
 function rectOf(anchor: HTMLElement): PanelRect {
@@ -28,8 +30,9 @@ export function PreviewPanel() {
   const hub = useAppStore((s) => s.hub);
   const profile = useAppStore((s) => s.activeProfile);
   const project = useAppStore((s) => s.activeProject);
-  /** Modal aberto: a webview é um widget nativo por cima da UI, então precisa sumir. */
-  const modalAberto = useAppStore((s) => s.projectSettings !== null);
+  /** Modal aberto (engrenagem ou caixa do apontar): a webview é um widget nativo por cima da
+   * UI, então precisa sumir. */
+  const modalAberto = useAppStore((s) => s.projectSettings !== null || s.pick !== null);
   const [url, setUrl] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [apontando, setApontando] = useState(false);
@@ -105,10 +108,37 @@ export function PreviewPanel() {
     };
   }, [url, modalAberto, carregar]);
 
-  /** Esc fecha o preview (o X da barra fecha sempre). */
+  /** O pick da página (F12.2, evento do Rust) abre a caixa de pedido deste projeto (F12.4). */
+  useEffect(() => {
+    if (!profile || !project) return;
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void listenPreviewPick((picked) => openPick(profile, project, toPickDetail(picked))).then(
+      (unlisten) => {
+        if (gone) unlisten();
+        else stop = unlisten;
+      },
+    );
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, [profile, project]);
+
+  /** Esc fecha o preview (o X da barra fecha sempre). O Esc de um modal ou de um campo é
+   * deles: fechar a caixa do apontar não pode levar o preview junto. */
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && key) closeView(key, "preview");
+      if (event.key !== "Escape" || !key) return;
+      const { pick, projectSettings } = useAppStore.getState();
+      if (pick || projectSettings) return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("input, textarea, select, [contenteditable], [role='dialog']")
+      )
+        return;
+      closeView(key, "preview");
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

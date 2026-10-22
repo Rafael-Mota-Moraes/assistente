@@ -1,8 +1,40 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { previewPanelVisible } from "../../bridge/host";
 import type { HubClient } from "../../bridge/hub";
+import type { PickedElement } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { PreviewPanel } from "./PreviewPanel";
+
+// O Rust emite o pick (`preview-pick`); aqui o teste faz o papel dele.
+const { ouvintes } = vi.hoisted(() => ({
+  ouvintes: [] as ((pick: PickedElement) => void)[],
+}));
+
+vi.mock("../../bridge/host", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../bridge/host")>()),
+  previewPanelVisible: vi.fn().mockResolvedValue(undefined),
+  listenPreviewPick: vi.fn(async (handler: (pick: PickedElement) => void) => {
+    ouvintes.push(handler);
+    return () => {};
+  }),
+}));
+
+const pick: PickedElement = {
+  tag: "button",
+  id: "salvar",
+  classes: ["btn"],
+  role: null,
+  aria: { label: "Salvar" },
+  text: "Salvar",
+  html: '<button id="salvar">Salvar</button>',
+  selector: "#salvar",
+  dom_path: "body > main > button#salvar",
+  rect: { x: 10, y: 20, width: 120, height: 32 },
+  viewport: { width: 1280, height: 720 },
+  scroll: { x: 0, y: 0 },
+  url: "http://10.77.0.10:5173/",
+};
 
 function fakeHub(previewUrl: string | null) {
   return {
@@ -75,5 +107,48 @@ describe("PreviewPanel", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(useAppStore.getState().views).toHaveLength(0);
+  });
+
+  it("o pick da página abre a caixa de pedido do projeto e esconde a webview (F12.2/F12.4)", async () => {
+    useAppStore.setState({
+      hub: fakeHub("http://10.77.0.10:5173"),
+      activeProfile: "pessoal",
+      activeProject: "game",
+      pick: null,
+    });
+    render(<PreviewPanel />);
+    await screen.findByText("http://10.77.0.10:5173");
+    await waitFor(() => expect(ouvintes.length).toBeGreaterThan(0));
+
+    act(() => ouvintes[ouvintes.length - 1](pick));
+
+    const aberto = useAppStore.getState().pick;
+    expect(aberto?.profile).toBe("pessoal");
+    expect(aberto?.project).toBe("game");
+    expect(aberto?.pick).toMatchObject({ selector: "#salvar", aria_label: "Salvar" });
+    await waitFor(() => expect(previewPanelVisible).toHaveBeenCalledWith(false));
+  });
+
+  it("o Esc da caixa do apontar não fecha o preview", async () => {
+    useAppStore.setState({
+      hub: fakeHub("http://10.77.0.10:5173"),
+      activeProfile: "pessoal",
+      activeProject: "game",
+      views: [{ key: "pessoal/game", kind: "preview" }],
+      activeView: { key: "pessoal/game", kind: "preview" },
+      pick: { profile: "pessoal", project: "game", pick: { url: "", selector: "#x", text: "", html: "", tag: "button" } },
+    });
+    render(<PreviewPanel />);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(useAppStore.getState().views).toHaveLength(1);
+
+    // Já sem a caixa, o Esc num campo também é do campo.
+    useAppStore.setState({ pick: null });
+    const campo = document.createElement("textarea");
+    document.body.appendChild(campo);
+    fireEvent.keyDown(campo, { key: "Escape" });
+    expect(useAppStore.getState().views).toHaveLength(1);
+    campo.remove();
   });
 });

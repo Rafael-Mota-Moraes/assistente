@@ -71,6 +71,13 @@ roda `just check`, compila a UI e o hubd em `~/.assistente/versoes/<commit>` e t
 `atual`. O hubd reinicia sem matar o tmux, e o app recarrega a UI servida pelo hubd. A casca
 Tauri ainda precisa de `assistente atualizar` (spec 09).
 
+**Apontar e pedir (F12).** O app aponta um elemento na página do preview e abre a caixa de
+pedido. O hubd monta o prompt curto (URL, onde, seletor, texto, pedido — uma linha só), grava
+o detalhe do pick em `.assistente/picks/<data-hora>.md` (dentro do projeto, fora do git) e
+entrega: na sessão de um agente (confere que é de agente, do projeto e está viva; cola no
+prompt com `set-buffer` + `paste-buffer`, **sem Enter**, que é do usuário) ou no quadro (card
+no backlog, com o texto inteiro).
+
 ## Decisões
 
 1. **VM Incus em vez de Docker.** O ai-jail (bubblewrap + Landlock) não foi feito para rodar

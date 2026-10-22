@@ -30,6 +30,7 @@ use tower_http::services::ServeDir;
 
 mod diagnostico;
 mod kanban;
+mod picks;
 
 pub use kanban::spawn_orchestrator;
 
@@ -260,6 +261,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/projects/{profile}/{project}/kanban/explorar",
             post(kanban::explore_backlog),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/picks",
+            post(picks::send_pick),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/picks/preview",
+            post(picks::preview_pick),
         )
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 

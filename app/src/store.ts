@@ -8,7 +8,7 @@ import type {
   Health,
   MemoryStatus,
   NotebookStatus,
-  PickedElement,
+  PickDetail,
   ProfileView,
   Project,
   SessionInfo,
@@ -25,6 +25,14 @@ export type MorningState = {
   error: string | null;
   merged: boolean;
   busy: boolean;
+};
+
+/** Modal de apontar e pedir (F12.4); `null` = fechado. */
+export type PickState = {
+  profile: string;
+  project: string;
+  /** O elemento apontado na página. */
+  pick: PickDetail;
 };
 
 type State = {
@@ -57,6 +65,8 @@ type State = {
   morning: MorningState | null;
   /** Modal de configurações do projeto (engrenagem, F9.3); `null` = fechado. */
   projectSettings: { profile: string; project: string } | null;
+  /** Caixa de pedido do elemento apontado no preview (F12.2/F12.4); `null` = fechada. */
+  pick: PickState | null;
   /** Visões abertas como abas (Quadro e Editor), por projeto: `key` = `perfil/projeto`. */
   views: { key: string; kind: ViewKind }[];
   /** Aba de visão em foco; `null` = uma sessão de agente. */
@@ -65,8 +75,6 @@ type State = {
   memoryPanelOpen: boolean;
   /** Pedidos dos agentes para rodar fora do jail (F9.7), atualizados a cada 2 s. */
   execRequests: ExecView[];
-  /** Elemento apontado na página do preview (F12.2); `null` = sem apontar. */
-  pick: PickedElement | null;
 };
 
 export const initialState: State = {
@@ -89,11 +97,11 @@ export const initialState: State = {
   toast: null,
   morning: null,
   projectSettings: null,
+  pick: null,
   memoryPanelOpen: false,
   execRequests: [],
   views: [],
   activeView: null,
-  pick: null,
 };
 
 /** Visões que aparecem como abas: o Quadro, o Editor e o Preview de cada projeto. */
@@ -117,6 +125,11 @@ export function openView(key: string, kind: ViewKind) {
       : [...s.views, { key, kind }],
     activeView: { key, kind },
   }));
+}
+
+/** Abre a caixa de pedido do apontamento (F12.4). */
+export function openPick(profile: string, project: string, pick: PickDetail) {
+  useAppStore.setState({ pick: { profile, project, pick } });
 }
 
 /** Fecha a aba da visão; se ela estava em foco, volta para a sessão. */

@@ -27,7 +27,12 @@ const encoder = new TextEncoder();
 function handleText(text: string, events: TerminalEvents) {
   try {
     const message = JSON.parse(text) as { type: string; status?: number; message?: string };
-    if (message.type === "exit") events.onClose("exit", { status: message.status });
+    if (message.type === "exit")
+      events.onClose("exit", {
+        // O hubd manda o status de saída do processo (F14.3); sem ele (sessão encerrada na
+        // mão, ou processo morto por sinal) a aba só avisa que acabou.
+        status: typeof message.status === "number" ? message.status : undefined,
+      });
     if (message.type === "error") events.onClose("error", { message: message.message });
   } catch {
     events.onData(encoder.encode(text));

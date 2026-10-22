@@ -1,6 +1,6 @@
 # 03 — Interface
 
-Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6.
+Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6, F12.2.
 
 ## Tecnologia
 
@@ -26,6 +26,32 @@ O WebSocket dos terminais (F2.3) vai ter o mesmo problema: usar `tauri-plugin-we
 
 Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o hub é
 `http://127.0.0.1:7878`, o que basta para desenvolver a UI.
+
+## Apontar (F12.2)
+
+O preview do projeto (F12.1) abre numa webview filha, fora das capabilities: a página
+apontada não alcança os comandos do app. O modo apontar é um script injetado nessa
+webview (`initialization_script`, fora do bundle do projeto, em
+`app/src-tauri/src/pick.js`):
+
+- botão flutuante **Apontar** (canto superior direito) liga o modo;
+- ligado, o elemento sob o mouse ganha contorno e o clique é tomado na **fase de
+  captura**: a página não recebe o clique, a ação do botão não dispara;
+- `Esc` cancela; um novo clique troca a seleção.
+
+O pick (tag, id, classes, `role`/`aria`, texto curto, trecho de HTML, seletor CSS,
+caminho no DOM, retângulo, viewport/scroll e URL) sai da página por uma navegação
+`assistente-pick:<payload>`: sem IPC e sem CORS na página remota. O Rust intercepta a
+navegação (`on_navigation` do plugin `pick`, em `app/src-tauri/src/pick.rs`), descarta
+payload acima de 64 KiB, troca a URL do payload pela **URL real da webview** (a da
+página não é confiável), emite o evento para a janela principal e cancela a navegação.
+
+| Evento | Payload |
+|---|---|
+| `preview-pick` | `PickedElement` — o elemento apontado (espelha `app/src/bridge/types.ts`) |
+
+A UI abre a caixa de pedido (`features/pick/PickDialog.tsx`) com o elemento escolhido
+e o espaço para escrever o que deve mudar; o envio ao agente é a F12.4.
 
 ## Layout
 

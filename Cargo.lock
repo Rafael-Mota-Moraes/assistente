@@ -123,7 +123,10 @@ name = "assistente-app"
 version = "0.1.0"
 dependencies = [
  "gtk",
+ "http-body-util",
  "hub-core",
+ "hyper",
+ "hyper-util",
  "serde",
  "serde_json",
  "tauri",
@@ -131,6 +134,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-http",
  "tauri-plugin-websocket",
+ "tokio",
 ]
 
 [[package]]

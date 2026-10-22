@@ -1,15 +1,22 @@
 //! Casca desktop do Assistente: a UI fala direto com o hubd (HTTP/WS). Aqui só ficam as
-//! coisas que precisam do HOST: ler a config local, ver o estado da VM, abrir o Cursor e
-//! ancorar a webview da memória na janela principal.
+//! coisas que precisam do HOST: ler a config local, ver o estado da VM, abrir o Cursor,
+//! ancorar a webview da memória na janela principal e rodar no PC o pedido que o agente
+//! fez e você aprovou (F9.10).
 //! Spec: docs/specs/03-interface.md
 
 // Sem janela de console extra no Windows em release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use http_body_util::BodyExt;
 use hub_core::Config;
 use serde::{Deserialize, Serialize};
+use std::io::Read;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 use tauri::Manager;
 
 fn home() -> Result<PathBuf, String> {
@@ -188,10 +195,7 @@ fn open_in_cursor(path: String) -> Result<(), String> {
     let not_a_project = || format!("{path} não é um projeto de nenhum perfil");
     // canonicalize resolve `..` e links: "raiz/../../.ssh" não passa.
     let real = std::fs::canonicalize(Path::new(&path)).map_err(|_| not_a_project())?;
-    let inside_profile = config.profiles.values().any(|p| {
-        std::fs::canonicalize(&p.root).is_ok_and(|root| real.starts_with(&root) && real != root)
-    });
-    if !inside_profile || !real.is_dir() {
+    if !inside_profile_root(&config, &real) || !real.is_dir() {
         return Err(not_a_project());
     }
     Command::new("cursor")
@@ -199,6 +203,17 @@ fn open_in_cursor(path: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("não consegui abrir o Cursor: {e}"))
+}
+
+/// O caminho está dentro de uma raiz de perfil? (canonicalize resolve `..` e links:
+/// "raiz/../../.ssh" não passa.)
+fn inside_profile_root(config: &Config, path: &Path) -> bool {
+    let Ok(real) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    config.profiles.values().any(|p| {
+        std::fs::canonicalize(&p.root).is_ok_and(|root| real.starts_with(&root) && real != root)
+    })
 }
 
 /// Abre uma URL no navegador padrão do host (links clicáveis do terminal, F2.4).
@@ -216,6 +231,234 @@ fn open_url(url: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("não consegui abrir o navegador: {e}"))
+}
+
+// ---- Pedido no PC (F9.10) ----
+//
+// O agente pede (`fora-do-jail --pc`), o hubd guarda o pedido e **não** executa nada na
+// VM. Quem executa no PC é o app, e só depois que você aprovou no painel de pedidos.
+// O app pergunta ao hubd o que foi aprovado e roda exatamente aquilo: nem o comando nem a
+// pasta saem da UI, e o resultado volta ao hubd (`POST /api/exec/{id}/result`).
+
+/// O que o hubd guardou do pedido (o app roda exatamente isto).
+#[derive(Deserialize)]
+struct ExecView {
+    /// `host` = pedido para o PC (F9.9).
+    #[serde(default)]
+    target: String,
+    /// `running` = aprovado e esperando o app rodar.
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    command: String,
+    #[serde(default)]
+    cwd: String,
+    #[serde(default)]
+    timeout_secs: u64,
+}
+
+/// O que o app devolve ao hubd depois de rodar no PC.
+#[derive(Serialize, Clone)]
+struct HostExecResult {
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    truncated: bool,
+    timed_out: bool,
+    duration_ms: u64,
+}
+
+/// Teto da saída guardada por stream (fica o fim, que é onde costuma estar o erro).
+const MAX_HOST_OUTPUT: usize = 64 * 1024;
+
+/// URL e token do hubd (o app pergunta ao hubd o que foi aprovado, F9.10).
+fn hub_url_and_token(config: &Config) -> Result<(String, String), String> {
+    let token = std::fs::read_to_string(&config.hub.token_file)
+        .map_err(|e| format!("token do hub ({}): {e}", config.hub.token_file.display()))?
+        .trim()
+        .to_owned();
+    let url = match std::env::var("ASSISTENTE_HUB_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            let port = config.hub.listen.rsplit(':').next().unwrap_or("7878");
+            format!("http://{}:{port}", config.vm.ip)
+        }
+    };
+    Ok((url, token))
+}
+
+/// GET no hubd (o app não inventa comando: pergunta o que foi aprovado).
+async fn hub_get(url: &str, token: &str, path: &str) -> Result<serde_json::Value, String> {
+    let parsed = tauri::Url::parse(url).map_err(|e| format!("URL do hubd inválida: {e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| format!("URL do hubd sem host: {url}"))?
+        .to_owned();
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| format!("URL do hubd sem porta: {url}"))?;
+    let stream = tokio::net::TcpStream::connect((host.as_str(), port))
+        .await
+        .map_err(|e| format!("não consegui falar com o hubd em {url}: {e}"))?;
+    let io = hyper_util::rt::TokioIo::new(stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+        .await
+        .map_err(|e| format!("falha na conversa com o hubd: {e}"))?;
+    tauri::async_runtime::spawn(async move {
+        let _ = conn.await;
+    });
+    let request = hyper::Request::builder()
+        .method("GET")
+        .uri(path)
+        .header(hyper::header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(http_body_util::Empty::<hyper::body::Bytes>::new())
+        .map_err(|e| format!("requisição inválida: {e}"))?;
+    let response = sender
+        .send_request(request)
+        .await
+        .map_err(|e| format!("o hubd não respondeu: {e}"))?;
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .map_err(|e| format!("resposta do hubd ilegível: {e}"))?
+        .to_bytes();
+    if !status.is_success() {
+        return Err(format!("o hubd respondeu {status}"));
+    }
+    serde_json::from_slice(&body).map_err(|e| format!("resposta do hubd ilegível: {e}"))
+}
+
+/// Comando do app: roda no PC o pedido `host` que você aprovou (F9.10).
+#[tauri::command]
+async fn host_exec(id: String) -> Result<HostExecResult, String> {
+    let config = load_config()?;
+    let (url, token) = hub_url_and_token(&config)?;
+    // Nada roda sem aprovação: o hubd diz o que foi aprovado (alvo, estado, comando e pasta).
+    let value = hub_get(&url, &token, &format!("/api/exec/{id}")).await?;
+    let view: ExecView =
+        serde_json::from_value(value).map_err(|e| format!("pedido do hubd ilegível: {e}"))?;
+    if view.target != "host" {
+        return Err("este pedido não é para o PC".into());
+    }
+    if view.state != "running" {
+        return Err(format!(
+            "o pedido {id} não está aprovado ({}); aprove no app primeiro",
+            view.state
+        ));
+    }
+    // A pasta de trabalho precisa estar dentro de uma raiz de perfil (como no `open_in_cursor`).
+    let cwd = PathBuf::from(&view.cwd);
+    if !inside_profile_root(&config, &cwd) {
+        return Err(format!(
+            "{} não está dentro de uma raiz de perfil",
+            view.cwd
+        ));
+    }
+    let command = view.command.clone();
+    let timeout = Duration::from_secs(view.timeout_secs.clamp(1, 3600));
+    tauri::async_runtime::spawn_blocking(move || run_on_host(&cwd, &command, timeout))
+        .await
+        .map_err(|e| format!("a execução no PC falhou: {e}"))?
+}
+
+/// Roda `bash -lc <comando>` no PC: na pasta do projeto, com timeout e saída truncada.
+fn run_on_host(cwd: &Path, command: &str, timeout: Duration) -> Result<HostExecResult, String> {
+    let started = Instant::now();
+    let mut process = Command::new("bash");
+    process
+        .arg("-lc")
+        .arg(command)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Grupo próprio: no timeout, o que o comando deixou em segundo plano morre junto.
+    process.process_group(0);
+    // Sem prompt de credencial: `git push` sem chave não fica esperando senha.
+    process.env("GIT_TERMINAL_PROMPT", "0");
+    let mut child = process
+        .spawn()
+        .map_err(|e| format!("não consegui iniciar o bash: {e}"))?;
+    let pid = child.id();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let (out_tx, out_rx) = mpsc::channel::<(String, bool)>();
+    let (err_tx, err_rx) = mpsc::channel::<(String, bool)>();
+    thread::spawn(move || {
+        let _ = out_tx.send(read_tail(stdout, MAX_HOST_OUTPUT));
+    });
+    thread::spawn(move || {
+        let _ = err_tx.send(read_tail(stderr, MAX_HOST_OUTPUT));
+    });
+    let (status_tx, status_rx) = mpsc::channel::<std::io::Result<std::process::ExitStatus>>();
+    thread::spawn(move || {
+        let _ = status_tx.send(child.wait());
+    });
+    let (exit_code, timed_out) = match status_rx.recv_timeout(timeout) {
+        Ok(status) => (status.ok().and_then(|s| s.code()), false),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            kill_group(pid);
+            let status = status_rx
+                .recv_timeout(Duration::from_secs(5))
+                .ok()
+                .and_then(|s| s.ok());
+            (status.and_then(|s| s.code()), true)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => (None, false),
+    };
+    // Um neto que fechou o grupo pode segurar o pipe: não espera para sempre.
+    let out = out_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or_default();
+    let err = err_rx
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or_default();
+    Ok(HostExecResult {
+        exit_code,
+        stdout: out.0,
+        stderr: err.0,
+        truncated: out.1 || err.1,
+        timed_out,
+        duration_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+    })
+}
+
+/// Lê tudo e guarda só os últimos `max` bytes (em UTF-8 válido).
+fn read_tail(stream: Option<impl Read + Send + 'static>, max: usize) -> (String, bool) {
+    let Some(mut stream) = stream else {
+        return (String::new(), false);
+    };
+    let mut kept: Vec<u8> = Vec::new();
+    let mut truncated = false;
+    let mut buf = [0u8; 8192];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                kept.extend_from_slice(&buf[..n]);
+                if kept.len() > max {
+                    kept.drain(..kept.len() - max);
+                    truncated = true;
+                }
+            }
+        }
+    }
+    (String::from_utf8_lossy(&kept).into_owned(), truncated)
+}
+
+/// Mata o grupo do comando (o timeout leva junto o que ficou em segundo plano).
+fn kill_group(pid: u32) {
+    let group = format!("-{pid}");
+    for (signal, grace) in [("-TERM", Duration::from_secs(2)), ("-KILL", Duration::ZERO)] {
+        let _ = Command::new("kill")
+            .args([signal, "--", group.as_str()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        thread::sleep(grace);
+    }
 }
 
 /// Rótulo da webview filha com a web UI do ai-memory, ancorada na área principal (F5.5).
@@ -439,6 +682,7 @@ fn main() {
             vm_stop,
             open_in_cursor,
             open_url,
+            host_exec,
             open_memory_panel,
             update_memory_panel_bounds,
             close_memory_panel

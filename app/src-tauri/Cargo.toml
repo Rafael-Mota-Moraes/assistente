@@ -13,6 +13,12 @@ gtk.workspace = true
 hub-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# F9.10: o app pergunta ao hubd o que foi aprovado (e devolve o resultado do PC). Mesmo
+# cliente HTTP do hubd, para não trazer outro.
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+tokio.workspace = true
 # unstable: janelas com várias webviews (o painel da memória é uma webview filha da principal)
 tauri = { workspace = true, features = ["unstable"] }
 tauri-plugin-clipboard-manager.workspace = true

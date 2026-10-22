@@ -102,7 +102,7 @@ saídas na VM (a VM continua sendo a fronteira) e uma no PC, a mais restrita de 
   É a fronteira mais forte do sistema (R3): nada roda no PC sem clique, não existe
   "sempre permitir" para `host` e tudo que rodou fica no registro do host (F9.11).
 
-### No PC (F9.9)
+### No PC (F9.9–F9.10)
 
 Para o que só funciona no PC (a chave SSH do GitHub, os logins), o pedido sai da VM mas a
 decisão é do app:
@@ -114,6 +114,16 @@ decisão é do app:
 - **O card no app** mostra `target` (`ExecView`), o comando e a pasta por inteiro; a UI
   distingue "no PC" de "na VM" e esconde "sempre permitir" (o card em vermelho e o registro
   local são a F9.11).
+- **O app roda o que o hubd aprovou (F9.10).** O comando de host `host_exec` não recebe
+  comando nem pasta da UI: ele pergunta ao hubd (`GET /api/exec/{id}`) o que foi aprovado e
+  roda exatamente aquilo, e só se o alvo for `host` e o estado `running` (aprovado). A pasta
+  tem que estar dentro de uma raiz de perfil (como no `open_in_cursor`). Roda `bash -lc` com
+  o timeout do pedido (o grupo de processos morre junto, inclusive o que ficou em segundo
+  plano) e guarda o fim da saída (64 KiB por stream). O resultado volta ao hubd
+  (`POST /api/exec/{id}/result`, com o token do hub) e de lá ao agente, que recebe a saída e
+  o código. Se o app não conseguir rodar, ele devolve o motivo: o pedido fecha como `failed`
+  em vez de ficar esperando. Pedido `host` aprovado e sem resultado expira depois do timeout
+  (mais a folga): app fechado no meio da execução não segura o agente para sempre.
 
 ### Segurança do "fora do jail"
 

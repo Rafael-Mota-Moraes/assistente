@@ -43,6 +43,8 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 | GET | `/api/exec` | pronto (F9.7/F9.9) | `[{id, session, profile, project, cwd, command, target, timeout_secs, created_at, state, auto_approved, result}]`: pendentes primeiro, depois os dos últimos 30 min; `target: "host"` é o pedido para o PC (F9.9) |
 | POST | `/api/exec/{id}/approve` | pronto (F9.7/F9.9) | `{always?}` → 204, roda na VM fora do jail; pedido `target: host` é só marcado como rodando (quem executa é o app no PC, F9.10) e `always` é recusado (400); `always` grava em `allowed_commands` do projeto; 404/409 |
 | POST | `/api/exec/{id}/deny` | pronto (F9.7) | 204; 404/409 se não está pendente |
+| GET | `/api/exec/{id}` | pronto (F9.10) | um pedido (o app confere o que foi aprovado antes de rodar no PC); 404 |
+| POST | `/api/exec/{id}/result` | pronto (F9.10) | `{exit_code?, stdout?, stderr?, truncated?, timed_out?, duration_ms?, error?}` → 204; o app devolve o que rodou no PC e o agente recebe pelo long-poll; só em pedido `target: host` já aprovado (409 nos outros casos); `error` fecha o pedido como `failed` |
 | GET | `/api/memory` | F5.0 / F5.4 / F5.6 | saúde local (F5.0); sync do espelho (F5.4); detalhes operacionais (F5.6) |
 
 ## Lançamento de uma sessão
@@ -81,6 +83,8 @@ sessões nascem sem a API.
 | GET | `/v1/exec/{id}?wait=<s≤55>` | long-poll até estado final → `{…, state, result}`; pedido de outra sessão = 404 |
 
 Estados: `pending → running → done | failed`, `pending → denied | expired` (10 min sem resposta).
+Pedido `target: host` aprovado e sem resultado também expira (timeout do comando + folga):
+app fechado no meio da execução não segura o agente para sempre (F9.10).
 A fila é só memória (`crates/hubd/src/exec.rs`): reiniciar o hubd perde os pedidos. O
 comando roda com `bash -lc` na pasta pedida (dentro do projeto), env do perfil, stdin vazio,
 num grupo de processos próprio (timeout padrão 10 min, teto 60, mata o grupo), guardando o fim

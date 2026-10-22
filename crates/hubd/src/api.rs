@@ -3456,12 +3456,14 @@ mod tests {
         let url = format!("ws://{hub}/api/sessions/pessoal--proj--claude-1/terminal");
         let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
         let mut seen = String::new();
+        let mut avisos = String::new();
         let mut status: Option<i64> = None;
         let done = tokio::time::timeout(Duration::from_secs(15), async {
             while let Some(Ok(message)) = ws.next().await {
                 match message {
                     WsMessage::Binary(bytes) => seen.push_str(&String::from_utf8_lossy(&bytes)),
                     WsMessage::Text(text) => {
+                        avisos.push_str(&text);
                         let value: serde_json::Value = serde_json::from_str(&text).unwrap();
                         if value["type"] == "exit" {
                             status = value["status"].as_i64();
@@ -3478,7 +3480,10 @@ mod tests {
         })
         .await
         .unwrap_or(false);
-        assert!(done, "a aba não mostrou a saída nem o status: {seen}");
+        assert!(
+            done,
+            "a aba não mostrou a saída nem o status: {avisos}\n{seen}"
+        );
         assert_eq!(status, Some(127));
         assert!(seen.contains("claude: not found"), "{seen}");
     }
@@ -3487,16 +3492,14 @@ mod tests {
     #[tokio::test]
     async fn session_that_dies_with_the_tab_open_sends_the_status() {
         let t = TestTmux::new("api-morre");
-        let hub = live_hub_with(
-            &t,
-            None,
-            vec![
-                "bash".into(),
-                "-c".into(),
-                "echo 'comecou'; sleep 1; exit 5".into(),
-            ],
-        )
-        .await;
+        // O processo só morre quando o teste mandar (o arquivo de sinal): assim a aba está
+        // aberta quando o processo sai, sem depender de tempo.
+        let sinal = t.dir.join("morre");
+        let script = format!(
+            "echo 'comecou'; while [ ! -f {sinal} ]; do sleep 0.05; done; exit 5",
+            sinal = sinal.display()
+        );
+        let hub = live_hub_with(&t, None, vec!["bash".into(), "-c".into(), script]).await;
         let spec = r#"{"profile":"pessoal","project":"proj","agent":"claude"}"#;
         let (status, body) = http("POST", &format!("{hub}/api/sessions"), Some(spec)).await;
         assert_eq!(status, 201, "{body}");
@@ -3504,29 +3507,41 @@ mod tests {
         let url = format!("ws://{hub}/api/sessions/pessoal--proj--claude-1/terminal");
         let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
         let mut seen = String::new();
-        let mut status: Option<i64> = None;
-        let done = tokio::time::timeout(Duration::from_secs(15), async {
+        // Primeiro a saída, com o processo ainda vivo.
+        let saiu = tokio::time::timeout(Duration::from_secs(15), async {
             while let Some(Ok(message)) = ws.next().await {
-                match message {
-                    WsMessage::Binary(bytes) => seen.push_str(&String::from_utf8_lossy(&bytes)),
-                    WsMessage::Text(text) => {
-                        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-                        if value["type"] == "exit" {
-                            status = value["status"].as_i64();
-                            return true;
-                        }
+                if let WsMessage::Binary(bytes) = message {
+                    seen.push_str(&String::from_utf8_lossy(&bytes));
+                    if seen.contains("comecou") {
+                        return true;
                     }
-                    _ => {}
                 }
             }
             false
         })
         .await
         .unwrap_or(false);
-        assert!(done, "a aba não avisou que a sessão morreu: {seen}");
+        assert!(saiu, "a saída não chegou: {seen}");
+
+        // Agora o processo morre: a aba tem de avisar o status de saída.
+        std::fs::write(&sinal, "agora").unwrap();
+        let mut status: Option<i64> = None;
+        let avisou = tokio::time::timeout(Duration::from_secs(15), async {
+            while let Some(Ok(message)) = ws.next().await {
+                if let WsMessage::Text(text) = message {
+                    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if value["type"] == "exit" {
+                        status = value["status"].as_i64();
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert!(avisou, "a aba não avisou que a sessão morreu: {seen}");
         assert_eq!(status, Some(5));
-        // A saída chegou viva, enquanto o processo rodava.
-        assert!(seen.contains("comecou"), "{seen}");
     }
 
     #[tokio::test]

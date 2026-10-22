@@ -143,7 +143,16 @@ impl Tmux {
             "remain-on-exit".to_owned(),
             "on".to_owned(),
         ]);
-        self.run(&argv).await?;
+        if let Err(e) = self.run(&argv).await {
+            // A sessão não existe: o processo morreu antes do `set-option` (sem
+            // `remain-on-exit` o painel leva a sessão junto). Senão é o tmux que recusou.
+            let sumiu = matches!(self.find(&plan.tmux_session).await, Ok(None));
+            return Err(if sumiu {
+                format!("a sessão terminou logo ao iniciar ({e})")
+            } else {
+                e
+            });
+        }
         // `set-option -t` espera um painel: `=nome:` é "exatamente esta sessão" (`=nome` falha).
         let target = format!("={}:", plan.tmux_session);
         if let Some(token) = exec_token {

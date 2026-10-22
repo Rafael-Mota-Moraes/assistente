@@ -15,7 +15,7 @@ use http_body_util::{BodyExt, Full};
 use hub_core::{
     AgentKind, Config, ExecAccess, LaunchOptions, LaunchPlan, Project, ProjectSettings,
     SessionSpec, claude_logged_in, discover_projects, exec_client_dir, load_settings,
-    settings_path,
+    profile_data_dir, settings_path,
 };
 use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
+mod diagnostico;
 mod kanban;
 
 pub use kanban::spawn_orchestrator;
@@ -289,6 +290,8 @@ pub fn agent_router(state: AppState) -> Router {
         .route("/v1/kanban/done", post(kanban::agent_done))
         .route("/v1/kanban/release", post(kanban::agent_release))
         .route("/v1/workers", post(kanban::agent_worker))
+        // Diagnóstico da VM: leitura só, sem aprovação (F14.1).
+        .route("/v1/diagnostico", post(diagnostico::agent_diagnostico))
         .with_state(state)
 }
 
@@ -2337,6 +2340,21 @@ pub(super) async fn launch_session(
         None => LaunchPlan::build_with(&inner.config, &inner.home, spec, seq, &options),
     }
     .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    // O prompt da sessão que explora o backlog fica gravado na pasta de dados do perfil
+    // (`explorar/<sessão>.md`), como a spec 10 promete: é o que o diagnóstico lista (F14.1).
+    if let Some(prompt) = prompt {
+        let file = profile_data_dir(&inner.home, &spec.profile)
+            .join("explorar")
+            .join(format!("{}.md", plan.tmux_session));
+        if let Some(parent) = file.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::warn!("sem pasta do prompt de explorar: {e}");
+        }
+        if let Err(e) = std::fs::write(&file, prompt) {
+            tracing::warn!("sem gravar o prompt de explorar em {}: {e}", file.display());
+        }
+    }
     // Só projetos de verdade (repo git na raiz do perfil).
     if !plan.cwd.join(".git").exists() || !plan.cwd.starts_with(&profile.root) {
         return Err(error(
@@ -3743,6 +3761,115 @@ mod tests {
         let out = run_client(&t, &agents, &token, &["--resultado", "nao-existe"]).await;
         assert_eq!(out.status.code(), Some(125));
         assert!(String::from_utf8_lossy(&out.stderr).contains("peça de novo"));
+    }
+
+    // ---- Diagnóstico da VM lido pelo agente (F14.1) ----
+
+    /// POST /v1/diagnostico: leitura só (sem aprovação), lista fechada de comandos.
+    #[tokio::test]
+    async fn diagnostico_le_sem_aprovacao_e_recusa_o_que_esta_fora_da_lista() {
+        async fn pedir(url: &str, comando: &str, bearer: Option<&str>) -> (u16, String) {
+            let body = serde_json::json!({ "comando": comando }).to_string();
+            http_as("POST", url, Some(&body), bearer).await
+        }
+
+        let t = TestTmux::new("api-diagnostico");
+        let ExecHub { hub, agents, .. } = live_exec_hub(&t, ExecStore::default()).await;
+        let session = new_session(&hub, "claude").await;
+        let token = exec_token(&t, &session).await;
+        let url = format!("{agents}/v1/diagnostico");
+
+        // Token ausente ou errado: 401 (a sessão mora no token).
+        assert_eq!(pedir(&url, "tmux-ls", None).await.0, 401);
+        assert_eq!(pedir(&url, "tmux-ls", Some("errado")).await.0, 401);
+
+        // Comando fora da lista: 400, com a lista dos comandos que existem.
+        let (status, body) = pedir(&url, "rm -rf /", Some(&token)).await;
+        assert_eq!(status, 400, "{body}");
+        assert!(body.contains("desconhecido"), "{body}");
+        let (status, body) = pedir(&url, "bash -c 'echo oi'", Some(&token)).await;
+        assert_eq!(status, 400, "{body}");
+
+        // Comando da lista: 200, sem passar pelo app (nenhum pedido em /api/exec).
+        let (status, body) = pedir(&url, "tmux-ls", Some(&token)).await;
+        assert_eq!(status, 200, "{body}");
+        let reply = json(&body);
+        assert!(
+            reply["saida"].as_str().unwrap().contains(&session),
+            "{body}"
+        );
+        assert_eq!(reply["comando"], "tmux-ls");
+        let (_, pending) = http("GET", &format!("{hub}/api/exec"), None).await;
+        assert_eq!(json(&pending), serde_json::json!([]), "não pediu aprovação");
+
+        // O painel de uma sessão deste projeto: 200.
+        let (status, body) = pedir(&url, &format!("tmux-pane {session}"), Some(&token)).await;
+        assert_eq!(status, 200, "{body}");
+
+        // O painel de uma sessão de outro projeto: 400.
+        let outra = t
+            .tmux
+            .create(
+                &t.plan("pessoal--outro--claude-1", "sleep 30"),
+                &crate::sessions::tests::spec("outro", hub_core::AgentKind::Claude),
+                None,
+            )
+            .await
+            .unwrap();
+        let (status, body) = pedir(&url, &format!("tmux-pane {}", outra.id), Some(&token)).await;
+        assert_eq!(status, 400, "{body}");
+        assert!(body.contains("não é deste projeto"), "{body}");
+
+        // Sessão que não existe: 404.
+        let (status, body) = pedir(&url, "tmux-pane pessoal--proj--claude-99", Some(&token)).await;
+        assert_eq!(status, 404, "{body}");
+
+        // Os prompts de `explorar/` do perfil.
+        let (status, body) = pedir(&url, "explorar", Some(&token)).await;
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("explorar"), "{body}");
+
+        // O journal do hubd: o comando roda (nesta máquina sem systemd ele falha, mas a rota
+        // responde com o que o comando disse).
+        let (status, body) = pedir(&url, "journal-hubd 5", Some(&token)).await;
+        assert_eq!(status, 200, "{body}");
+        let reply = json(&body);
+        assert!(reply["saida"].is_string(), "{body}");
+        assert!(reply.get("codigo").is_some(), "{body}");
+
+        // A sessão encerrada: o token morre junto.
+        assert_eq!(
+            http("DELETE", &format!("{hub}/api/sessions/{session}"), None)
+                .await
+                .0,
+            204
+        );
+        assert_eq!(pedir(&url, "tmux-ls", Some(&token)).await.0, 401);
+    }
+
+    /// O cliente do agente (`vm/fora-do-jail diagnostico`) contra o hubd de verdade.
+    #[tokio::test]
+    async fn cliente_diagnostico_devolve_a_saida_sem_pedido_de_aprovacao() {
+        let t = TestTmux::new("api-cliente-diagnostico");
+        let ExecHub { hub, agents, .. } = live_exec_hub(&t, ExecStore::default()).await;
+        let session = new_session(&hub, "opencode").await;
+        let token = exec_token(&t, &session).await;
+
+        let out = run_client(&t, &agents, &token, &["diagnostico", "tmux-ls"]).await;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(0), "{stdout}");
+        assert!(stdout.contains(&session), "{stdout}");
+
+        // Comando fora da lista: o cliente avisa e sai com 1.
+        let out = run_client(&t, &agents, &token, &["diagnostico", "rm -rf /"]).await;
+        assert_eq!(out.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("desconhecido"), "{stderr}");
+
+        // Token morto: recusado.
+        let out = run_client(&t, &agents, "token-errado", &["diagnostico", "tmux-ls"]).await;
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("token recusado"));
     }
 
     #[tokio::test]

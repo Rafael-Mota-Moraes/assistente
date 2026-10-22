@@ -24,11 +24,10 @@
     {
       "id": "T3",
       "title": "F9.11 Cuidados do modo PC",
-      "description": "Card em vermelho com \"vai rodar no seu PC\", comando e pasta por inteiro; sem \"aprovar e sempre permitir\" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).\nPronto quando: nenhum caminho aprova pedido `host` sem clique (fora da lista exata) e todo pedido executado fica no registro. Como testar: vitest do card e da lista; revisão da spec 05.",
+      "description": "Card em vermelho com \"vai rodar no seu PC\", comando e pasta por inteiro; sem \"aprovar e sempre permitir\" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).\nPronto quando: nenhum caminho aprova pedido `host` sem clique (fora da lista exata) e todo pedido executado fica no registro. Como testar: vitest do card e da lista; revisão da spec 05.\n\nRevisão (2026-10-22): esta tarefa voltou do \"feito\" sem código: o único commit era o merge da F9.9. Já existe na main (F9.9/F9.10): pedido `host` sem \"sempre permitir\" na UI e no hubd, e o `host_exec` do app. Falta tudo o que está acima, mais: o hubd marca o pedido `host` como pego pelo app, para um segundo `host_exec` do mesmo pedido não rodar o comando de novo. Detalhes em docs/FUNCIONALIDADES.md (F9.11).",
       "priority": "normal",
       "kind": "manual",
-      "column": "feito",
-      "commit": "4c273c06a156ddeb50231b6d2361c781cf8fa09b",
+      "column": "backlog",
       "created_at": 1792614072
     },
     {
@@ -54,11 +53,10 @@
     {
       "id": "T6",
       "title": "F12.3 Contexto de código",
-      "description": "No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.\nPronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.\nComo testar: vitest com DOM fake + um build de produção.",
+      "description": "No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.\nPronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.\nComo testar: vitest com DOM fake + um build de produção.\n\nRevisão (2026-10-22): o código já está na main e tem testes (`app/src/features/pick/`: `codeContext.js`, `context.ts`, `prompt.ts`, `PickCodeContext.tsx`), mas não está ligado. Falta: injetar `codeContext.js` antes do `pick.js` (no `SCRIPT` do `app/src-tauri/src/pick.rs`), o `pick.js` mandar `code`, o `PickedElement` (TS e Rust) ganhar `code`, o `toPickDetail` (`features/pick/detail.ts`) preencher `source`/`component`/`components` e a caixa do F12.4 (`PickDialog.tsx`) mostrar o `PickCodeContext`; e deixar um tipo de pick e um prompt só (o do hubd). Detalhes em docs/FUNCIONALIDADES.md (F12.3).",
       "priority": "normal",
       "kind": "manual",
-      "column": "feito",
-      "commit": "6996e4952e2e0354cbeedf1f76c3ba13b7004d66",
+      "column": "backlog",
       "created_at": 1792614072
     },
     {

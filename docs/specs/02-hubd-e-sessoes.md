@@ -40,8 +40,8 @@ Todas as rotas exceto `/api/health` exigem `Authorization: Bearer <token>`. Erro
 | POST | `/api/sleep/stop` | pronto (F6.4) | 204; cria `STOP` no notebook via ssh (502 sem notebook) |
 | POST | `/api/sleep/collect` | pronto (F6.5) | `{profile, project, date}` → `{base, sleep_branch, commits, relatorio, fast_forward}`; 502 sem notebook |
 | POST | `/api/sleep/merge` | pronto (F6.5) | 204 fast-forward; 409 se a base andou durante a noite |
-| GET | `/api/exec` | pronto (F9.7) | `[{id, session, profile, project, cwd, command, timeout_secs, created_at, state, auto_approved, result}]`: pendentes primeiro, depois os dos últimos 30 min |
-| POST | `/api/exec/{id}/approve` | pronto (F9.7) | `{always?}` → 204, roda na VM fora do jail; `always` grava em `allowed_commands` do projeto; 404/409 |
+| GET | `/api/exec` | pronto (F9.7/F9.9) | `[{id, session, profile, project, cwd, command, target, timeout_secs, created_at, state, auto_approved, result}]`: pendentes primeiro, depois os dos últimos 30 min; `target: "host"` é o pedido para o PC (F9.9) |
+| POST | `/api/exec/{id}/approve` | pronto (F9.7/F9.9) | `{always?}` → 204, roda na VM fora do jail; pedido `target: host` é só marcado como rodando (quem executa é o app no PC, F9.10) e `always` é recusado (400); `always` grava em `allowed_commands` do projeto; 404/409 |
 | POST | `/api/exec/{id}/deny` | pronto (F9.7) | 204; 404/409 se não está pendente |
 | GET | `/api/memory` | F5.0 / F5.4 / F5.6 | saúde local (F5.0); sync do espelho (F5.4); detalhes operacionais (F5.6) |
 
@@ -77,7 +77,7 @@ sessões nascem sem a API.
 
 | Método | Rota | Corpo / resposta |
 |---|---|---|
-| POST | `/v1/exec` | `{command, cwd?, timeout_secs?}` → 202 `{id, state, auto_approved}`; 400 comando vazio/cwd fora do projeto; 401; 429 (3 pendentes por sessão, 20 no total) |
+| POST | `/v1/exec` | `{command, cwd?, timeout_secs?, target?}` → 202 `{id, state, auto_approved}`; `target: "host"` = pedido para o PC (F9.9, `fora-do-jail --pc`), nunca auto-aprovado; 400 comando vazio/cwd fora do projeto; 401; 429 (3 pendentes por sessão, 20 no total) |
 | GET | `/v1/exec/{id}?wait=<s≤55>` | long-poll até estado final → `{…, state, result}`; pedido de outra sessão = 404 |
 
 Estados: `pending → running → done | failed`, `pending → denied | expired` (10 min sem resposta).
@@ -85,7 +85,8 @@ A fila é só memória (`crates/hubd/src/exec.rs`): reiniciar o hubd perde os pe
 comando roda com `bash -lc` na pasta pedida (dentro do projeto), env do perfil, stdin vazio,
 num grupo de processos próprio (timeout padrão 10 min, teto 60, mata o grupo), guardando o fim
 da saída (64 KiB por stream). Casou exatamente com `allowed_commands` do projeto? Roda sem
-perguntar (`auto_approved`).
+perguntar (`auto_approved`) — exceto pedido `target: host`, que nunca roda sozinho: o hubd não
+executa nada no PC, só o app após a sua aprovação (F9.9–F9.10).
 
 ## Protocolo do terminal (F2.3)
 

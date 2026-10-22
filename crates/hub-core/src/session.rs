@@ -284,6 +284,10 @@ impl LaunchPlan {
     }
 }
 
+/// Endpoint OAuth do Claude Code (troca do código do `/login` e renovação do token). O
+/// `console.anthropic.com` é o das versões antigas.
+const CLAUDE_OAUTH_HOSTS: &[&str] = &["platform.claude.com", "console.anthropic.com"];
+
 /// `ai-jail` (2.x) com o mínimo que a sessão precisa. Validado na VM em 2026-10-19:
 /// - home privada: só o projeto e os dados do próprio agente são montados;
 /// - rede filtrada: o túnel do notebook só aparece com `--forward-port`;
@@ -329,6 +333,14 @@ fn jail_argv(
             for host in &profile.opencode_allow_hosts {
                 argv.push("--allow-host".to_owned());
                 argv.push(host.clone());
+            }
+        }
+        // O preset do claude só libera api.anthropic.com: sem o endpoint OAuth o token não
+        // renova dentro do jail (401 quando expira) e o `/login` da aba falha na troca do código.
+        if agent == AgentKind::Claude && !profile.claude_via_9router {
+            for host in CLAUDE_OAUTH_HOSTS {
+                argv.push("--allow-host".to_owned());
+                argv.push((*host).to_owned());
             }
         }
         // Hosts liberados pela engrenagem do projeto (F9.2): valem para os dois agentes.
@@ -615,8 +627,33 @@ mod tests {
             opencode.ends_with(" -- opencode --standalone"),
             "{opencode}"
         );
-        let claude = build(AgentKind::Claude).unwrap().argv;
-        assert!(!claude.contains(&"--allow-host".to_owned()));
+        let claude = build(AgentKind::Claude).unwrap().argv.join(" ");
+        assert!(!claude.contains("exemplo.com"), "{claude}");
+    }
+
+    #[test]
+    fn claude_gets_the_oauth_hosts() {
+        let home = PathBuf::from("/home/rafa");
+        let config = Config::parse(EXAMPLE, &home).unwrap();
+        let build = |config: &Config, agent| {
+            LaunchPlan::build(config, &home, &spec("pessoal", "x", agent), 1)
+                .unwrap()
+                .argv
+                .join(" ")
+        };
+        let claude = build(&config, AgentKind::Claude);
+        assert!(
+            claude.contains("--allow-host platform.claude.com --allow-host console.anthropic.com"),
+            "{claude}"
+        );
+        assert!(
+            !build(&config, AgentKind::Opencode).contains("platform.claude.com"),
+            "o opencode não usa o login da Anthropic"
+        );
+        // Pelo 9router não há login da Anthropic para renovar.
+        let text = EXAMPLE.replacen("claude_via_9router = false", "claude_via_9router = true", 1);
+        let via_9router = Config::parse(&text, &home).unwrap();
+        assert!(!build(&via_9router, AgentKind::Claude).contains("--allow-host"));
     }
 
     #[test]
@@ -899,18 +936,16 @@ mod tests {
             allow_hosts: vec!["pypi.org".into()],
             ..Default::default()
         });
-        let plan = LaunchPlan::build_with(
-            &config,
-            &home,
-            &spec("pessoal", "x", AgentKind::Opencode),
-            1,
-            &options,
-        )
-        .unwrap();
-        let argv = plan.argv.join(" ");
-        assert!(argv.contains(" --network "), "{argv}");
-        assert!(!argv.contains("--forward-port"), "{argv}");
-        assert!(!argv.contains("--allow-host"), "{argv}");
+        // O ai-jail recusa `--allow-host` com `--network`: nem os hosts OAuth do Claude entram.
+        for agent in [AgentKind::Claude, AgentKind::Opencode] {
+            let plan =
+                LaunchPlan::build_with(&config, &home, &spec("pessoal", "x", agent), 1, &options)
+                    .unwrap();
+            let argv = plan.argv.join(" ");
+            assert!(argv.contains(" --network "), "{argv}");
+            assert!(!argv.contains("--forward-port"), "{argv}");
+            assert!(!argv.contains("--allow-host"), "{argv}");
+        }
     }
 
     #[test]

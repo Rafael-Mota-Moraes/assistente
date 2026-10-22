@@ -57,6 +57,9 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `git push --force` é negado e `git push` pergunta. Como testar: pedir ao agente.
 - [x] **F3.4 Providers do opencode por perfil.** `opencode_providers` no perfil (padrão `["9router"]`): o `agentes configurar` grava os providers (com as chaves) no `opencode.json` do perfil; o config global da VM fica sem chaves de API (só MCP/plugins). O notebook só é exigido se algum perfil listar `9router`. As `policies` do `opencode.json` do PC vão junto (no perfil e no global da VM): o tab de modelos fica igual ao do PC (specs 04, 05).
   Pronto quando: sessão de um perfil só enxerga os próprios providers. Como testar: após `agentes configurar`, `grep apiKey` no config global da VM não acha nada.
+- [x] **F3.5 Login do Claude renova dentro do jail.** O preset do ai-jail só libera `api.anthropic.com`; o endpoint OAuth (`platform.claude.com`, antes `console.anthropic.com`) ficava bloqueado. O token não renovava (401 "OAuth access token has expired" depois de algumas horas) e o `/login` na aba falhava com "proxy refused the connection". O `LaunchPlan` passa `--allow-host` desses hosts nas sessões do Claude com login da Anthropic (não com `claude_via_9router` nem com rede completa). Testes: `claude_gets_the_oauth_hosts`, `full_network_drops_forward_ports_and_host_filter`.
+  Pronto quando: o `LaunchPlan` do Claude libera os hosts OAuth. Como testar: `./dev just check`.
+- [ ] **F3.6 Validar o login dentro do jail** *(humano)*. Na VM real, o `/login` dentro da aba Claude conclui e uma sessão aberta além da validade do token não mostra o 401.
 
 ## F4 — Notebook e 9router
 

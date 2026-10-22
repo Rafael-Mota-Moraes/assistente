@@ -35,6 +35,7 @@ O `LaunchPlan` (`hub_core::session::jail_argv`) monta:
 | `--terminal-passthrough` | o proxy de terminal do ai-jail descarta o OSC 52: sem isso copiar com o mouse no claude/opencode não chega ao app. O agente passa a escrever direto no painel do tmux, que só repassa ao app o OSC 52 de escrita |
 | `--env NOME` (uma por variável do perfil) | o valor vem do env do tmux, não aparece na linha de comando |
 | `--docker` | engrenagem do projeto (F9.2) ou `[jail] docker` do `.assistente.toml` |
+| `--allow-host platform.claude.com` e `console.anthropic.com` (só claude, sem `claude_via_9router`) | endpoint OAuth do Claude Code. O preset só libera `api.anthropic.com`: sem isso o token não renova dentro do jail (401 "OAuth access token has expired" quando vence) e o `/login` na aba falha na troca do código ("proxy refused the connection"). O `console.anthropic.com` é o das versões antigas (F3.5) |
 | `--allow-host <host>` (os dois agentes) | `allow_hosts` da engrenagem do projeto (F9.2) |
 | `--forward-port 7879` (`hub.agent_listen`) | API dos agentes (F9.5): o agente pede comandos fora do jail. A 7878 do app continua fora |
 | `--map ~/.local/lib/assistente` | cliente `fora-do-jail` (F9.6), só leitura |

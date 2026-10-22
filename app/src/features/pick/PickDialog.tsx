@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { PickDetail, PickTarget } from "../../bridge/types";
 import { openView, useAppStore, viewKey } from "../../store";
 import { reopenTab } from "../sessions/shortcuts";
+import { PickCodeContext } from "./PickCodeContext";
 
 /** Espera antes de pedir o prompt: cada tecla não vira uma ida ao hubd. */
 const PREVIEW_MS = 300;
@@ -32,6 +33,8 @@ export function PickDialog() {
   const hub = useAppStore((s) => s.hub);
   const sessions = useAppStore((s) => s.sessions);
   const activeSession = useAppStore((s) => s.activeSession);
+  const projects = useAppStore((s) => s.projects);
+  const activeProfile = useAppStore((s) => s.activeProfile);
 
   const [request, setRequest] = useState("");
   const [mode, setMode] = useState<PickTarget>("sessao");
@@ -45,6 +48,7 @@ export function PickDialog() {
 
   const profile = target?.profile ?? "";
   const project = target?.project ?? "";
+  const projectPath = projects.find((p) => p.name === project)?.path;
 
   /** As sessões de agente do projeto: a aba Terminal nunca recebe o pedido. */
   const agents = useMemo(
@@ -177,6 +181,8 @@ export function PickDialog() {
             </div>
           )}
         </dl>
+
+        <PickCodeContext pick={pick} projectRoot={projectPath} />
 
         <label className="flex flex-col gap-1 text-sm text-slate-300">
           O que quer mudar

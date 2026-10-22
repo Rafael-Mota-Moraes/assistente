@@ -2,8 +2,10 @@
 // `PickDetail`). Retângulo, viewport, rolagem e `aria-*` não têm campo próprio no hubd: vão
 // no `extra` e ficam no arquivo do pick.
 import type { PickDetail, PickedElement } from "../../bridge/types";
+import { resolveCodeContext } from "./context";
 
 export function toPickDetail(pick: PickedElement): PickDetail {
+  const context = resolveCodeContext(pick.code);
   return {
     url: pick.url,
     selector: pick.selector,
@@ -19,5 +21,8 @@ export function toPickDetail(pick: PickedElement): PickDetail {
     rect: pick.rect,
     viewport: pick.viewport,
     scroll: pick.scroll,
+    component: context.component,
+    source: context.source?.label ?? null,
+    components: context.stack,
   };
 }

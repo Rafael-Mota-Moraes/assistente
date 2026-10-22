@@ -18,6 +18,12 @@ type PickPayload = {
   viewport: { width: number; height: number };
   scroll: { x: number; y: number };
   url: string;
+  code: {
+    react: boolean;
+    component: string | null;
+    stack: string[];
+    source: { file: string; line: number | null; column: number | null } | null;
+  } | null;
 };
 
 type PickApi = {

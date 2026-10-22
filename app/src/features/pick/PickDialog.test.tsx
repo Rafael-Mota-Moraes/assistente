@@ -12,6 +12,8 @@ const pick: PickDetail = {
   html: '<button class="salvar">Salvar</button>',
   tag: "button",
   source: "src/features/x/Botao.tsx:42",
+  component: "Botao",
+  components: ["Botao", "Card", "App"],
 };
 
 const sessions = [
@@ -59,6 +61,7 @@ function open() {
     hub: hub as unknown as HubClient,
     pick: { profile: "pessoal", project: "game", pick },
     sessions,
+    projects: [{ name: "game", path: "/home/user/game", has_project_config: false, kanban_pendentes: 0 }],
     activeSession: "pessoal--game--claude-1",
   });
   render(<PickDialog />);

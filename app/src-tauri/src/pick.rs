@@ -26,7 +26,8 @@ const MAIN_WINDOW: &str = "main";
 pub const MAX_PAYLOAD: usize = 64 * 1024;
 
 /// Script injetado na webview do preview (fora do bundle do projeto).
-pub const SCRIPT: &str = include_str!("pick.js");
+/// O codeContext.js vem antes do pick.js: o pick.js usa `window.__assistenteCodeContext.extract`.
+pub const SCRIPT: &str = include_str!("codeContext.js");
 
 /// Retângulo do elemento na viewport (px de CSS).
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -49,6 +50,32 @@ pub struct Viewport {
 pub struct Scroll {
     pub x: f64,
     pub y: f64,
+}
+
+/// Contexto de código do elemento apontado (F12.3).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct PickCodeContext {
+    /// A página usa React?
+    pub react: bool,
+    /// Componente mais próximo do elemento.
+    pub component: Option<String>,
+    /// Pilha de componentes, do mais interno ao mais externo.
+    pub stack: Vec<String>,
+    /// Arquivo e linha do JSX (null em build de produção).
+    pub source: Option<PickSource>,
+}
+
+/// Arquivo e linha do JSX (F12.3).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct PickSource {
+    /// Caminho do arquivo (como vem da página: `/src/...` ou URL do dev server).
+    pub file: String,
+    /// Linha do JSX.
+    pub line: Option<i64>,
+    /// Coluna do JSX.
+    pub column: Option<i64>,
 }
 
 /// Elemento apontado na página do preview.
@@ -81,6 +108,8 @@ pub struct PickedElement {
     pub scroll: Scroll,
     /// URL real da webview: o Rust troca pela URL carregada, a do payload não vale.
     pub url: String,
+    /// Contexto de código (F12.3).
+    pub code: Option<PickCodeContext>,
 }
 
 /// O que o Rust faz com uma navegação.
@@ -227,7 +256,7 @@ mod tests {
     }
 
     fn payload() -> String {
-        r##"{"tag":"button","id":"save","classes":["btn","primary"],"role":null,"aria":{"label":"Salvar"},"text":"Salvar","html":"<button id=\"save\">Salvar</button>","selector":"#save","dom_path":"body > main > button#save","rect":{"x":10,"y":20,"width":120,"height":32},"viewport":{"width":1280,"height":720},"scroll":{"x":0,"y":140},"url":"http://mentira.local/"}"##
+        r##"{"tag":"button","id":"save","classes":["btn","primary"],"role":null,"aria":{"label":"Salvar"},"text":"Salvar","html":"<button id=\"save\">Salvar</button>","selector":"#save","dom_path":"body > main > button#save","rect":{"x":10,"y":20,"width":120,"height":32},"viewport":{"width":1280,"height":720},"scroll":{"x":0,"y":140},"url":"http://mentira.local/","code":null}"##
             .to_owned()
     }
 

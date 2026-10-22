@@ -2,6 +2,7 @@ import {
   Bot,
   ChevronDown,
   CirclePause,
+  GitMerge,
   LayoutGrid,
   Pencil,
   Play,
@@ -225,6 +226,18 @@ export function KanbanBoard() {
     });
   }
 
+  /** Revisão (F11.12): um Claude sozinho junta na `main` o que passa e devolve o resto ao backlog. */
+  function review(count: number) {
+    void act(async () => {
+      requireClaudeLogin("Revisar");
+      const info = await client.reviewBoard(profile, project);
+      useAppStore.setState((s) => ({
+        sessions: [...s.sessions.filter((x) => x.id !== info.id), info],
+        toast: `Revisão de ${count} ${count === 1 ? "card" : "cards"} aberta: o que passar vai para a main, e o resumo aparece no quadro.`,
+      }));
+    });
+  }
+
   /** "Retomar" (F11.14): a cota voltou; o orquestrador volta a puxar e avisa o que abriu. */
   function resume() {
     void act(async () => {
@@ -411,6 +424,21 @@ export function KanbanBoard() {
           Orquestrador: {board.orchestrator_error}
         </p>
       )}
+      {board?.review && (
+        <details className="border-b border-line bg-black/20 px-5 py-2 text-sm text-slate-200">
+          <summary className="flex cursor-pointer items-center gap-2">
+            <GitMerge className="size-4 shrink-0 text-emerald-300" />
+            Última revisão
+            <span className="truncate font-mono text-xs text-slate-400">{board.review.file}</span>
+          </summary>
+          <pre
+            aria-label="Resumo da revisão"
+            className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-slate-300"
+          >
+            {board.review.text}
+          </pre>
+        </details>
+      )}
       <div className="flex min-h-0 flex-1 flex-col">
         {board === null ? (
           <p className="p-6 text-sm text-slate-400">Lendo o quadro…</p>
@@ -448,9 +476,19 @@ export function KanbanBoard() {
                     {freeDone.length > 0 && (
                       <button
                         type="button"
+                        onClick={() => review(freeDone.length)}
+                        title="Abre um Claude que revisa sozinho os cards feitos: junta na main os que passam (com o check verde) e devolve os outros ao backlog com o que falta"
+                        className="ml-auto flex items-center gap-1 rounded-md border border-emerald-400/50 bg-emerald-500/20 px-2 py-0.5 text-xs font-normal text-white hover:bg-emerald-500/30"
+                      >
+                        <GitMerge className="size-3.5" /> Revisar
+                      </button>
+                    )}
+                    {freeDone.length > 0 && (
+                      <button
+                        type="button"
                         onClick={() => qaAll(freeDone.length)}
                         title="Abre um Claude que passa por todos os cards feitos: pergunta uma vez onde juntar e valida ou devolve cada um"
-                        className="ml-auto flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-0.5 text-xs font-normal text-white hover:bg-accent/30"
+                        className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-0.5 text-xs font-normal text-white hover:bg-accent/30"
                       >
                         <ShieldCheck className="size-3.5" /> QA geral ({freeDone.length})
                       </button>

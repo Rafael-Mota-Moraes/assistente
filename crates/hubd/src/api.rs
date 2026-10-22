@@ -79,6 +79,9 @@ struct Inner {
     orchestrator_lock: tokio::sync::Mutex<()>,
     /// Último erro do orquestrador automático por `perfil/projeto`, mostrado no quadro.
     orchestrator_errors: std::sync::Mutex<HashMap<String, String>>,
+    /// Cards (`id@commit`) que o orquestrador já mandou para a revisão automática (F11.12), por
+    /// `perfil/projeto`: o que a revisão deixou como estava não abre outra revisão sozinho.
+    auto_reviews: std::sync::Mutex<HashMap<String, String>>,
     /// Só nos testes: troca o comando do atualizador (F8.5).
     update_command_override: Option<String>,
     /// Só nos testes: env extra do atualizador.
@@ -116,6 +119,7 @@ impl AppState {
             kanban_lock: tokio::sync::Mutex::new(()),
             orchestrator_lock: tokio::sync::Mutex::new(()),
             orchestrator_errors: std::sync::Mutex::new(HashMap::new()),
+            auto_reviews: std::sync::Mutex::new(HashMap::new()),
         }))
     }
 
@@ -270,6 +274,10 @@ pub fn router(state: AppState) -> Router {
             post(kanban::qa_all),
         )
         .route(
+            "/api/projects/{profile}/{project}/kanban/revisar",
+            post(kanban::review_board),
+        )
+        .route(
             "/api/projects/{profile}/{project}/kanban/{id}/qa",
             post(kanban::qa_card),
         )
@@ -319,6 +327,8 @@ pub fn agent_router(state: AppState) -> Router {
         .route("/v1/kanban/block", post(kanban::agent_block))
         .route("/v1/kanban/validate", post(kanban::agent_validate))
         .route("/v1/kanban/reopen", post(kanban::agent_reopen))
+        .route("/v1/kanban/juntar", post(kanban::agent_merge_main))
+        .route("/v1/kanban/resumo", post(kanban::agent_review_summary))
         .route("/v1/workers", post(kanban::agent_worker))
         // Diagnóstico da VM: leitura só, sem aprovação (F14.1).
         .route("/v1/diagnostico", post(diagnostico::agent_diagnostico))
@@ -2427,6 +2437,16 @@ pub(super) async fn launch_session(
     spec: &SessionSpec,
     prompt: Option<&str>,
 ) -> Result<SessionInfo, Response> {
+    launch_session_with(state, spec, prompt, false).await
+}
+
+/// `launch_session` com `docker` ligado à força (a revisão, F11.12, roda o check do projeto).
+pub(super) async fn launch_session_with(
+    state: &AppState,
+    spec: &SessionSpec,
+    prompt: Option<&str>,
+    docker: bool,
+) -> Result<SessionInfo, Response> {
     let inner = &state.0;
     let Some(profile) = inner.config.profile(&spec.profile) else {
         return Err(error(StatusCode::NOT_FOUND, "perfil desconhecido"));
@@ -2441,10 +2461,9 @@ pub(super) async fn launch_session(
     let seq = next_seq(&existing, spec);
     let exec = exec_access_for(inner, spec.agent);
     let exec_token = exec.as_ref().map(|e| e.token.clone());
-    let options = LaunchOptions {
-        settings: project_settings_for(inner, &spec.profile, &spec.project),
-        exec,
-    };
+    let mut settings = project_settings_for(inner, &spec.profile, &spec.project);
+    settings.docker |= docker;
+    let options = LaunchOptions { settings, exec };
     let mut plan = match prompt {
         Some(prompt) => {
             LaunchPlan::build_explore(&inner.config, &inner.home, spec, seq, &options, prompt)

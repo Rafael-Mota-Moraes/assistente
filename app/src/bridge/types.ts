@@ -217,7 +217,12 @@ export type KanbanBoard = {
   orchestrator_error?: string;
   /** Só na resposta de `setOrchestrator`: tarefas que a volta abriu agora. */
   started?: string[];
+  /** Último resumo de revisão (F11.12), de `.assistente/revisoes/`. */
+  review?: KanbanReview;
 };
+
+/** Resumo de uma revisão: o que entrou na `main`, o que voltou e por quê (F11.12). */
+export type KanbanReview = { file: string; text: string };
 
 /** Campos de criar/editar; todos opcionais na edição. */
 export type KanbanDraft = {

@@ -325,29 +325,7 @@ pub fn render_qa_prompt(card: &Card, branch: &str, instructions: &str) -> String
 /// Prompt do QA geral (F11.16): uma sessão na raiz do projeto confere todos os cards "feitos" de
 /// uma vez, com uma só pergunta de onde juntar, e valida ou reabre cada um.
 pub fn render_qa_all_prompt(cards: &[Card], instructions: &str) -> String {
-    let list: String = cards
-        .iter()
-        .map(|card| {
-            let description = if card.description.is_empty() {
-                "(sem descrição: o título é o pedido)".to_owned()
-            } else {
-                card.description.clone()
-            };
-            let commit = card
-                .commit
-                .as_deref()
-                .map(|commit| format!(", marcada como feita no commit `{commit}`"))
-                .unwrap_or_default();
-            format!(
-                "### {id}: {title}\n\n\
-                 Branch `{branch}`, worktree `.assistente/worktrees/{id}`{commit}.\n\n\
-                 {description}\n\n",
-                id = card.id,
-                title = card.title,
-                branch = branch(&card.id),
-            )
-        })
-        .collect();
+    let list = card_list(cards);
     format!(
         "# QA geral do quadro\n\n\
          Você é o QA destas {n} tarefas \"feitas\": confere se cada uma atende o pedido e, se\n\
@@ -383,6 +361,99 @@ pub fn render_qa_all_prompt(cards: &[Card], instructions: &str) -> String {
             text => format!("\n## Instruções do projeto\n\n{text}\n"),
         },
     )
+}
+
+/// Linha do `info/exclude` que mantém os resumos das revisões (F11.12) fora do git.
+pub const REVIEWS_EXCLUDE: &str = "/.assistente/revisoes/";
+
+/// Prompt da revisão em lote (F11.12): uma sessão na raiz do projeto confere os cards "feitos",
+/// junta os que passam numa worktree descartável a partir da `main`, roda o check e pede ao hubd
+/// para andar com a `main`. O que é defeito de uma branch sozinha volta ao backlog.
+pub fn render_review_prompt(cards: &[Card], instructions: &str) -> String {
+    let list = card_list(cards);
+    format!(
+        "# Revisão do quadro\n\n\
+         Você revisa estas {n} tarefas \"feitas\" e leva para a `main` as que passam. Ninguém\n\
+         acompanha esta sessão: não pergunte nada, faça tudo e termine com o resumo. Você está na\n\
+         raiz do projeto; o trabalho de cada tarefa está na branch dela, com um worktree em\n\
+         `.assistente/worktrees/<id>` (sem branch, veja o commit marcado).\n\n\
+         ## Tarefas\n\n\
+         {list}\
+         ## Passos\n\n\
+         1. Para cada tarefa, leia `git log --oneline main..agente/<id>` e `git diff main...agente/<id>`\n   \
+            e confira com o pedido (e o \"Pronto quando\", se houver). Separe: passa; defeito só da\n   \
+            branch (falta algo, faz outra coisa, não tem código próprio); defeito que nasce da junção\n   \
+            com outra (conflito, dois arquivos novos para a mesma coisa, código que uma esperava da\n   \
+            outra).\n\
+         2. Defeito só da branch não se corrige aqui. Devolva a tarefa:\n   \
+            `\"$ASSISTENTE_FORA_DO_JAIL\" kanban reabrir <id> --nota \"<o que já existe e o que falta>\"`.\n   \
+            Ela volta ao backlog com \"Revisão (data): nota\" e o próximo trabalhador continua da branch.\n\
+         3. Junte as que passam numa worktree descartável, a partir da `main`:\n   \
+            `git worktree add --detach .assistente/worktrees/revisao-$(date +%Y%m%d-%H%M%S) main`.\n   \
+            Nela, `git merge --no-ff agente/<id>` uma por vez, em ordem de dependência (a que outra\n   \
+            espera vem antes; sem dependência clara, a ordem da lista). Resolva os conflitos e\n   \
+            corrija **só** o que nasce da junção, com commit. Se uma não entra sem mexer no que é\n   \
+            dela, `git merge --abort` e devolva essa como no passo 2.\n\
+         4. Na mesma worktree, para cada tarefa devolvida que tem item no `docs/FUNCIONALIDADES.md`\n   \
+            (ou no backlog em markdown do projeto), acrescente ao item a mesma nota \"Revisão (data):\n   \
+            …\". Defeito que não é de tarefa nenhuma vira item novo lá (e card, com `kanban criar`).\n   \
+            Commite.\n\
+         5. Rode as verificações do projeto na worktree (ex.: `./dev just check`; se o projeto pede\n   \
+            que rodem no PC, `\"$ASSISTENTE_FORA_DO_JAIL\" --pc --timeout 1500 './dev just check'`).\n   \
+            Vermelho por causa da junção: corrija e rode de novo. Vermelho por uma tarefa só: tire-a\n   \
+            (refaça a worktree sem ela) e devolva como no passo 2. Sem check verde, não junte.\n\
+         6. Com o check verde, peça ao hubd para andar com a `main` até o commit da worktree:\n   \
+            `\"$ASSISTENTE_FORA_DO_JAIL\" kanban juntar --commit \"$(git rev-parse HEAD)\" --tarefas T1,T2`\n   \
+            (as juntadas; vazio se só entram as notas). Ele só anda para a frente (fast-forward se\n   \
+            a `main` é o checkout do projeto, senão troca a ref conferindo o valor antigo; nunca\n   \
+            push), e as tarefas vão para \"validado\" com o selo \"na main\". Se ele recusar porque a\n   \
+            `main` andou, nada mudou: não tente de novo, diga no resumo onde parou.\n\
+         7. Apague a worktree de revisão (`git worktree remove --force <pasta>`). O worktree e a\n   \
+            branch de cada tarefa juntada saem sozinhos quando esta sessão acaba.\n\
+         8. Grave o resumo (o que entrou na `main`, com o commit; o que voltou e por quê; itens\n   \
+            novos; e, se parou, onde e por quê, com o fim da saída do check):\n   \
+            `\"$ASSISTENTE_FORA_DO_JAIL\" kanban resumo --texto \"<resumo em markdown>\"`. Ele aparece\n   \
+            no quadro e fica em `.assistente/revisoes/`, fora do git. Repita o resumo aqui no fim.\n\n\
+         ## Regras\n\n\
+         - A `main` só anda pelo `kanban juntar`. Não faça push, não troque a branch da raiz e não\n  \
+           commite nela nem nos worktrees das tarefas.\n\
+         - Não mexa em `.assistente/kanban.json`: o quadro muda pelos comandos acima.\n\
+         - Check vermelho ou `main` movida: a `main` não muda, e o resumo diz onde parou.\n\
+         - Tarefa que você não conseguir avaliar, deixe como está e diga no resumo.\n\
+         {extra}",
+        n = cards.len(),
+        extra = match instructions.trim() {
+            "" => String::new(),
+            text => format!("\n## Instruções do projeto\n\n{text}\n"),
+        },
+    )
+}
+
+/// As tarefas de um prompt de QA ou de revisão: título, branch, worktree, commit e pedido.
+fn card_list(cards: &[Card]) -> String {
+    cards
+        .iter()
+        .map(|card| {
+            let description = if card.description.is_empty() {
+                "(sem descrição: o título é o pedido)".to_owned()
+            } else {
+                card.description.clone()
+            };
+            let commit = card
+                .commit
+                .as_deref()
+                .map(|commit| format!(", marcada como feita no commit `{commit}`"))
+                .unwrap_or_default();
+            format!(
+                "### {id}: {title}\n\n\
+                 Branch `{branch}`, worktree `.assistente/worktrees/{id}`{commit}.\n\n\
+                 {description}\n\n",
+                id = card.id,
+                title = card.title,
+                branch = branch(&card.id),
+            )
+        })
+        .collect()
 }
 
 fn prompt(card: &Card, branch: &str, instructions: &str, marking: &str) -> String {
@@ -614,6 +685,32 @@ mod tests {
         assert!(text.contains("Uma resposta vale para todas"));
         assert!(text.contains("kanban validar <id> --branch ALVO"));
         assert!(!text.contains("Instruções do projeto"));
+    }
+
+    #[test]
+    fn review_prompt_merges_into_main_through_the_hub_and_never_asks() {
+        let mut first = card("Pedir e-mail e senha.");
+        first.commit = Some("abc1234".to_owned());
+        let mut second = card("");
+        second.id = "T8".to_owned();
+        let text = render_review_prompt(&[first, second], "");
+        assert!(text.starts_with("# Revisão do quadro"));
+        assert!(text.contains("estas 2 tarefas"));
+        assert!(text.contains("### T7: Tela de login"));
+        assert!(text.contains("### T8: Tela de login\n\nBranch `agente/T8`"));
+        assert!(text.contains("não pergunte nada"));
+        assert!(text.contains("git diff main...agente/<id>"));
+        assert!(text.contains("worktree add --detach .assistente/worktrees/revisao-"));
+        assert!(text.contains("ordem de dependência"));
+        assert!(text.contains("kanban reabrir <id> --nota"));
+        assert!(text.contains("docs/FUNCIONALIDADES.md"));
+        assert!(text.contains("./dev just check"));
+        assert!(text.contains("kanban juntar --commit"));
+        assert!(text.contains("kanban resumo --texto"));
+        assert!(!text.contains("kanban validar"));
+        assert!(!text.contains("Instruções do projeto"));
+        let extra = render_review_prompt(&[card("x")], "Use pnpm.");
+        assert!(extra.ends_with("\n## Instruções do projeto\n\nUse pnpm.\n"));
     }
 
     #[test]

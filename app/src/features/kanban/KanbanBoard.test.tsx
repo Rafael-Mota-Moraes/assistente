@@ -45,6 +45,7 @@ function connect(board: Board) {
     finishWithClaude: vi.fn().mockResolvedValue(claude),
     qaCard: vi.fn().mockResolvedValue(claude),
     qaAll: vi.fn().mockResolvedValue(claude),
+    reviewBoard: vi.fn().mockResolvedValue(claude),
   };
   useAppStore.setState({
     hub: hub as unknown as HubClient,
@@ -124,10 +125,36 @@ describe("KanbanBoard", () => {
     await waitFor(() => expect(useAppStore.getState().toast).toMatch(/QA geral de 2 cards aberto/));
   });
 
-  it("sem card feito livre, não há QA geral", async () => {
+  it("sem card feito livre, não há QA geral nem Revisar", async () => {
     connect({ next: 2, cards: [card("T1", { column: "feito", holder: claude.id })] });
     const feito = await column("Feito");
     expect(within(feito).queryByRole("button", { name: /QA geral/ })).toBeNull();
+    expect(within(feito).queryByRole("button", { name: /Revisar/ })).toBeNull();
+  });
+
+  it("Revisar abre a revisão, e o card juntado mostra o selo na main e o resumo", async () => {
+    const hub = connect({
+      next: 4,
+      cards: [
+        card("T1", { column: "feito" }),
+        card("T2", { column: "feito" }),
+        card("T3", { column: "validado", merged: { branch: "main", commit: "fedcba987" } }),
+      ],
+      review: {
+        file: ".assistente/revisoes/2026-10-22-153400.md",
+        text: "Entrou na main: T3 (fedcba9).\nVoltou: T4, sem código próprio.",
+      },
+    });
+    const feito = await column("Feito");
+    fireEvent.click(within(feito).getByRole("button", { name: /Revisar/ }));
+    await waitFor(() => expect(hub.reviewBoard).toHaveBeenCalledWith("pessoal", "game"));
+    await waitFor(() => expect(useAppStore.getState().toast).toMatch(/Revisão de 2 cards aberta/));
+    const validado = await column("Validado");
+    expect(within(validado).getByText("main")).toBeInTheDocument();
+    expect(screen.getByText(".assistente/revisoes/2026-10-22-153400.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("Resumo da revisão")).toHaveTextContent(
+      "Voltou: T4, sem código próprio.",
+    );
   });
 
   it("Mandar envia a tarefa manual para um trabalhador", async () => {

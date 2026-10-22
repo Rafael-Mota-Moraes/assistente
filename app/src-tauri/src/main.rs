@@ -221,12 +221,35 @@ fn open_url(url: String) -> Result<(), String> {
 /// Rótulo da webview filha com a web UI do ai-memory, ancorada na área principal (F5.5).
 const MEMORY_WEBVIEW: &str = "memoria";
 
+/// Rótulo da webview filha com o preview do projeto (F12.1).
+const PREVIEW_WEBVIEW: &str = "preview";
+
+/// Script injetado na webview do preview (F12.1): o gancho do modo "apontar".
+/// O script completo (botão flutuante, contorno e seleção) chega na F12.2; aqui o gancho
+/// só guarda o estado, para o comando ligar e desligar sem erro na página.
+const PREVIEW_PICK_HOOK: &str = r#"
+window.__assistentePick = window.__assistentePick || {
+  setEnabled: function (on) { window.__assistentePickEnabled = !!on; },
+};
+"#;
+
 /// Valida a URL da memória: só http/https e sem caracteres de controle.
 fn memory_url(url: &str) -> Result<tauri::Url, String> {
     let parsed: tauri::Url = url.parse().map_err(|e| format!("URL inválida: {e}"))?;
     if !matches!(parsed.scheme(), "http" | "https") || url.chars().any(|c| c.is_control()) {
         return Err(format!("URL não permitida: {url}"));
     }
+    Ok(parsed)
+}
+
+/// Valida a URL do preview (F12.1): só http/https, sem credenciais (o `projetos.toml`
+/// ficaria com a senha) e sem caractere de controle. Mesma regra do hubd.
+fn preview_url(url: &str) -> Result<tauri::Url, String> {
+    hub_core::validate_preview_url(url)?;
+    let parsed: tauri::Url = url
+        .trim()
+        .parse()
+        .map_err(|e| format!("URL inválida: {e}"))?;
     Ok(parsed)
 }
 
@@ -278,7 +301,7 @@ async fn open_memory_panel(
         webview
             .set_bounds(rect.bounds(scale))
             .map_err(|e| e.to_string())?;
-        anchor_memory_panel(&app, rect)?;
+        anchor_panel(&app, MEMORY_WEBVIEW, rect)?;
         return webview.show().map_err(|e| e.to_string());
     }
     let bounds = rect.bounds(scale);
@@ -294,7 +317,7 @@ async fn open_memory_panel(
         .map_err(|e| e.to_string())?;
     // No Linux o wry ignora os bounds acima (veja gtk_panel): quem posiciona o painel
     // sobre a área de conteúdo, na frente da webview principal, é o anchor da React.
-    anchor_memory_panel(&app, rect)?;
+    anchor_panel(&app, MEMORY_WEBVIEW, rect)?;
     Ok(())
 }
 
@@ -302,21 +325,25 @@ async fn open_memory_panel(
 #[tauri::command]
 async fn update_memory_panel_bounds(app: tauri::AppHandle, rect: PanelRect) -> Result<(), String> {
     if app.get_webview(MEMORY_WEBVIEW).is_some() {
-        anchor_memory_panel(&app, rect)?;
+        anchor_panel(&app, MEMORY_WEBVIEW, rect)?;
     }
     Ok(())
 }
 
-/// Ancora a webview da memória no retângulo da React.
+/// Ancora uma webview filha no retângulo da React (painel da memória, F5.5; preview, F12.1).
 #[cfg(target_os = "linux")]
-fn anchor_memory_panel(app: &tauri::AppHandle, rect: PanelRect) -> Result<(), String> {
+fn anchor_panel(
+    app: &tauri::AppHandle,
+    label: &'static str,
+    rect: PanelRect,
+) -> Result<(), String> {
     let webview = app
-        .get_webview(MEMORY_WEBVIEW)
-        .ok_or_else(|| "webview da memória não encontrada".to_owned())?;
+        .get_webview(label)
+        .ok_or_else(|| format!("webview {label} não encontrada"))?;
     webview
         .with_webview(move |platform| {
             if let Err(e) = gtk_panel::anchor(&platform.inner(), rect) {
-                eprintln!("painel da memória: {e}");
+                eprintln!("painel {label}: {e}");
             }
         })
         .map_err(|e| e.to_string())
@@ -324,8 +351,8 @@ fn anchor_memory_panel(app: &tauri::AppHandle, rect: PanelRect) -> Result<(), St
 
 /// Fora do Linux os bounds do `add_child`/`set_bounds` (px físicos) bastam.
 #[cfg(not(target_os = "linux"))]
-fn anchor_memory_panel(app: &tauri::AppHandle, rect: PanelRect) -> Result<(), String> {
-    if let Some(webview) = app.get_webview(MEMORY_WEBVIEW) {
+fn anchor_panel(app: &tauri::AppHandle, label: &str, rect: PanelRect) -> Result<(), String> {
+    if let Some(webview) = app.get_webview(label) {
         let scale = app
             .get_window("main")
             .and_then(|w| w.scale_factor().ok())
@@ -423,6 +450,94 @@ async fn close_memory_panel(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ---- Preview do projeto (F12.1) ----
+//
+// Mesma ideia do painel da memória (F5.5): a webview filha preenche o retângulo que a
+// React mede, e o chrome (URL, recarregar, apontar, fechar) é React. A webview do preview
+// fica fora das capabilities: a página apontada não alcança os comandos do app.
+
+/// Abre (ou recarrega) o preview do projeto numa webview filha, ancorada na área de
+/// conteúdo (F12.1). Chamar de novo com a mesma URL recarrega a página.
+#[tauri::command]
+async fn open_preview_panel(
+    app: tauri::AppHandle,
+    url: String,
+    rect: PanelRect,
+) -> Result<(), String> {
+    let url = preview_url(&url)?;
+    let window = app
+        .get_window("main")
+        .ok_or_else(|| "janela principal não encontrada".to_owned())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    if let Some(webview) = app.get_webview(PREVIEW_WEBVIEW) {
+        webview.navigate(url).map_err(|e| e.to_string())?;
+        webview
+            .set_bounds(rect.bounds(scale))
+            .map_err(|e| e.to_string())?;
+        anchor_panel(&app, PREVIEW_WEBVIEW, rect)?;
+        return webview.show().map_err(|e| e.to_string());
+    }
+    let bounds = rect.bounds(scale);
+    let webview = window
+        .add_child(
+            tauri::webview::WebviewBuilder::new(PREVIEW_WEBVIEW, tauri::WebviewUrl::External(url))
+                .initialization_script(PREVIEW_PICK_HOOK),
+            bounds.position,
+            bounds.size,
+        )
+        .map_err(|e| format!("não consegui alocar o preview: {e}"))?;
+    webview
+        .set_bounds(rect.bounds(scale))
+        .map_err(|e| e.to_string())?;
+    // No Linux o wry ignora os bounds (veja gtk_panel): quem posiciona é o anchor da React.
+    anchor_panel(&app, PREVIEW_WEBVIEW, rect)?;
+    Ok(())
+}
+
+/// Acompanha o retângulo do âncora (janela redimensionada, layout mudou).
+#[tauri::command]
+async fn update_preview_panel_bounds(app: tauri::AppHandle, rect: PanelRect) -> Result<(), String> {
+    if app.get_webview(PREVIEW_WEBVIEW).is_some() {
+        anchor_panel(&app, PREVIEW_WEBVIEW, rect)?;
+    }
+    Ok(())
+}
+
+/// Esconde ou mostra a webview do preview (F12.1). A webview é um widget nativo por cima
+/// da UI: um modal do app precisa escondê-la para ficar visível.
+#[tauri::command]
+async fn preview_panel_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+    let Some(webview) = app.get_webview(PREVIEW_WEBVIEW) else {
+        return Ok(());
+    };
+    if visible {
+        webview.show().map_err(|e| e.to_string())
+    } else {
+        webview.hide().map_err(|e| e.to_string())
+    }
+}
+
+/// Liga ou desliga o modo "apontar" na página do preview (F12.1; a seleção chega na F12.2).
+/// O comando fala com a página por `eval`, sem IPC: a página remota não vira porta de entrada.
+#[tauri::command]
+async fn preview_picker(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let webview = app
+        .get_webview(PREVIEW_WEBVIEW)
+        .ok_or_else(|| "preview não está aberto".to_owned())?;
+    let script =
+        format!("window.__assistentePick && window.__assistentePick.setEnabled({enabled});");
+    webview.eval(script).map_err(|e| e.to_string())
+}
+
+/// Fecha a webview do preview (o painel React também sai do DOM).
+#[tauri::command]
+async fn close_preview_panel(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(webview) = app.get_webview(PREVIEW_WEBVIEW) {
+        webview.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         // HTTP pelo lado Rust: o WebKit bloqueia fetch de tauri://localhost para http://<ip da VM>
@@ -441,7 +556,12 @@ fn main() {
             open_url,
             open_memory_panel,
             update_memory_panel_bounds,
-            close_memory_panel
+            close_memory_panel,
+            open_preview_panel,
+            update_preview_panel_bounds,
+            preview_panel_visible,
+            preview_picker,
+            close_preview_panel
         ])
         .setup(|app| {
             // O painel da memória sobrepõe a UI: a webview principal precisa morar num

@@ -29,6 +29,17 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `systemctl restart hubd` não derruba as sessões tmux. Como testar: abrir sessão, reiniciar, reconectar.
 - [x] **F1.5 Estado da VM no app.** Botões Ligar/Desligar na barra de status (`vm_start` / `vm_stop` no Tauri). Teste: `StatusBar.test.tsx`.
   Pronto quando: com a VM parada, o app mostra "VM parada" e liga com um clique. Como testar: `incus stop` e usar o app.
+- [ ] **F1.6 Executar arquivos das pastas montadas na VM** *(humano)*. Visto em 2026-10-22: na VM,
+  nenhum executável de uma pasta de perfil (virtiofs `incus_perfil0`, opções
+  `rw,nosuid,nodev,relatime`, sem `noexec`) roda. `./dev`, `notebook/dorme` e
+  `app/node_modules/.bin/*` falham com `bad interpreter: Bad address` (EFAULT), dentro e fora do
+  ai-jail, e também dentro do container do `./dev`. O mesmo arquivo copiado para o disco local da
+  VM roda. Por isso o `./dev just check` não roda na VM, e a validação vai para o PC (F9.13, F11.17).
+  Investigar no host: versão e opções do `virtiofsd` do Incus 6.0 (cache, DAX), kernel da VM,
+  e se o `exec` falha também num binário ELF ou só com interpretador (`#!`).
+  Pronto quando: `./dev just check` roda na VM pela pasta do projeto (`fora-do-jail './dev just
+  check'` sai 0), ou a causa e o porquê de não haver correção ficam na spec 01. Como testar: na VM
+  real, `/home/…/projetos/assistente/dev imagem` sai 0.
 
 ## F2 — Sessões
 
@@ -173,6 +184,18 @@ nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" 
   mesmo pedido aprovado não rodar o comando de novo (hoje só o `busy` do `ExecApprovals` segura).
 - [ ] **F9.12 Validação no PC real** *(humano)*. Do jail, `fora-do-jail --pc 'git push'` empurra com a chave do PC após aprovar; negar devolve 126; com o app fechado o pedido expira.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
+- [ ] **F9.13 Verificação do projeto vai para o PC.** Enquanto a F1.6 não sai, o `./dev` não roda
+  na VM: nem no jail, nem fora dele (`Bad address` do virtiofs), e com Docker ligado ou não. Um
+  agente que precisava do check pediu `sudo systemctl start docker` e parou. As instruções passam a
+  dizer o caminho certo. No bloco "Fora do jail" do `vm/configurar-agentes.sh`: "`./dev` (e o check
+  do projeto) roda no PC: `"$ASSISTENTE_FORA_DO_JAIL" --pc --timeout 1500 './dev just check'`; não
+  peça `sudo` nem Docker; sem check verde, não diga que está pronto". Nos prompts de QA e de QA
+  geral (`crates/hub-core/src/worker.rs`), "rode as verificações" vira esse pedido, e `validar` só
+  com o check verde. No prompt do trabalhador (opencode, sem ninguém para aprovar), ele não roda
+  `./dev` e escreve na nota do `done` que o check fica para o QA.
+  Pronto quando: as três instruções trazem o `--pc` e a regra "sem check verde, não valida". Como
+  testar: `worker::tests` (os prompts de QA têm `--pc` e `./dev just check`; o do trabalhador não
+  pede `./dev`) e `bash vm/configurar-agentes.sh` num home falso, se o teste dele existir.
 
 ## F10 — Editor com diff
 
@@ -367,6 +390,23 @@ hubd); F11.2 antes de F11.4.
   `api::kanban::tests::qa_all_holds_every_free_done_card_in_one_session`,
   `worker::tests::qa_all_prompt…` e `KanbanBoard.test.tsx` (botão com a contagem, sem botão quando
   nada está livre). Na VM real, junto com a F11.8.
+- [ ] **F11.17 `validar` só com o check verde.** Hoje o `kanban validar` junta a branch confiando
+  na palavra do QA de que o check passou. Agora quem roda o check é o hubd, no commit que a
+  `target` vai receber: na worktree descartável do merge (`.assistente/qa-juntar-*`, já dentro da
+  pasta do projeto) ou, no fast-forward, numa worktree do commit da tarefa. Enquanto a F1.6 não
+  sai, o check roda no PC: o hubd abre um pedido `host` (F9.9) com o comando e essa pasta, e você
+  aprova no app como qualquer outro, sem "sempre permitir". O card fica "validando" até o resultado.
+  Verde: a `target` anda (regra da F8.8) e o card vai para Validado. Vermelho, negado ou expirado:
+  nada muda, e o fim da saída volta ao QA na resposta do `validar` (o `fora-do-jail kanban validar`
+  espera, com timeout longo). O comando vem da engrenagem do projeto (`check` novo em
+  `ProjectSettings`, `~/.assistente/projetos.toml`, padrão `./dev just check`), **nunca** do
+  `.assistente.toml`: esse arquivo o agente edita, e o comando roda fora do jail. Tipos novos em
+  `api.rs` e `app/src/bridge/types.ts` juntos. Depois da F1.6, o mesmo check pode rodar na VM.
+  Pronto quando: `validar` com check vermelho não muda a `target` e devolve a saída; com verde,
+  junta como hoje; um `check` no `.assistente.toml` é ignorado. Como testar:
+  `api::kanban::tests` com repo git real e o app fingido (resultado do pedido `host` via
+  `POST /api/exec/{id}/result`: código 0 junta, 1 não muda nada, negado = nada muda),
+  `ProjectSettingsDialog` com o campo e `KanbanBoard.test.tsx` (estado "validando").
 
 ## F12 — Apontar e pedir na tela
 

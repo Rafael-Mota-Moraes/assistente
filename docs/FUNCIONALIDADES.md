@@ -332,13 +332,20 @@ comandos do app.
   Vale depois de relogar. Idempotente: rodar `provisionar.sh` duas vezes não falha.
   Pronto quando: `groups` mostra `systemd-journal` e `journalctl -u hubd -n 5` lê as linhas sem `sudo`.
   Como testar: `bash -n vm/provisionar.sh` e `shellcheck`; na VM, `groups` e `journalctl -u hubd -n 5`.
-- [ ] **F14.3 Sessão que morre deixa o painel.** Sessões de agente sobem com `remain-on-exit` no tmux
+- [x] **F14.3 Sessão que morre deixa o painel.** Sessões de agente sobem com `remain-on-exit` no tmux
   (só o painel da sessão, não o servidor), para a saída de quem saiu com erro continuar visível na aba
   até ela ser encerrada. A aba mostra "Sessão encerrada (status N)" e o que o processo imprimiu. Hoje
   a aba só mostra o terminal vazio, e foi assim que `claude: not found` passou despercebido.
   Pronto quando: uma sessão que sai com erro mostra a última saída e o status na aba.
   Como testar: rota com tmux real (um comando que sai com status 127 e `capture-pane` com o erro);
   `TerminalView.test.tsx` com a mensagem de encerramento.
+  Feito: o hubd liga o `remain-on-exit` na janela da sessão (encadeado no mesmo `tmux` do
+  `new-session`, sem corrida) e avisa a UI com `{"type":"exit","status":N}`; se a sessão já
+  estava morta, manda a saída do painel (o tmux perde a primeira linha da tela quando o
+  processo morre) em vez de abrir terminal. Sessão morta não segura tarefa do quadro nem
+  token da API dos agentes. Testes: `command_that_exits_at_once_leaves_the_dead_pane`,
+  `exec_token_of_a_dead_session_is_refused`, `dead_session_shows_the_output_and_the_exit_status`,
+  `session_that_dies_with_the_tab_open_sends_the_status` e `TerminalView.test.tsx`.
 
 ## Depois
 

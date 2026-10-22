@@ -1,6 +1,6 @@
 # 03 — Interface
 
-Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6.
+Cobre R1. Funcionalidades F0.4, F1.5, F2.4–F2.6, F4.3, F5.5, F5.6, F6.6, F12.4.
 
 ## Tecnologia
 
@@ -56,6 +56,27 @@ Fora do Tauri (`pnpm dev` no navegador), `host.ts` devolve valores neutros e o h
   abre as configurações do jail do projeto: Docker, rede completa (aviso vermelho), hosts
   liberados e comandos sempre permitidos. Valem para as sessões novas; o Docker ligado pelo
   `[jail]` do `.assistente.toml` aparece marcado e travado.
+
+## Apontar e pedir (F12.4)
+
+O modal do apontamento (`app/src/features/pick/PickDialog.tsx`) mostra o elemento apontado (URL,
+seletor, texto e onde ele está), deixa editar o recado e escolher para onde o pedido vai:
+
+| Alvo | O que o hubd faz |
+|---|---|
+| **Sessão** | Confere que a sessão é de agente (a aba Terminal nunca recebe), do projeto e está viva; cola o prompt no prompt do agente com `set-buffer` + `paste-buffer`, **sem Enter** (o Enter é do usuário: não aprova pergunta pendente nem executa texto no shell). A UI leva para a aba e avisa "confirme no terminal" |
+| **Quadro** | Vira card no backlog (F11.1), com o texto inteiro: o clone do notebook não tem o arquivo do pick |
+
+Rotas (o token do hub, como as outras):
+
+- `POST /api/projects/{perfil}/{projeto}/picks` — envia o pedido. Devolve o prompt usado, a
+  sessão (ou o card) e o arquivo do pick.
+- `POST /api/projects/{perfil}/{projeto}/picks/preview` — só o prompt que será enviado, para o
+  modal mostrar antes de mandar (o prompt é do hubd: URL, onde, seletor, texto e pedido, em uma
+  linha só).
+
+O detalhe do pick fica em `.assistente/picks/<data-hora>.md`, dentro do projeto e fora do git
+(`info/exclude`, como o `.ai-jail` da F0.5).
 
 ## Estados
 

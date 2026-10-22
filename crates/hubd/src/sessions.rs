@@ -192,6 +192,8 @@ impl Tmux {
         let out = self
             .run(&args(&[
                 "list-panes",
+                // `-s`: todas as janelas da sessão, não só a atual.
+                "-s",
                 "-t",
                 &format!("={id}"),
                 "-F",

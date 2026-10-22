@@ -15,7 +15,7 @@
 set -euo pipefail
 
 die() { echo "fora-do-jail: $*" >&2; exit "${CODE:-2}"; }
-uso() { sed -n '4,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+uso() { sed -n '4,7p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # Quadro do projeto (F11.2): `fora-do-jail kanban pull|done|release|trabalhador`. Não passa pelo
 # app: é coordenação entre sessões (o que vai ao PC pede aprovação; isto não roda nada). Saída:

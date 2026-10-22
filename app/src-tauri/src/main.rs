@@ -715,3 +715,74 @@ fn main() {
         .expect("erro ao iniciar o Assistente");
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pasta de trabalho do teste (dentro do tmp do ambiente de desenvolvimento).
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("assistente-pc-exec-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    /// O id vem da UI: só o id do hubd (hex) vale, para não virar outra rota.
+    #[test]
+    fn id_invalido_nao_vira_outra_rota() {
+        assert!(valid_request_id("a1b2c3d4e5f60718"));
+        assert!(!valid_request_id(""));
+        assert!(!valid_request_id("../../api/exec/outro"));
+        assert!(!valid_request_id("a b"));
+        assert!(!valid_request_id("id/result"));
+    }
+
+    /// F9.10: o comando roda na pasta do projeto e volta com a saída e o código.
+    #[test]
+    fn roda_na_pasta_e_devolve_saida_e_codigo() {
+        let dir = temp_dir("pasta");
+        let result =
+            run_on_host(&dir, "pwd; echo aviso >&2; exit 3", Duration::from_secs(10)).unwrap();
+        assert_eq!(result.exit_code, Some(3));
+        assert_eq!(result.stdout.trim(), dir.display().to_string());
+        assert_eq!(result.stderr.trim(), "aviso");
+        assert!(!result.timed_out && !result.truncated);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// F9.10: saída grande guarda só o fim (64 KiB por stream).
+    #[test]
+    fn saida_grande_guarda_so_o_fim() {
+        let dir = temp_dir("saida");
+        let result = run_on_host(
+            &dir,
+            "for i in $(seq 1 5000); do echo linha-$i-com-texto-para-ocupar-espaco; done",
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        assert!(result.truncated);
+        assert!(result.stdout.len() <= MAX_HOST_OUTPUT);
+        assert!(
+            result
+                .stdout
+                .trim_end()
+                .ends_with("linha-5000-com-texto-para-ocupar-espaco")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// F9.10: no timeout, o grupo inteiro morre (inclusive o que ficou em segundo plano).
+    #[test]
+    fn timeout_mata_o_grupo_inteiro() {
+        let dir = temp_dir("timeout");
+        let marker = dir.join("sobreviveu");
+        let script = format!("(sleep 3; touch {}) & sleep 30", marker.display());
+        let result = run_on_host(&dir, &script, Duration::from_millis(300)).unwrap();
+        assert!(result.timed_out);
+        assert_eq!(result.exit_code, None);
+        std::thread::sleep(Duration::from_secs(4));
+        assert!(!marker.exists(), "o processo em segundo plano sobreviveu");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

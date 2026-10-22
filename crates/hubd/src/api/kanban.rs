@@ -183,6 +183,28 @@ pub(super) async fn create_card(
     Ok((StatusCode::CREATED, Json(card)))
 }
 
+/// Card novo no backlog a partir de um pedido apontado na tela (F12.4). O texto é
+/// autossuficiente: o clone do notebook não tem o arquivo do pick.
+pub(super) async fn card_from_pick(
+    state: &AppState,
+    profile: &str,
+    project: &str,
+    title: &str,
+    description: &str,
+) -> Reply<Card> {
+    let dir = project_dir(state, profile, project)?;
+    let _guard = state.0.kanban_lock.lock().await;
+    let mut board = load(state, &dir).await?;
+    let draft = Draft {
+        title: Some(title.to_owned()),
+        description: Some(description.to_owned()),
+        ..Default::default()
+    };
+    let card = board.create(draft, now()).map_err(kanban_error)?.clone();
+    persist(&dir, &board, &format!("kanban: cria {}", card.id))?;
+    Ok(card)
+}
+
 /// PATCH /api/projects/{perfil}/{projeto}/kanban/{id}: edita, ou move de coluna.
 pub(super) async fn update_card(
     State(state): State<AppState>,

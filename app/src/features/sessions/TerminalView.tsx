@@ -72,8 +72,13 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
         if (!disposed)
           setReconnecting(`Reconectando… tentativa ${attempt}, em ${Math.round(delayMs / 1000)} s`);
       },
-      onExit: () => {
-        if (!disposed) setEnded("Sessão encerrada.");
+      onExit: (status) => {
+        if (disposed) return;
+        // F14.3: a sessão morreu e deixou o painel na tela. O aviso traz o status de saída
+        // e o que o processo imprimiu fica no terminal.
+        setEnded(
+          status === undefined ? "Sessão encerrada." : `Sessão encerrada (status ${status}).`,
+        );
       },
     });
     link.resize(term.cols, term.rows);

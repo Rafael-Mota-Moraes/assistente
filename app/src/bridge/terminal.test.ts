@@ -87,7 +87,7 @@ describe("connectPersistent", () => {
     await flush();
     expect(connect).toHaveBeenCalledTimes(1);
 
-    seen[0].onClose("error", "hubd reiniciou");
+    seen[0].onClose("error", { message: "hubd reiniciou" });
     await gate.next();
 
     expect(events.onReconnecting).toHaveBeenCalledWith(1, 1000);
@@ -142,6 +142,20 @@ describe("connectPersistent", () => {
 
     expect(events.onExit).toHaveBeenCalledTimes(1);
     expect(connect).toHaveBeenCalledTimes(1);
+    link.close();
+  });
+
+  it("exit com status de saída chega no onExit (F14.3)", async () => {
+    const { connect, seen } = fakeConnector();
+    const events = persistentEvents();
+    const link = connectPersistent("ws://x", events, { connect, sleep: async () => {} });
+    await flush();
+
+    seen[0].onClose("exit", { status: 127 });
+    await flush();
+    await flush();
+
+    expect(events.onExit).toHaveBeenCalledWith(127);
     link.close();
   });
 

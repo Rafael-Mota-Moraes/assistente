@@ -343,8 +343,13 @@ comandos do app.
   `new-session`, sem corrida) e avisa a UI com `{"type":"exit","status":N}`; se a sessão já
   estava morta, manda a saída do painel (o tmux perde a primeira linha da tela quando o
   processo morre) em vez de abrir terminal. Sessão morta não segura tarefa do quadro nem
-  token da API dos agentes. Testes: `command_that_exits_at_once_leaves_the_dead_pane`,
-  `exec_token_of_a_dead_session_is_refused`, `dead_session_shows_the_output_and_the_exit_status`,
+  token da API dos agentes. O status de saída não depende do tmux: ele perde o `SIGCHLD` do
+  painel morto em ~5% das vezes (o processo fica zumbi e o `pane_dead_status` não vem), e um
+  `run-shell` faz o servidor recolher o zumbi (medido: 15 de 15 casos recuperados). Sem
+  código de saída (processo morto por sinal), a aba avisa só que a sessão acabou. Testes:
+  `command_that_exits_at_once_leaves_the_dead_pane`,
+  `exec_token_of_a_dead_session_is_refused`, `pane_state_knows_the_status_of_a_dead_pane`,
+  `pane_state_tells_alive_from_dead`, `dead_session_shows_the_output_and_the_exit_status`,
   `session_that_dies_with_the_tab_open_sends_the_status` e `TerminalView.test.tsx`.
 
 ## Depois

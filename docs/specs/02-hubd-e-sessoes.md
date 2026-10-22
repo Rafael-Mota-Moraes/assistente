@@ -108,6 +108,8 @@ perguntar (`auto_approved`).
   manda o histórico do painel (`capture-pane`) como bytes do terminal e o `exit` com o status.
   Com a aba aberta e o processo morrendo na hora, a saída chega viva e o hubd pergunta ao
   tmux, de meio em meio segundo, se o processo ainda vive.
+- **`exit` sem status:** o `exit` com `status` só sai quando há código de saída (processo
+  morto por sinal, ou o tmux sem saber o status). Aí a aba avisa só que a sessão acabou.
 
 ## Pegadinhas do tmux (3.4)
 
@@ -119,6 +121,14 @@ perguntar (`auto_approved`).
   quem chega depois corre o risco de o processo já ter morrido.
 - Quando o processo morre, o tmux **rola o painel uma linha**: a tela perde a primeira linha
   da saída (o histórico tem tudo).
+- **O tmux 3.4 perde o `SIGCHLD` do painel morto em ~5% das vezes:** o processo fica zumbi e
+  o `pane_dead_status` não aparece nunca (o status só é mostrado quando o `PANE_STATUSREADY`
+  foi marcado, o que o `SIGCHLD` perdido não faz). O `waitpid` do servidor recolhe todos os
+  filhos que morrem, então um `run-shell` (que morre na hora) faz ele recolher o zumbi
+  esquecido — e o status de saída aparece. O hubd faz isso antes de dizer que o painel
+  morreu sem status (`Tmux::reap`).
+- `pane_dead_status` é o **código de saída**; um processo morto por sinal não tem código de
+  saída (o `pane_dead_signal` é que diz o sinal). Nesse caso a aba avisa só que acabou.
 
 ## Testes
 
@@ -132,3 +142,7 @@ perguntar (`auto_approved`).
 - F14.3: `dead_session_shows_the_output_and_the_exit_status` (sessão que sai com 127: a aba
   recebe a saída e o `exit` com o status) e `session_that_dies_with_the_tab_open_sends_the_status`
   (o processo morre com a aba aberta); no app, `TerminalView.test.tsx` com a mensagem de fim.
+  Em `sessions.rs`: `command_that_exits_at_once_leaves_the_dead_pane` (o painel fica, com a
+  saída e o status), `pane_state_knows_the_status_of_a_dead_pane` (o status sai mesmo quando o
+  tmux perde o `SIGCHLD`) e `pane_state_tells_alive_from_dead` (painel vivo, e painel morto
+  por sinal: sem código de saída).

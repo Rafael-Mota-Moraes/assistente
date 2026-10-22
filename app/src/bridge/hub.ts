@@ -131,6 +131,21 @@ export class HubClient {
     );
   }
 
+  /** Tira a pausa de cota (F11.14); devolve o quadro depois da volta, como `setOrchestrator`. */
+  resumeOrchestrator(profile: string, project: string): Promise<KanbanBoard> {
+    return this.request("POST", `${kanbanPath(profile, project)}/orquestrador/retomar`);
+  }
+
+  /** "Terminar com… Claude Code" (F11.14): um Claude no worktree da tarefa, que marca o card. */
+  finishWithClaude(profile: string, project: string, id: string): Promise<SessionInfo> {
+    return this.request("POST", `${kanbanPath(profile, project)}/${encodeURIComponent(id)}/claude`);
+  }
+
+  /** QA de um card feito (F11.15): um Claude no worktree pergunta onde juntar e valida ou reabre. */
+  qaCard(profile: string, project: string, id: string): Promise<SessionInfo> {
+    return this.request("POST", `${kanbanPath(profile, project)}/${encodeURIComponent(id)}/qa`);
+  }
+
   /** Abre um Claude que monta o quadro a partir do backlog em markdown (F11.9). */
   explorarBacklog(profile: string, project: string): Promise<SessionInfo> {
     return this.request("POST", `${kanbanPath(profile, project)}/explorar`);

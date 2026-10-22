@@ -245,6 +245,84 @@ pub fn read_outcomes(profile_data: &Path) -> Outcomes {
 
 /// Prompt da execução: a tarefa, as regras do trabalhador e o que não fazer.
 pub fn render_prompt(card: &Card, branch: &str, instructions: &str) -> String {
+    prompt(
+        card,
+        branch,
+        instructions,
+        "- Não marque a tarefa como feita nem mexa em `.assistente/kanban.json`: quem marca é o\n  \
+         trabalhador, pelo resultado do git.\n",
+    )
+}
+
+/// Prompt do Claude que termina uma tarefa parada (F11.14, "Terminar com… Claude Code"): a
+/// mesma tarefa e o mesmo worktree, e ele mesmo marca o card, porque não há trabalhador.
+pub fn render_finish_prompt(card: &Card, branch: &str, instructions: &str) -> String {
+    let why = card
+        .blocked
+        .as_deref()
+        .map(|reason| format!(" (motivo: {reason})"))
+        .unwrap_or_default();
+    let finish = format!(
+        "- Um trabalhador do opencode já começou esta tarefa aqui e parou{why}. Antes de tudo,\n  \
+         veja o `git log` e o `git status` deste worktree e continue de onde ele parou.\n\
+         - Não mexa em `.assistente/kanban.json`. Concluiu, com a árvore limpa, marque a tarefa:\n  \
+         `\"$ASSISTENTE_FORA_DO_JAIL\" kanban done {id} --commit \"$(git rev-parse HEAD)\"`.\n  \
+         Se não der para concluir, devolva: `\"$ASSISTENTE_FORA_DO_JAIL\" kanban release {id}`.\n",
+        id = card.id,
+    );
+    prompt(card, branch, instructions, &finish)
+}
+
+/// Prompt do QA de uma tarefa "feita" (F11.15): pergunta onde juntar, confere o que foi feito
+/// contra o pedido e valida (o hubd junta) ou reabre com o que falta. Não implementa nada.
+pub fn render_qa_prompt(card: &Card, branch: &str, instructions: &str) -> String {
+    let description = if card.description.is_empty() {
+        "(sem descrição: o título é o pedido)".to_owned()
+    } else {
+        card.description.clone()
+    };
+    let commit = card
+        .commit
+        .as_deref()
+        .map(|commit| format!(" O trabalhador marcou como feita no commit `{commit}`."))
+        .unwrap_or_default();
+    format!(
+        "# QA da tarefa {id}: {title}\n\n\
+         Você é o QA desta tarefa: confere se o que foi feito atende o pedido e, se atender,\n\
+         junta. O pedido é este:\n\n\
+         {description}\n\n\
+         ## Onde está o trabalho\n\n\
+         Neste diretório, um worktree do projeto na branch `{branch}`.{commit}\n\n\
+         ## Passos\n\n\
+         1. Antes de tudo, pergunte ao usuário onde juntar: na `main` ou em outra branch (qual).\n   \
+            Espere a resposta. Chame a escolhida de ALVO.\n\
+         2. Veja o que foi feito: `git log --oneline ALVO..HEAD` e `git diff ALVO...HEAD`. Confira\n   \
+            item por item com o pedido (e o \"Pronto quando\", se houver). Rode as verificações do\n   \
+            projeto (ex.: `./dev just check`).\n\
+         3. Não atende (falta algo, quebra as verificações, faz outra coisa): não junte. Rode\n   \
+            `\"$ASSISTENTE_FORA_DO_JAIL\" kanban reabrir {id} --nota \"<o que já existe e o que falta>\"`.\n   \
+            O card volta ao backlog com a nota na descrição, e o próximo trabalhador continua\n   \
+            desta branch. Não implemente o que falta: isso é dele.\n\
+         4. Atende: rode `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar {id} --branch ALVO`. O hubd\n   \
+            junta `{branch}` na ALVO (merge local, nunca push) e move o card para \"validado\". Se\n   \
+            ele responder conflito, rode `git merge ALVO` aqui, resolva, rode as verificações de\n   \
+            novo, commite e chame `validar` outra vez.\n\
+         5. Termine dizendo ao usuário, em poucas linhas, o resultado e por quê.\n\n\
+         ## Regras\n\n\
+         - Só corrija aqui o que nasce da junção (conflito). Não faça push nem troque de branch.\n\
+         - Não mexa em `.assistente/kanban.json`: o quadro muda pelos comandos acima.\n\
+         - Deixe a árvore limpa antes de validar: o que não está commitado não entra.\n\
+         {extra}",
+        id = card.id,
+        title = card.title,
+        extra = match instructions.trim() {
+            "" => String::new(),
+            text => format!("\n## Instruções do projeto\n\n{text}\n"),
+        },
+    )
+}
+
+fn prompt(card: &Card, branch: &str, instructions: &str, marking: &str) -> String {
     let description = if card.description.is_empty() {
         "(sem descrição: o título é o pedido)".to_owned()
     } else {
@@ -260,9 +338,7 @@ pub fn render_prompt(card: &Card, branch: &str, instructions: &str) -> String {
          - Antes de terminar, rode as verificações do projeto (ex.: `./dev just check`).\n\
          - Ao terminar, deixe a árvore limpa: tudo commitado. Se não der para concluir, deixe\n  \
            o que avançou commitado e explique no fim da resposta o que falta.\n\
-         - Não marque a tarefa como feita nem mexa em `.assistente/kanban.json`: quem marca é o\n  \
-           trabalhador, pelo resultado do git.\n\
-         {extra}",
+         {marking}{extra}",
         id = card.id,
         title = card.title,
         extra = match instructions.trim() {
@@ -288,6 +364,8 @@ mod tests {
             holder: None,
             commit: None,
             failures: 0,
+            blocked: None,
+            merged: None,
             created_at: 1,
         }
     }
@@ -419,6 +497,40 @@ mod tests {
         let extra = render_prompt(&card("x"), "agente/T7", "  Use pnpm, nunca npm.\n");
         assert!(
             extra.ends_with("\n## Instruções do projeto\n\nUse pnpm, nunca npm.\n"),
+            "{extra}"
+        );
+    }
+
+    #[test]
+    fn finish_prompt_continues_the_worktree_and_marks_the_card_itself() {
+        let mut stopped = card("Pedir e-mail e senha.");
+        stopped.blocked = Some("Free usage limit reached.".to_owned());
+        let text = render_finish_prompt(&stopped, "agente/T7", "Use pnpm.");
+        assert!(text.starts_with("# Tarefa T7: Tela de login"));
+        assert!(text.contains("parou (motivo: Free usage limit reached.)"));
+        assert!(text.contains("kanban done T7 --commit"));
+        assert!(text.contains("kanban release T7"));
+        assert!(!text.contains("quem marca é o"));
+        assert!(text.ends_with("Use pnpm.\n"));
+        let plain = render_finish_prompt(&card("x"), "agente/T7", "");
+        assert!(plain.contains("já começou esta tarefa aqui e parou. Antes"));
+    }
+
+    #[test]
+    fn qa_prompt_asks_where_to_merge_and_validates_or_reopens() {
+        let mut done = card("Pedir e-mail e senha.");
+        done.commit = Some("abc1234".to_owned());
+        let text = render_qa_prompt(&done, "agente/T7", "");
+        assert!(text.starts_with("# QA da tarefa T7: Tela de login"));
+        assert!(text.contains("Pedir e-mail e senha."));
+        assert!(text.contains("na `main` ou em outra branch"));
+        assert!(text.contains("commit `abc1234`"));
+        assert!(text.contains("kanban reabrir T7 --nota"));
+        assert!(text.contains("kanban validar T7 --branch ALVO"));
+        assert!(!text.contains("Instruções do projeto"));
+        let extra = render_qa_prompt(&card("x"), "agente/T7", "Use pnpm.");
+        assert!(
+            extra.ends_with("\n## Instruções do projeto\n\nUse pnpm.\n"),
             "{extra}"
         );
     }

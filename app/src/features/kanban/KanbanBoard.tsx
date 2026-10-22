@@ -1,18 +1,20 @@
 import {
   Bot,
   ChevronDown,
+  CirclePause,
   LayoutGrid,
   Pencil,
   Play,
   Plus,
   RotateCcw,
   ScrollText,
+  ShieldCheck,
   Sparkles,
   Square,
   Trash2,
   X,
 } from "lucide-react";
-import { type DragEvent, useCallback, useEffect, useState } from "react";
+import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import type {
   KanbanBoard as Board,
   KanbanCard,
@@ -38,6 +40,7 @@ const columns: { id: KanbanColumn; label: string }[] = [
   { id: "backlog", label: "Backlog" },
   { id: "fazendo", label: "Fazendo" },
   { id: "feito", label: "Feito" },
+  { id: "validado", label: "Validado" },
 ];
 
 const priorityStyle: Record<KanbanPriority, string> = {
@@ -74,13 +77,25 @@ export function orchestratorNotice(before: KanbanOrchestrator, after: Board): st
     : "Sem instruções extras: os trabalhadores usam só as regras padrão.";
 }
 
+/** Hora (HH:MM) de um instante em segundos Unix, para a faixa da pausa. */
+function clock(seconds: number): string {
+  return new Date(seconds * 1000).toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Modelo sugerido para terminar uma tarefa parada por cota com o opencode (F11.14). */
+const OTHER_MODEL = "9router/free";
+
 /** Quem segura a tarefa: a aba da sessão, ou o id cru se a aba já não está aberta. */
 function holderLabel(holder: string, sessions: SessionInfo[]): string {
   const session = sessions.find((s) => s.id === holder);
   return session ? tabLabel(session) : holder;
 }
 
-/** Quadro do projeto ativo (F11.3): backlog · fazendo · feito, no lugar da área de sessões. */
+/** Quadro do projeto ativo (F11.3): backlog · fazendo · feito · validado, no lugar da área de
+ * sessões. */
 export function KanbanBoard() {
   const hub = useAppStore((s) => s.hub);
   const activeProfile = useAppStore((s) => s.activeProfile);
@@ -101,6 +116,23 @@ export function KanbanBoard() {
   const [instructionsOpen, setInstructionsOpen] = useState(false);
   // Enquanto o PUT roda (ligar já abre os primeiros trabalhadores), o botão diz o que faz.
   const [switching, setSwitching] = useState<"Ligando…" | "Desligando…" | null>(null);
+  // "Terminar com… outro modelo" (F11.14): o card que mostra o campo do modelo, e o modelo.
+  const [otherModel, setOtherModel] = useState<{ id: string; model: string } | null>(null);
+  const pausedAt = board?.orchestrator?.paused?.at;
+  // `null` = quadro ainda não lido: abrir um quadro já pausado mostra só a faixa.
+  const seenPause = useRef<number | undefined | null>(null);
+  const loaded = board !== null;
+
+  // Pausa nova (a cota acabou com o quadro aberto): avisa uma vez, além da faixa.
+  useEffect(() => {
+    if (!loaded) return;
+    if (pausedAt !== undefined && seenPause.current === undefined) {
+      useAppStore.setState({
+        toast: "Cota do provedor esgotada: o orquestrador pausou. Veja o quadro.",
+      });
+    }
+    seenPause.current = pausedAt;
+  }, [pausedAt, loaded]);
 
   const refresh = useCallback(async () => {
     if (!hub || !activeProfile || !activeProject) return;
@@ -114,6 +146,7 @@ export function KanbanBoard() {
 
   useEffect(() => {
     setBoard(null);
+    seenPause.current = null;
     void refresh();
     const timer = setInterval(() => void refresh(), EVERY_MS);
     return () => clearInterval(timer);
@@ -142,6 +175,56 @@ export function KanbanBoard() {
   function moveTo(card: KanbanCard, column: KanbanColumn) {
     if (card.column === column) return;
     void act(() => client.updateCard(profile, project, card.id, { column }));
+  }
+
+  /** Mesma guarda do openSession: sem login o Claude morre dentro do jail e a aba some sem
+   * explicação. `retry` diz onde clicar de novo depois do login. */
+  function requireClaudeLogin(retry: string) {
+    const profileView = profiles.find((p) => p.id === profile);
+    if (profileView?.claude_login === false) {
+      throw new Error(
+        `O Claude ainda não tem login no perfil ${profileView.label}. No PC, rode: ` +
+          `${claudeLoginCommand(profile)} — depois clique em ${retry} de novo.`,
+      );
+    }
+  }
+
+  /** "Terminar com… Claude Code" (F11.14): o Claude abre numa aba, no worktree da tarefa. */
+  function finishWithClaude(card: KanbanCard) {
+    void act(async () => {
+      requireClaudeLogin("Terminar com Claude");
+      const info = await client.finishWithClaude(profile, project, card.id);
+      useAppStore.setState((s) => ({
+        sessions: [...s.sessions.filter((x) => x.id !== info.id), info],
+        toast: `${card.id} com o Claude, no worktree dela: ele marca o card ao terminar.`,
+      }));
+    });
+  }
+
+  /** QA (F11.15): um Claude numa aba, no worktree da tarefa, pergunta onde juntar e confere. */
+  function qa(card: KanbanCard) {
+    void act(async () => {
+      requireClaudeLogin("QA");
+      const info = await client.qaCard(profile, project, card.id);
+      useAppStore.setState((s) => ({
+        sessions: [...s.sessions.filter((x) => x.id !== info.id), info],
+        toast: `QA de ${card.id} aberto: responda na aba onde juntar (main ou outra branch).`,
+      }));
+    });
+  }
+
+  /** "Retomar" (F11.14): a cota voltou; o orquestrador volta a puxar e avisa o que abriu. */
+  function resume() {
+    void act(async () => {
+      const after = await client.resumeOrchestrator(profile, project);
+      setBoard(after);
+      const started = after.started ?? [];
+      useAppStore.setState({
+        toast: started.length
+          ? `Orquestrador retomado: ${started.join(", ")} foi para trabalhador.`
+          : "Orquestrador retomado.",
+      });
+    });
   }
 
   /** Encerra o chat do backlog (a sessão some do projeto). Sessão já morta não é erro. */
@@ -254,15 +337,7 @@ export function KanbanBoard() {
             type="button"
             onClick={() =>
               void act(async () => {
-                // Mesma guarda do openSession: sem login o Claude morre dentro do jail e a aba
-                // some sem explicação.
-                const profileView = profiles.find((p) => p.id === profile);
-                if (profileView?.claude_login === false) {
-                  throw new Error(
-                    `O Claude ainda não tem login no perfil ${profileView.label}. No PC, rode: ` +
-                      `${claudeLoginCommand(profile)} — depois clique em Popular pelo backlog de novo.`,
-                  );
-                }
+                requireClaudeLogin("Popular pelo backlog");
                 // Um chat por projeto: o anterior encerra antes, para não sobrar sessão sem tela.
                 if (chat) await client.deleteSession(chat.sessionId).catch(() => undefined);
                 const info = await client.explorarBacklog(profile, project);
@@ -295,6 +370,30 @@ export function KanbanBoard() {
           {error}
         </p>
       )}
+      {orchestrator.paused && (
+        <div
+          role="alert"
+          className="flex items-center gap-3 border-b border-line bg-amber-950/50 px-5 py-2 text-sm text-amber-100"
+        >
+          <CirclePause className="size-4 shrink-0" />
+          <p className="min-w-0 flex-1">
+            Cota do provedor esgotada às {clock(orchestrator.paused.at)}: orquestrador pausado, nada
+            novo abre sozinho. Termine os cards parados com outro harness, ou retome quando a cota
+            voltar.
+            <span className="block truncate font-mono text-xs text-amber-200/80">
+              {orchestrator.paused.reason}
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={resume}
+            title="A cota voltou: o orquestrador volta a puxar, inclusive os cards parados por cota"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-300/40 px-3 py-1 text-xs hover:bg-amber-300/10"
+          >
+            <Play className="size-3.5" /> Retomar
+          </button>
+        </div>
+      )}
       {orchestrator.enabled && board?.orchestrator_error && (
         <p className="border-b border-line bg-amber-950/40 px-5 py-2 font-mono text-xs text-amber-200">
           Orquestrador: {board.orchestrator_error}
@@ -304,7 +403,7 @@ export function KanbanBoard() {
         {board === null ? (
           <p className="p-6 text-sm text-slate-400">Lendo o quadro…</p>
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-3 grid-rows-[minmax(0,1fr)] gap-3 p-4">
+          <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-[minmax(0,1fr)] gap-3 p-4">
             {columns.map((column) => {
               const inColumn = cards.filter((card) => card.column === column.id);
               const target = overColumn === column.id;
@@ -365,6 +464,11 @@ export function KanbanBoard() {
                         >
                           {card.kind === "agente" ? "agente" : "manual"}
                         </span>
+                        {card.blocked && (
+                          <span className="rounded bg-amber-500/20 px-1.5 text-[10px] text-amber-200 uppercase">
+                            cota
+                          </span>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -389,10 +493,22 @@ export function KanbanBoard() {
                           sozinho.
                         </p>
                       )}
-                      {card.commit && (
-                        <p className="font-mono text-xs text-emerald-300">
-                          {card.commit.slice(0, 7)}
+                      {column.id === "backlog" && card.blocked && (
+                        <p className="text-xs text-amber-300">
+                          Parou por cota: <span className="font-mono">{card.blocked}</span>
                         </p>
+                      )}
+                      {card.merged ? (
+                        <p className="text-xs text-emerald-300">
+                          na <span className="font-mono">{card.merged.branch}</span> ·{" "}
+                          <span className="font-mono">{card.merged.commit.slice(0, 7)}</span>
+                        </p>
+                      ) : (
+                        card.commit && (
+                          <p className="font-mono text-xs text-emerald-300">
+                            {card.commit.slice(0, 7)}
+                          </p>
+                        )
                       )}
                       <div className="flex flex-wrap gap-1.5 pt-1">
                         {column.id === "backlog" && card.kind === "manual" && (
@@ -423,6 +539,43 @@ export function KanbanBoard() {
                               <RotateCcw className="size-3.5" /> Tentar de novo
                             </button>
                           )}
+                        {/* Parou por cota ou voltou sem concluir: dá para terminar com outro harness. */}
+                        {column.id === "backlog" && (card.blocked || (card.failures ?? 0) > 0) && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => finishWithClaude(card)}
+                              title="Abre um Claude Code no worktree da tarefa, que continua de onde o trabalhador parou"
+                              className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                            >
+                              <Sparkles className="size-3.5" /> Terminar com Claude
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOtherModel(
+                                  otherModel?.id === card.id
+                                    ? null
+                                    : { id: card.id, model: OTHER_MODEL },
+                                )
+                              }
+                              title="Manda para um trabalhador do opencode com outro modelo (ex.: pelo 9router)"
+                              className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                            >
+                              <Play className="size-3.5" /> Outro modelo…
+                            </button>
+                          </>
+                        )}
+                        {column.id === "feito" && !card.holder && (
+                          <button
+                            type="button"
+                            onClick={() => qa(card)}
+                            title="Abre um Claude que pergunta onde juntar, confere se atende o pedido e valida ou devolve ao backlog com o que falta"
+                            className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                          >
+                            <ShieldCheck className="size-3.5" /> QA
+                          </button>
+                        )}
                         {column.id === "fazendo" && card.holder && (
                           <button
                             type="button"
@@ -470,6 +623,33 @@ export function KanbanBoard() {
                           <Trash2 className="size-3.5" />
                         </button>
                       </div>
+                      {otherModel?.id === card.id && (
+                        <form
+                          className="flex gap-1.5"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            const model = otherModel.model.trim();
+                            if (!model) return;
+                            setOtherModel(null);
+                            void act(() => client.mandarCard(profile, project, card.id, [model]));
+                          }}
+                        >
+                          <input
+                            aria-label={`Modelo do opencode para ${card.id}`}
+                            value={otherModel.model}
+                            onChange={(event) =>
+                              setOtherModel({ id: card.id, model: event.target.value })
+                            }
+                            className="min-w-0 flex-1 rounded-md border border-line bg-black/30 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-accent/60"
+                          />
+                          <button
+                            type="submit"
+                            className="rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                          >
+                            Mandar
+                          </button>
+                        </form>
+                      )}
                     </article>
                   ))}
                 </section>

@@ -7,6 +7,14 @@
 //! O orquestrador automático (F11.11) é ligado no próprio quadro (`orchestrator`): o hubd abre
 //! trabalhadores para as tarefas `agente` até o limite, sem ninguém pedir. Tarefa que voltou do
 //! "fazendo" (`failures`) ele não puxa de novo: você decide com "Tentar de novo" ou "Mandar".
+//!
+//! Cota do provedor esgotada (F11.14) não é falha da tarefa: o trabalhador bloqueia o card
+//! (`block`), que volta ao backlog sem contar falha, e o orquestrador fica pausado (`paused`) até
+//! você retomar. Enquanto isso, você termina o card com outro harness.
+//!
+//! QA (F11.15): um card "feito" passa por uma sessão de QA que o segura (`start_qa`). Atende o
+//! pedido: a branch é juntada e o card vai para "validado" com `merged` (`validate`). Não atende:
+//! volta ao backlog com uma nota do que falta (`reopen`), e o próximo trabalhador continua dali.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +25,10 @@ const MAX_DESCRIPTION: usize = 10_000;
 /// Trabalhadores simultâneos que o orquestrador automático abre por projeto, no máximo.
 pub const MAX_WORKERS: u32 = 4;
 const MAX_INSTRUCTIONS: usize = 10_000;
+/// Motivo de um bloqueio (a linha de erro do provedor), cortado para caber no card.
+const MAX_REASON: usize = 300;
+/// Nota do QA (o que falta), somada à descrição do card.
+const MAX_NOTE: usize = 2_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -25,6 +37,8 @@ pub enum Column {
     Backlog,
     Fazendo,
     Feito,
+    /// Passou no QA e foi juntado numa branch (F11.15).
+    Validado,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,7 +83,21 @@ pub struct Card {
     /// Quantas vezes voltou do "fazendo" sem concluir (trabalhador desistiu ou sessão morreu).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub failures: u32,
+    /// Por que o trabalhador parou sem ser culpa da tarefa (cota esgotada, F11.14). Some quando
+    /// a tarefa começa de novo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<String>,
+    /// Onde o QA juntou a tarefa (`validado`, F11.15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged: Option<Merged>,
     pub created_at: u64,
+}
+
+/// Branch que recebeu a tarefa e o commit dela depois da junção.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Merged {
+    pub branch: String,
+    pub commit: String,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -87,6 +115,9 @@ pub struct Orchestrator {
     /// reinício). Vazio = só as regras padrão.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub instructions: String,
+    /// Pausado por cota esgotada (F11.14): nenhum trabalhador novo abre sozinho até "Retomar".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused: Option<Pause>,
 }
 
 impl Default for Orchestrator {
@@ -95,8 +126,16 @@ impl Default for Orchestrator {
             enabled: false,
             max_workers: 1,
             instructions: String::new(),
+            paused: None,
         }
     }
+}
+
+/// Por que e quando o orquestrador pausou.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pause {
+    pub reason: String,
+    pub at: u64,
 }
 
 impl Orchestrator {
@@ -138,6 +177,8 @@ pub enum KanbanError {
     NotHolder,
     /// Concluir ou soltar pede a coluna "fazendo".
     NotInProgress(Column),
+    /// QA, validar e reabrir pedem a coluna "feito".
+    NotDone(Column),
 }
 
 impl std::fmt::Display for KanbanError {
@@ -148,6 +189,7 @@ impl std::fmt::Display for KanbanError {
             Self::NotInBacklog(column) => write!(f, "a tarefa não está no backlog ({column:?})"),
             Self::NotHolder => write!(f, "a tarefa é de outra sessão"),
             Self::NotInProgress(column) => write!(f, "a tarefa não está em fazendo ({column:?})"),
+            Self::NotDone(column) => write!(f, "a tarefa não está em feito ({column:?})"),
         }
     }
 }
@@ -193,6 +235,8 @@ impl Board {
             holder: None,
             commit: None,
             failures: 0,
+            blocked: None,
+            merged: None,
             created_at: now,
         });
         Ok(self.cards.last().expect("acabou de ser empurrado"))
@@ -252,6 +296,7 @@ impl Board {
         }
         card.column = Column::Fazendo;
         card.holder = Some(holder.to_owned());
+        card.blocked = None;
         Ok(card)
     }
 
@@ -305,6 +350,7 @@ impl Board {
             enabled,
             max_workers: max_workers.clamp(1, MAX_WORKERS),
             instructions,
+            paused: self.orchestrator.paused.take(),
         };
         Ok(&self.orchestrator)
     }
@@ -339,23 +385,143 @@ impl Board {
         Ok(card)
     }
 
+    /// O provedor recusou por cota (F11.14): a tarefa que `holder` segura volta ao backlog sem
+    /// contar falha, com o motivo, e o orquestrador pausa (a primeira pausa fica: é a hora em que
+    /// a cota acabou).
+    pub fn block(
+        &mut self,
+        id: &str,
+        holder: &str,
+        reason: &str,
+        now: u64,
+    ) -> Result<&Card, KanbanError> {
+        let reason: String = reason
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(MAX_REASON)
+            .collect();
+        let reason = if reason.is_empty() {
+            "cota do provedor esgotada".to_owned()
+        } else {
+            reason
+        };
+        let card = self.holding(id, holder)?;
+        card.column = Column::Backlog;
+        card.holder = None;
+        card.blocked = Some(reason.clone());
+        self.orchestrator
+            .paused
+            .get_or_insert(Pause { reason, at: now });
+        Ok(self.get(id).expect("acabou de ser bloqueado"))
+    }
+
+    /// "Retomar": tira a pausa. Os cards bloqueados voltam a ser puxados pelo automático.
+    pub fn resume(&mut self) {
+        self.orchestrator.paused = None;
+    }
+
+    /// QA (F11.15): `holder` passa a segurar uma tarefa "feita" enquanto confere. Uma por vez.
+    pub fn start_qa(&mut self, id: &str, holder: &str) -> Result<&Card, KanbanError> {
+        let card = self.get_mut(id)?;
+        if card.column != Column::Feito {
+            return Err(KanbanError::NotDone(card.column));
+        }
+        if card.holder.is_some() {
+            return Err(KanbanError::NotHolder);
+        }
+        card.holder = Some(holder.to_owned());
+        Ok(card)
+    }
+
+    /// Passou no QA e foi juntada em `merged`. A sessão continua segurando até acabar: o worktree
+    /// só sai depois (`validated_worktrees`).
+    pub fn validate(
+        &mut self,
+        id: &str,
+        holder: &str,
+        merged: Merged,
+    ) -> Result<&Card, KanbanError> {
+        let card = self.reviewing(id, holder)?;
+        card.column = Column::Validado;
+        card.merged = Some(merged);
+        Ok(card)
+    }
+
+    /// Não passou no QA: volta ao backlog com "Revisão (data): nota" na descrição, sem contar
+    /// falha (o automático puxa de novo, e o trabalhador continua da mesma branch).
+    pub fn reopen(
+        &mut self,
+        id: &str,
+        holder: &str,
+        note: &str,
+        date: &str,
+    ) -> Result<&Card, KanbanError> {
+        let note = note.trim();
+        if note.is_empty() {
+            return Err(KanbanError::Invalid("diga o que falta na nota".to_owned()));
+        }
+        if note.chars().count() > MAX_NOTE {
+            return Err(KanbanError::Invalid(format!(
+                "nota com mais de {MAX_NOTE} caracteres"
+            )));
+        }
+        let card = self.reviewing(id, holder)?;
+        let description = format!("{}\n\nRevisão ({date}): {note}", card.description)
+            .trim()
+            .to_owned();
+        if description.chars().count() > MAX_DESCRIPTION {
+            return Err(KanbanError::Invalid(format!(
+                "a descrição passaria de {MAX_DESCRIPTION} caracteres: encurte a nota"
+            )));
+        }
+        card.description = description;
+        card.column = Column::Backlog;
+        card.holder = None;
+        card.commit = None;
+        card.failures = 0;
+        Ok(card)
+    }
+
+    /// Tarefas validadas que ninguém segura mais: o worktree delas pode sair.
+    pub fn validated_worktrees(&self) -> impl Iterator<Item = &Card> {
+        self.cards
+            .iter()
+            .filter(|card| card.column == Column::Validado && card.holder.is_none())
+    }
+
     /// Solta as tarefas cuja sessão não existe mais (`alive` diz quais existem). Devolve os ids.
+    /// Em "fazendo" a tarefa volta ao backlog com uma falha; fora dele (o QA, F11.15) só perde
+    /// quem a segurava.
     pub fn release_dead(&mut self, alive: impl Fn(&str) -> bool) -> Vec<String> {
         let mut released = Vec::new();
         for card in &mut self.cards {
-            if card.column != Column::Fazendo {
+            let Some(holder) = &card.holder else {
+                continue;
+            };
+            if alive(holder) {
                 continue;
             }
-            if let Some(holder) = &card.holder
-                && !alive(holder)
-            {
+            card.holder = None;
+            if card.column == Column::Fazendo {
                 card.column = Column::Backlog;
-                card.holder = None;
                 card.failures += 1;
-                released.push(card.id.clone());
             }
+            released.push(card.id.clone());
         }
         released
+    }
+
+    fn reviewing(&mut self, id: &str, holder: &str) -> Result<&mut Card, KanbanError> {
+        let card = self.get_mut(id)?;
+        if card.column != Column::Feito {
+            return Err(KanbanError::NotDone(card.column));
+        }
+        if card.holder.as_deref() != Some(holder) {
+            return Err(KanbanError::NotHolder);
+        }
+        Ok(card)
     }
 
     fn holding(&mut self, id: &str, holder: &str) -> Result<&mut Card, KanbanError> {
@@ -560,6 +726,100 @@ mod tests {
         };
         board.update("T2", retry).unwrap();
         assert_eq!(board.next_auto().unwrap().id, "T2");
+    }
+
+    #[test]
+    fn quota_blocks_the_card_without_a_failure_and_pauses_until_resume() {
+        let mut board = Board::default();
+        board.create(agent_draft("a", Priority::Normal), 1).unwrap();
+        board.create(agent_draft("b", Priority::Normal), 2).unwrap();
+        board.set_orchestrator(true, 2, None).unwrap();
+        board.claim("T1", "s1").unwrap();
+        board.claim("T2", "s2").unwrap();
+        assert_eq!(
+            board.block("T1", "outra", "x", 5),
+            Err(KanbanError::NotHolder)
+        );
+        assert_eq!(board.orchestrator.paused, None);
+        let card = board
+            .block("T1", "s1", "  Error: Free usage limit reached.\n ", 10)
+            .unwrap()
+            .clone();
+        assert_eq!(card.column, Column::Backlog);
+        assert_eq!(card.holder, None);
+        assert_eq!(card.failures, 0);
+        assert_eq!(
+            card.blocked.as_deref(),
+            Some("Error: Free usage limit reached.")
+        );
+        // O segundo bloqueio não muda a hora da pausa; mexer no limite não tira a pausa.
+        board.block("T2", "s2", "", 20).unwrap();
+        assert_eq!(
+            board.get("T2").unwrap().blocked.as_deref(),
+            Some("cota do provedor esgotada")
+        );
+        board.set_orchestrator(true, 3, None).unwrap();
+        let paused = board.orchestrator.paused.clone().unwrap();
+        assert_eq!(paused.at, 10);
+        assert_eq!(Board::parse(&board.to_json()).unwrap(), board);
+        // Retomar: o automático volta a puxar o bloqueado; começar de novo limpa o motivo.
+        board.resume();
+        assert_eq!(board.orchestrator.paused, None);
+        assert_eq!(board.next_auto().unwrap().id, "T1");
+        assert_eq!(board.claim("T1", "s3").unwrap().blocked, None);
+    }
+
+    #[test]
+    fn qa_validates_or_reopens_with_what_is_missing() {
+        let mut board = Board::default();
+        board.create(agent_draft("a", Priority::Normal), 1).unwrap();
+        board.create(agent_draft("b", Priority::Normal), 2).unwrap();
+        assert_eq!(
+            board.start_qa("T1", "qa"),
+            Err(KanbanError::NotDone(Column::Backlog))
+        );
+        board.claim("T1", "w").unwrap();
+        board.claim("T2", "w").unwrap();
+        board.done("T1", "w", Some("abc1".to_owned())).unwrap();
+        board.done("T2", "w", Some("abc2".to_owned())).unwrap();
+        board.start_qa("T1", "qa1").unwrap();
+        board.start_qa("T2", "qa2").unwrap();
+        // Uma sessão de QA por vez, e só ela valida.
+        assert_eq!(board.start_qa("T1", "outra"), Err(KanbanError::NotHolder));
+        let merged = Merged {
+            branch: "main".to_owned(),
+            commit: "abc9".to_owned(),
+        };
+        assert_eq!(
+            board.validate("T1", "qa2", merged.clone()),
+            Err(KanbanError::NotHolder)
+        );
+        let card = board.validate("T1", "qa1", merged.clone()).unwrap().clone();
+        assert_eq!(card.column, Column::Validado);
+        assert_eq!(card.merged, Some(merged));
+        assert_eq!(card.holder.as_deref(), Some("qa1"));
+        // Reabrir pede nota; a nota vai para a descrição e a falha zera.
+        assert!(matches!(
+            board.reopen("T2", "qa2", "  ", "2026-10-22"),
+            Err(KanbanError::Invalid(_))
+        ));
+        let card = board
+            .reopen("T2", "qa2", "falta o botão", "2026-10-22")
+            .unwrap()
+            .clone();
+        assert_eq!(card.column, Column::Backlog);
+        assert_eq!(card.holder, None);
+        assert_eq!(card.failures, 0);
+        assert_eq!(card.commit, None);
+        assert_eq!(card.description, "Revisão (2026-10-22): falta o botão");
+        assert_eq!(board.next_auto().unwrap().id, "T2");
+        // A sessão do QA acabou: o card validado fica, só perde quem segurava.
+        assert_eq!(board.validated_worktrees().count(), 0);
+        assert_eq!(board.release_dead(|_| false), vec!["T1".to_owned()]);
+        let card = board.get("T1").unwrap();
+        assert_eq!((card.column, card.failures), (Column::Validado, 0));
+        assert_eq!(board.validated_worktrees().count(), 1);
+        assert_eq!(Board::parse(&board.to_json()).unwrap(), board);
     }
 
     #[test]

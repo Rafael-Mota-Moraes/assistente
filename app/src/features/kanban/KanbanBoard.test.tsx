@@ -41,12 +41,16 @@ function connect(board: Board) {
     explorarBacklog: vi.fn().mockResolvedValue(claude),
     deleteSession: vi.fn().mockResolvedValue(undefined),
     setOrchestrator: vi.fn().mockResolvedValue(board),
+    resumeOrchestrator: vi.fn().mockResolvedValue(board),
+    finishWithClaude: vi.fn().mockResolvedValue(claude),
+    qaCard: vi.fn().mockResolvedValue(claude),
   };
   useAppStore.setState({
     hub: hub as unknown as HubClient,
     activeProfile: "pessoal",
     activeProject: "game",
     sessions: [claude],
+    toast: null,
   });
   render(<KanbanBoard />);
   return hub;
@@ -59,7 +63,7 @@ describe("KanbanBoard", () => {
     vi.restoreAllMocks();
   });
 
-  it("mostra as três colunas; só o card manual do backlog tem Mandar", async () => {
+  it("mostra as quatro colunas; só o card manual do backlog tem Mandar", async () => {
     connect({
       next: 3,
       cards: [
@@ -77,6 +81,31 @@ describe("KanbanBoard", () => {
     expect(within(fazendo).getByRole("button", { name: /Reiniciar/ })).toBeInTheDocument();
     const feito = await column("Feito");
     expect(within(feito).getByText("abc1234")).toBeInTheDocument();
+    expect(await column("Validado")).toBeInTheDocument();
+  });
+
+  it("QA abre um Claude para o card feito; o validado mostra onde entrou", async () => {
+    const hub = connect({
+      next: 4,
+      cards: [
+        card("T1", { column: "feito", commit: "abc1234def" }),
+        card("T2", { column: "feito", holder: claude.id }),
+        card("T3", {
+          column: "validado",
+          merged: { branch: "main", commit: "fedcba987" },
+        }),
+      ],
+    });
+    const feito = await column("Feito");
+    // O card que já está em QA não abre outro.
+    expect(within(feito).getAllByRole("button", { name: /QA/ })).toHaveLength(1);
+    fireEvent.click(within(feito).getByRole("button", { name: /QA/ }));
+    await waitFor(() => expect(hub.qaCard).toHaveBeenCalledWith("pessoal", "game", "T1"));
+    await waitFor(() => expect(useAppStore.getState().toast).toMatch(/QA de T1 aberto/));
+    const validado = await column("Validado");
+    expect(within(validado).getByText("main")).toBeInTheDocument();
+    expect(within(validado).getByText("fedcba9")).toBeInTheDocument();
+    expect(within(validado).queryByRole("button", { name: /QA/ })).toBeNull();
   });
 
   it("Mandar envia a tarefa manual para um trabalhador", async () => {
@@ -281,5 +310,60 @@ describe("KanbanBoard", () => {
     await waitFor(() =>
       expect(hub.updateCard).toHaveBeenCalledWith("pessoal", "game", "T1", { failures: 0 }),
     );
+  });
+
+  it("cota esgotada: faixa com Retomar e o card parado termina com outro harness", async () => {
+    const reason = "Error: Free usage limit reached.";
+    const board: Board = {
+      next: 3,
+      cards: [card("T1", { kind: "agente", blocked: reason }), card("T2", { kind: "agente" })],
+      orchestrator: { enabled: true, max_workers: 1, paused: { reason, at: 0 } },
+    };
+    const hub = connect(board);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("orquestrador pausado");
+    expect(alert).toHaveTextContent(reason);
+    // Abrir um quadro já pausado não dispara o aviso: a faixa basta.
+    expect(useAppStore.getState().toast).toBeNull();
+    const backlog = await column("Backlog");
+    expect(within(backlog).getByText(/Parou por cota/)).toBeInTheDocument();
+    // Só o card parado (por cota ou que voltou sem concluir) oferece os outros harness.
+    expect(within(backlog).getAllByRole("button", { name: /Terminar com Claude/ })).toHaveLength(1);
+
+    fireEvent.click(within(backlog).getByRole("button", { name: /Terminar com Claude/ }));
+    await waitFor(() => expect(hub.finishWithClaude).toHaveBeenCalledWith("pessoal", "game", "T1"));
+
+    fireEvent.click(within(backlog).getByRole("button", { name: /Outro modelo/ }));
+    const model = within(backlog).getByRole("textbox", { name: "Modelo do opencode para T1" });
+    expect(model).toHaveValue("9router/free");
+    fireEvent.change(model, { target: { value: "9router/kimi" } });
+    fireEvent.click(within(backlog).getByRole("button", { name: "Mandar" }));
+    await waitFor(() =>
+      expect(hub.mandarCard).toHaveBeenCalledWith("pessoal", "game", "T1", ["9router/kimi"]),
+    );
+
+    hub.resumeOrchestrator.mockResolvedValueOnce({
+      ...board,
+      orchestrator: { enabled: true, max_workers: 1 },
+      started: ["T1"],
+    });
+    hub.kanban.mockResolvedValue({ ...board, orchestrator: { enabled: true, max_workers: 1 } });
+    fireEvent.click(screen.getByRole("button", { name: /Retomar/ }));
+    await waitFor(() =>
+      expect(useAppStore.getState().toast).toBe("Orquestrador retomado: T1 foi para trabalhador."),
+    );
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("avisa quando a cota acaba com o quadro aberto", async () => {
+    const board: Board = { next: 2, cards: [], orchestrator: { enabled: true, max_workers: 1 } };
+    const hub = connect(board);
+    await screen.findByRole("switch", { name: /Orquestrador ligado/ });
+    hub.kanban.mockResolvedValue({
+      ...board,
+      orchestrator: { enabled: true, max_workers: 1, paused: { reason: "x", at: 0 } },
+    });
+    expect(await screen.findByRole("alert", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(useAppStore.getState().toast).toMatch(/Cota do provedor esgotada/);
   });
 });

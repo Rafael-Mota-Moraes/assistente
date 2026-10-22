@@ -168,7 +168,8 @@ export type ProjectSettingsView = {
 };
 
 /** Quadro do projeto (F11): `.assistente/kanban.json` no repo, espelho de hubd `kanban`. */
-export type KanbanColumn = "backlog" | "fazendo" | "feito";
+/** `validado` = passou no QA e foi juntado numa branch (F11.15). */
+export type KanbanColumn = "backlog" | "fazendo" | "feito" | "validado";
 /** `manual` só roda quando você manda; `agente` é puxado pelo orquestrador (F11.2). */
 export type KanbanKind = "manual" | "agente";
 export type KanbanPriority = "alta" | "normal" | "baixa";
@@ -185,8 +186,15 @@ export type KanbanCard = {
   commit?: string;
   /** Vezes que voltou do "fazendo" sem concluir; o orquestrador automático pula (F11.11). */
   failures?: number;
+  /** Parou sem culpa da tarefa (cota esgotada, F11.14): a linha de erro do provedor. */
+  blocked?: string;
+  /** Onde o QA juntou a tarefa (`validado`, F11.15). */
+  merged?: KanbanMerged;
   created_at: number;
 };
+
+/** Branch que recebeu a tarefa e o commit dela depois da junção. */
+export type KanbanMerged = { branch: string; commit: string };
 
 /** Orquestrador automático do projeto (F11.11); ausente = desligado. */
 export type KanbanOrchestrator = {
@@ -194,7 +202,12 @@ export type KanbanOrchestrator = {
   max_workers: number;
   /** Somadas às regras padrão no prompt de todo trabalhador do projeto. No `PUT`, ausente mantém. */
   instructions?: string;
+  /** Pausado por cota esgotada (F11.14): nada abre sozinho até "Retomar". O `PUT` não mexe. */
+  paused?: KanbanPause;
 };
+
+/** Por que e quando (segundos Unix) o orquestrador pausou. */
+export type KanbanPause = { reason: string; at: number };
 
 export type KanbanBoard = {
   next: number;

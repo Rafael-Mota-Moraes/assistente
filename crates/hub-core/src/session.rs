@@ -160,6 +160,27 @@ impl LaunchPlan {
         Self::assemble(config, home, spec, seq, options, Mode::Explore(prompt))
     }
 
+    /// Claude que termina uma tarefa parada (F11.14): como o `build_explore`, mas no worktree da
+    /// tarefa, com o `.git` do projeto gravável (o worktree grava nele).
+    pub fn build_finish(
+        config: &Config,
+        home: &Path,
+        spec: &SessionSpec,
+        seq: u32,
+        options: &LaunchOptions,
+        prompt: &str,
+        worktree: &Path,
+    ) -> Result<Self, LaunchError> {
+        Self::assemble(
+            config,
+            home,
+            spec,
+            seq,
+            options,
+            Mode::Finish { prompt, worktree },
+        )
+    }
+
     /// Sessão de trabalhador (F11.6): o opencode roda `vm/trabalhador` no worktree da tarefa,
     /// no mesmo jail de um agente. Os arquivos da execução ficam em `worker::files`.
     pub fn build_worker(
@@ -227,6 +248,11 @@ impl LaunchPlan {
                 // Sem `bash`: dentro do jail o PATH não acha o `claude` (a home é privada,
                 // e ~/.local/bin fica de fora). O ai-jail resolve o binário, como no agente.
                 Mode::Explore(prompt) => vec!["claude".to_owned(), prompt.to_owned()],
+                Mode::Finish { prompt, worktree } => {
+                    cwd = worktree.to_path_buf();
+                    rw_maps.push(profile.root.join(&spec.project).join(".git"));
+                    vec!["claude".to_owned(), prompt.to_owned()]
+                }
                 Mode::Worker(run) => {
                     cwd = run.worktree.clone();
                     let files = crate::worker::files(&data_dir, &session);
@@ -392,12 +418,14 @@ fn jail_argv(
     argv
 }
 
-/// Como a sessão foi montada: agente comum, trabalhador do quadro (F11.6) ou exploração (F11.9).
+/// Como a sessão foi montada: agente comum, trabalhador do quadro (F11.6), exploração (F11.9)
+/// ou Claude terminando uma tarefa parada (F11.14).
 #[derive(Clone, Copy)]
 enum Mode<'a> {
     Agent,
     Worker(&'a WorkerRun),
     Explore(&'a str),
+    Finish { prompt: &'a str, worktree: &'a Path },
 }
 
 /// Comando do agente dentro do jail. O opencode 2 roda como cliente de um servidor em segundo
@@ -797,6 +825,34 @@ mod tests {
             ["claude", "monte o quadro"]
         );
         assert_eq!(env(&plan, "ASSISTENTE_PROMPT_FILE"), None);
+    }
+
+    #[test]
+    fn finish_starts_claude_in_the_worktree_with_the_git_writable() {
+        let (config, home) = setup();
+        let worktree =
+            PathBuf::from("/home/rafa/Documentos/pessoal/projetos/x/.assistente/worktrees/T7");
+        let plan = LaunchPlan::build_finish(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Claude),
+            1,
+            &LaunchOptions::default(),
+            "termine a T7",
+            &worktree,
+        )
+        .unwrap();
+        assert_eq!(plan.cwd, worktree);
+        assert_eq!(plan.argv[plan.argv.len() - 2..], ["claude", "termine a T7"]);
+        let git = "/home/rafa/Documentos/pessoal/projetos/x/.git".to_owned();
+        assert!(
+            plan.argv
+                .windows(2)
+                .any(|pair| pair[0] == "--rw-map" && pair[1] == git),
+            "{:?}",
+            plan.argv
+        );
+        assert!(plan.argv.contains(&"--claude-dir".to_owned()));
     }
 
     #[test]

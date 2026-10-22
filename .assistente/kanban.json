@@ -97,8 +97,8 @@
       "description": "Sessões de agente sobem com `remain-on-exit` no tmux\n(só o painel da sessão, não o servidor), para a saída de quem saiu com erro continuar visível na aba\naté ela ser encerrada. A aba mostra \"Sessão encerrada (status N)\" e o que o processo imprimiu. Hoje\na aba só mostra o terminal vazio, e foi assim que `claude: not found` passou despercebido.\nPronto quando: uma sessão que sai com erro mostra a última saída e o status na aba.\nComo testar: rota com tmux real (um comando que sai com status 127 e `capture-pane` com o erro);\n`TerminalView.test.tsx` com a mensagem de encerramento.",
       "priority": "alta",
       "kind": "manual",
-      "column": "fazendo",
-      "holder": "pessoal--assistente--opencode-9",
+      "column": "feito",
+      "commit": "cc9032e4610f70e4d83537fae58a9ef7727864ce",
       "created_at": 1792614073
     }
   ],

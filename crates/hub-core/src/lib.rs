@@ -16,6 +16,6 @@ pub use project::{Project, discover_projects};
 pub use project_settings::{ProjectSettings, SettingsFile, load_settings, settings_path};
 pub use session::{
     AgentKind, ExecAccess, LaunchOptions, LaunchPlan, SessionSpec, claude_logged_in,
-    exec_client_dir, profile_data_dir,
+    exec_client_dir, profile_data_dir, tmux_session_prefix,
 };
 pub use sleep::{jail_config_at, workers_config_at};

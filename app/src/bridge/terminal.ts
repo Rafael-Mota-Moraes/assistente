@@ -6,7 +6,14 @@ import TauriWebSocket from "@tauri-apps/plugin-websocket";
 export type TerminalEvents = {
   onData: (bytes: Uint8Array) => void;
   /** A sessão terminou (o agente saiu) ou a conexão caiu. */
-  onClose: (reason: "exit" | "error", detail?: string) => void;
+  onClose: (reason: "exit" | "error", detail?: TerminalDetail) => void;
+};
+
+/** Detalhe do fim: o status de saída do processo (F14.3) ou a mensagem do erro. */
+export type TerminalDetail = {
+  /** Código de saída do processo da sessão (`exit` do hubd). */
+  status?: number;
+  message?: string;
 };
 
 export type TerminalConnection = {
@@ -19,9 +26,14 @@ const encoder = new TextEncoder();
 
 function handleText(text: string, events: TerminalEvents) {
   try {
-    const message = JSON.parse(text) as { type: string; message?: string };
-    if (message.type === "exit") events.onClose("exit");
-    if (message.type === "error") events.onClose("error", message.message);
+    const message = JSON.parse(text) as { type: string; status?: number; message?: string };
+    if (message.type === "exit")
+      events.onClose("exit", {
+        // O hubd manda o status de saída do processo (F14.3); sem ele (sessão encerrada na
+        // mão, ou processo morto por sinal) a aba só avisa que acabou.
+        status: typeof message.status === "number" ? message.status : undefined,
+      });
+    if (message.type === "error") events.onClose("error", { message: message.message });
   } catch {
     events.onData(encoder.encode(text));
   }
@@ -41,7 +53,8 @@ async function connectTauri(url: string, events: TerminalEvents): Promise<Termin
   ws.addListener((message) => {
     if (message.type === "Binary") events.onData(new Uint8Array(message.data));
     else if (message.type === "Text") handleText(message.data, events);
-    else if (message.type === "Close" && !closed) events.onClose("error", "conexão fechada");
+    else if (message.type === "Close" && !closed)
+      events.onClose("error", { message: "conexão fechada" });
   });
   const send = (payload: object) => {
     if (!closed) ws.send(JSON.stringify(payload)).catch(() => {});
@@ -66,7 +79,7 @@ function connectBrowser(url: string, events: TerminalEvents): Promise<TerminalCo
       else events.onData(new Uint8Array(event.data as ArrayBuffer));
     };
     ws.onclose = () => {
-      if (!closed) events.onClose("error", "conexão fechada");
+      if (!closed) events.onClose("error", { message: "conexão fechada" });
     };
     ws.onerror = () => reject(new Error(`não consegui conectar em ${url}`));
     ws.onopen = () => {
@@ -96,8 +109,8 @@ export type PersistentEvents = {
   onOpen: () => void;
   /** A conexão caiu e uma nova tentativa está agendada. */
   onReconnecting: (attempt: number, delayMs: number) => void;
-  /** O agente saiu (`exit` do hubd): não reconecta. */
-  onExit: () => void;
+  /** O agente saiu (`exit` do hubd): não reconecta. `status` é o código de saída (F14.3). */
+  onExit: (status?: number) => void;
 };
 
 type PersistentDeps = {
@@ -140,12 +153,16 @@ export function connectPersistent(
         if (stopped) return;
       }
       let exitRequested = false;
+      let exitStatus: number | undefined;
       const closed = new Promise<void>((resolve) => {
         wakeClosed = resolve;
         connect(url, {
           onData: events.onData,
-          onClose: (reason) => {
-            exitRequested = reason === "exit";
+          onClose: (reason, detail) => {
+            if (reason === "exit") {
+              exitRequested = true;
+              exitStatus = detail?.status;
+            }
             resolve();
           },
         })
@@ -167,7 +184,7 @@ export function connectPersistent(
       inner = null;
       if (stopped) return;
       if (exitRequested) {
-        events.onExit();
+        events.onExit(exitStatus);
         return;
       }
       attempt += 1;

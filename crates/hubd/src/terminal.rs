@@ -4,15 +4,22 @@
 //! Protocolo (spec 02):
 //! - binário, nos dois sentidos: bytes do terminal;
 //! - texto UI → hubd: `{"type":"input","data":"…"}` ou `{"type":"resize","cols":120,"rows":40}`;
-//! - texto hubd → UI: `{"type":"exit"}` quando o tmux attach termina (sessão encerrada).
+//! - texto hubd → UI: `{"type":"exit"}` quando o tmux attach termina (sessão encerrada) e
+//!   `{"type":"exit","status":N}` quando o processo da sessão morreu (F14.3).
 
-use crate::sessions::Tmux;
+use crate::sessions::{PaneState, Tmux};
 use axum::extract::ws::{Message, WebSocket};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Deserialize;
 use std::io::{Read, Write};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
+
+/// De quanto em quanto tempo o terminal pergunta ao tmux se o processo da sessão ainda vive.
+const VERIFICA: Duration = Duration::from_millis(500);
+/// Espera antes da primeira pergunta: dá tempo de a saída chegar antes do aviso de fim.
+const PRIMEIRA: Duration = Duration::from_millis(250);
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -36,6 +43,19 @@ pub async fn run(mut socket: WebSocket, tmux: Tmux, id: String) {
 }
 
 async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), String> {
+    // F14.3: a sessão já morreu antes do attach. O tmux rola o painel uma linha quando o
+    // processo morre, então a tela do painel morto perde a primeira linha da saída. O
+    // terminal manda o que o processo imprimiu (o histórico do painel) e o status de saída,
+    // sem abrir terminal: a aba mostra a saída e o fim.
+    if let PaneState::Dead(status) = tmux.pane_state(id).await {
+        if let Some(saida) = tmux.capture(id).await {
+            let _ = socket.send(Message::Binary(saida.into())).await;
+        }
+        let _ = socket
+            .send(Message::Text(exit_message(status).into()))
+            .await;
+        return Ok(());
+    }
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: 24,
@@ -92,6 +112,15 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
         }
     });
 
+    // F14.3: o painel da sessão fica na tela quando o processo morre (`remain-on-exit`), então
+    // o attach não termina: o terminal pergunta ao tmux se o processo ainda vive e avisa a
+    // UI com o status de saída.
+    let mut verificacao =
+        tokio::time::interval_at(tokio::time::Instant::now() + PRIMEIRA, VERIFICA);
+    // Com saída correndo, o tick atrasa: uma pergunta por vez, sem acumular.
+    verificacao.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut encerrada = false;
+
     loop {
         tokio::select! {
             output = out_rx.recv() => match output {
@@ -127,10 +156,24 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                 Some(Ok(_)) => {}
             },
+            _ = verificacao.tick(), if !encerrada => {
+                if let PaneState::Dead(status) = tmux.pane_state(id).await {
+                    let _ = socket.send(Message::Text(exit_message(status).into())).await;
+                    encerrada = true;
+                }
+            }
         }
     }
     // Só o cliente `tmux attach` morre; a sessão segue no servidor tmux.
     let _ = child.kill();
     let _ = child.wait();
     Ok(())
+}
+
+/// O aviso de fim para a UI (F14.3): com o código de saída quando o tmux sabe qual é.
+fn exit_message(status: Option<i32>) -> String {
+    match status {
+        Some(status) => serde_json::json!({ "type": "exit", "status": status }).to_string(),
+        None => r#"{"type":"exit"}"#.to_owned(),
+    }
 }

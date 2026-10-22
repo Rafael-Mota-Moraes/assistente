@@ -13,6 +13,10 @@ Cobre R7 (Claude e OpenCode) e a base de R1. Funcionalidades F0.3, F1.4, F2.x.
   `@assistente_agent`) e a lista vem de `tmux list-sessions -F` (sessões sem essas opções
   ficam de fora). Cada sessão também recebe `status off` (as abas do app substituem a barra)
   e `mouse on` (rolagem e clique nos TUIs).
+- **Sessão morta continua na tela (F14.3):** cada sessão nasce com `remain-on-exit` **na
+  janela dela** (não no servidor tmux do usuário). Quando o processo morre, o painel fica
+  com a saída e o status de saída, até alguém encerrar a sessão. A sessão morta não segura
+  tarefa do quadro nem token da API dos agentes: para o quadro ela conta como encerrada.
 - O servidor tmux nasce como filho do hubd; `KillMode=process` no systemd faz só o hubd
   reiniciar, sem matar as sessões.
 
@@ -121,16 +125,37 @@ sessão do projeto de quem pergunta: sessão viva de outro projeto = 400; sessã
 - Mensagens **binárias** = bytes do terminal (nos dois sentidos).
 - Mensagens **texto** = controle JSON. UI → hubd: `{"type":"input","data":"…"}` (o plugin de
   WebSocket do Tauri manda texto mais fácil que binário) e `{"type":"resize","cols":120,"rows":40}`.
-  hubd → UI: `{"type":"exit"}` quando o attach termina e `{"type":"error","message":"…"}`.
+  hubd → UI: `{"type":"exit"}` quando o attach termina, `{"type":"exit","status":N}` quando o
+  processo da sessão morreu (F14.3, `N` é o código de saída) e `{"type":"error","message":"…"}`.
 - Fechar o WS só desanexa; a sessão continua no tmux.
 - Token no WS: o WebSocket do navegador não manda header, então vai em `?token=` só nessa
   rota (tráfego host↔VM, rede privada).
+- **Sessão já morta (F14.3):** o tmux rola o painel uma linha quando o processo morre, então a
+  tela do painel morto perde a primeira linha da saída. O hubd não abre terminal nesse caso:
+  manda o histórico do painel (`capture-pane`) como bytes do terminal e o `exit` com o status.
+  Com a aba aberta e o processo morrendo na hora, a saída chega viva e o hubd pergunta ao
+  tmux, de meio em meio segundo, se o processo ainda vive.
+- **`exit` sem status:** o `exit` com `status` só sai quando há código de saída (processo
+  morto por sinal, ou o tmux sem saber o status). Aí a aba avisa só que a sessão acabou.
 
 ## Pegadinhas do tmux (3.4)
 
 - `set-option -t` espera um **painel**: `=nome` dá "no such session"; use `=nome:`.
   `kill-session`/`attach-session` aceitam `=nome`.
 - Em `list-sessions -F`, TAB e outros caracteres de controle viram `_`: o separador é `|~|`.
+- `remain-on-exit` é opção de **janela**: `set-option -w -t =sessão: remain-on-exit on`.
+  Para valer desde o nascimento, encadeia no mesmo tmux (`new-session … \; set-option …`):
+  quem chega depois corre o risco de o processo já ter morrido.
+- Quando o processo morre, o tmux **rola o painel uma linha**: a tela perde a primeira linha
+  da saída (o histórico tem tudo).
+- **O tmux 3.4 perde o `SIGCHLD` do painel morto em ~5% das vezes:** o processo fica zumbi e
+  o `pane_dead_status` não aparece nunca (o status só é mostrado quando o `PANE_STATUSREADY`
+  foi marcado, o que o `SIGCHLD` perdido não faz). O `waitpid` do servidor recolhe todos os
+  filhos que morrem, então um `run-shell` (que morre na hora) faz ele recolher o zumbi
+  esquecido — e o status de saída aparece. O hubd faz isso antes de dizer que o painel
+  morreu sem status (`Tmux::reap`).
+- `pane_dead_status` é o **código de saída**; um processo morto por sinal não tem código de
+  saída (o `pane_dead_signal` é que diz o sinal). Nesse caso a aba avisa só que acabou.
 
 ## Testes
 
@@ -141,3 +166,10 @@ sessão do projeto de quem pergunta: sessão viva de outro projeto = 400; sessã
 - `crates/hubd/src/sessions.rs` e `api.rs`: tmux real num socket temporário (o devenv tem tmux),
   com `bash` no lugar do agente; o teste de ponta a ponta sobe o hubd numa porta livre, cria
   a sessão por HTTP, conecta no WebSocket, digita `echo marca-$((40+2))` e espera `marca-42`.
+- F14.3: `dead_session_shows_the_output_and_the_exit_status` (sessão que sai com 127: a aba
+  recebe a saída e o `exit` com o status) e `session_that_dies_with_the_tab_open_sends_the_status`
+  (o processo morre com a aba aberta); no app, `TerminalView.test.tsx` com a mensagem de fim.
+  Em `sessions.rs`: `command_that_exits_at_once_leaves_the_dead_pane` (o painel fica, com a
+  saída e o status), `pane_state_knows_the_status_of_a_dead_pane` (o status sai mesmo quando o
+  tmux perde o `SIGCHLD`) e `pane_state_tells_alive_from_dead` (painel vivo, e painel morto
+  por sinal: sem código de saída).

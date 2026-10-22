@@ -47,11 +47,13 @@ fn column_name(column: Column) -> &'static str {
 }
 
 /// Quadro atual. Tarefa presa a sessão que já não existe volta ao backlog (F11.1) e o
-/// commit fica registrado. Sem a lista de sessões (o tmux em transição, p. ex. ao encerrar a
-/// última sessão), nada é solto: o quadro lido segue. Chamar sempre com `kanban_lock` segurado.
+/// commit fica registrado. Sessão morta conta como encerrada: com o `remain-on-exit` (F14.3)
+/// a sessão continua no tmux depois que o processo morre, mas não segura tarefa nenhuma.
+/// Sem a lista de sessões (o tmux em transição, p. ex. ao encerrar a última sessão), nada é
+/// solto: o quadro lido segue. Chamar sempre com `kanban_lock` segurado.
 async fn load(state: &AppState, dir: &Path) -> Reply<Board> {
     let mut board = store::read(dir).map_err(|e| internal(&e))?;
-    match state.0.tmux.list().await {
+    match state.0.tmux.list_running().await {
         Ok(sessions) => {
             let alive: HashSet<String> = sessions.into_iter().map(|session| session.id).collect();
             let released = board.release_dead(|holder| alive.contains(holder));

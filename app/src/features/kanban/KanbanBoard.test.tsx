@@ -28,6 +28,7 @@ const claude: SessionInfo = {
   agent: "claude",
   created_at: 0,
   attached: 1,
+  dead: false,
 };
 
 function connect(board: Board) {

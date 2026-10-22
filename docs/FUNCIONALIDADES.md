@@ -430,7 +430,7 @@ comandos do app.
   `exec_token_of_a_dead_session_is_refused`, `pane_state_knows_the_status_of_a_dead_pane`,
   `pane_state_tells_alive_from_dead`, `dead_session_shows_the_output_and_the_exit_status`,
   `session_that_dies_with_the_tab_open_sends_the_status` e `TerminalView.test.tsx`.
-- [ ] **F14.4 Sessão morta não fica para sempre.** O `remain-on-exit` da F14.3 vale para toda sessão do
+- [x] **F14.4 Sessão morta não fica para sempre.** O `remain-on-exit` da F14.3 vale para toda sessão do
   `Tmux::create`, não só para os agentes: o trabalhador (F11.6) que termina e a aba Terminal (F9.1)
   depois do `exit` também ficam no tmux, mortos, até alguém encerrar. Com o orquestrador ligado
   (F11.11), cada tarefa concluída deixa uma aba morta. Ligar o `remain-on-exit` só no Claude e no
@@ -441,6 +441,17 @@ comandos do app.
   Pronto quando: o orquestrador com 2 tarefas concluídas não deixa sessão morta, e um Claude que sai
   com erro continua mostrando a saída e o status. Como testar: rota com tmux real (trabalhador falso
   que sai 0 some; Claude que sai 127 fica) + `SessionArea.test.tsx`.
+  Feito: o `LaunchPlan` ganhou `remain_on_exit`, ligado só no Claude e no OpenCode interativos
+  (e no explorar); o trabalhador e o Terminal nascem sem ele e a sessão some com o processo. O
+  trabalhador que desiste chama `kanban release`, e o hubd liga o `remain-on-exit` da janela dele
+  ali (`Tmux::keep_panel`), antes do `exit 1`: o erro fica na aba. `SessionInfo.dead` substitui o
+  `Listed`; a aba morta ganha um ponto vermelho. O `pane-died` ficou de fora: é um hook do tmux
+  (um comando, não um fluxo de eventos), valeria para o servidor inteiro do usuário e pediria
+  uma rota interna para o tmux chamar; a pergunta de 500 ms só roda com o terminal aberto.
+  Testes: `worker_that_finishes_leaves_no_dead_session_and_a_failing_claude_stays`,
+  `releasing_a_task_keeps_the_panel_of_the_session`, `worker_session_dies_with_its_process`,
+  `keep_panel_leaves_the_dead_pane_on_screen`,
+  `only_interactive_agents_keep_the_panel_after_the_process_dies` e `SessionArea.test.tsx`.
 
 ## Depois
 

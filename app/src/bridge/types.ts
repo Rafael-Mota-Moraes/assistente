@@ -109,6 +109,8 @@ export type SessionInfo = {
   agent: AgentKind;
   created_at: number;
   attached: number;
+  /** F14.4: o processo do painel já saiu; a sessão existe mas está morta. A UI usa para marcar a aba. */
+  dead: boolean;
 };
 
 export type SessionSpec = { profile: string; project: string; agent: AgentKind };

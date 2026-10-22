@@ -27,6 +27,7 @@ const session = (id: string, project: string, agent: SessionInfo["agent"]): Sess
   agent,
   created_at: 0,
   attached: 0,
+  dead: false,
 });
 
 describe("SessionArea", () => {
@@ -223,5 +224,28 @@ describe("SessionArea", () => {
     expect(screen.getByText("Todas as abas fechadas")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle(/Reabrir/));
     expect(screen.getByText("terminal pessoal--game--opencode-1")).toBeInTheDocument();
+  });
+
+  it("F14.4: a aba da sessão morta é marcada, sem precisar abrir o terminal", () => {
+    const morta = { ...session("pessoal--game--claude-1", "game", "claude"), dead: true };
+    useAppStore.setState({
+      activeProfile: "pessoal",
+      activeProject: "game",
+      sessions: [morta],
+      activeSession: "pessoal--game--claude-1",
+    });
+    render(<SessionArea />);
+
+    // A aba continua na barra (o painel ficou com a saída), mas marcada como morta.
+    expect(screen.getByRole("tab", { name: /Claude 1/ })).toBeInTheDocument();
+    expect(screen.getByTitle(/Sessão morta/)).toBeInTheDocument();
+    // E o botão de encerrar não promete mais matar o agente.
+    expect(screen.getByTitle("Encerrar a sessão (o processo já saiu)")).toBeInTheDocument();
+  });
+
+  it("sessão viva não leva a marca de morta", () => {
+    twoTabs();
+    render(<SessionArea />);
+    expect(screen.queryByTitle(/Sessão morta/)).toBeNull();
   });
 });

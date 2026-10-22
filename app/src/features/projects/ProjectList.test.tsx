@@ -25,6 +25,7 @@ const session = (project: string, profile = "pessoal"): SessionInfo => ({
   agent: "claude",
   created_at: 0,
   attached: 0,
+  dead: false,
 });
 
 const profiles: ProfileView[] = [

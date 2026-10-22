@@ -13,9 +13,12 @@ Cobre R7 (Claude e OpenCode) e a base de R1. Funcionalidades F0.3, F1.4, F2.x.
   `@assistente_agent`) e a lista vem de `tmux list-sessions -F` (sessões sem essas opções
   ficam de fora). Cada sessão também recebe `status off` (as abas do app substituem a barra)
   e `mouse on` (rolagem e clique nos TUIs).
-- **Sessão morta continua na tela (F14.3):** cada sessão nasce com `remain-on-exit` **na
-  janela dela** (não no servidor tmux do usuário). Quando o processo morre, o painel fica
-  com a saída e o status de saída, até alguém encerrar a sessão. A sessão morta não segura
+- **Sessão morta continua na tela (F14.3/F14.4):** as sessões do Claude e do OpenCode
+  interativos nascem com `remain-on-exit` **na janela dela** (não no servidor tmux do
+  usuário). Quando o processo morre, o painel fica com a saída e o status de saída, até
+  alguém encerrar a sessão; `SessionInfo.dead` marca a aba. O Terminal fecha no `exit` e o
+  trabalhador que termina bem leva a sessão junto; o que desiste (`kanban release`) ganha o
+  `remain-on-exit` na hora do release, para o erro ficar na aba. A sessão morta não segura
   tarefa do quadro nem token da API dos agentes: para o quadro ela conta como encerrada.
 - O servidor tmux nasce como filho do hubd; `KillMode=process` no systemd faz só o hubd
   reiniciar, sem matar as sessões.

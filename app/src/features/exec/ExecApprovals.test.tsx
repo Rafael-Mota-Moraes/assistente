@@ -44,6 +44,7 @@ function connect(requests: ExecView[]) {
         agent: "claude",
         created_at: 0,
         attached: 1,
+        dead: false,
       },
     ],
   });

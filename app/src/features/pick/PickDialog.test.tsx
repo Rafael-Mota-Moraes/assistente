@@ -22,6 +22,7 @@ const sessions = [
     agent: "claude" as const,
     created_at: 0,
     attached: 1,
+    dead: false,
   },
   {
     id: "pessoal--game--opencode-1",
@@ -30,6 +31,7 @@ const sessions = [
     agent: "opencode" as const,
     created_at: 0,
     attached: 0,
+    dead: false,
   },
   {
     id: "pessoal--game--shell-1",
@@ -38,6 +40,7 @@ const sessions = [
     agent: "shell" as const,
     created_at: 0,
     attached: 0,
+    dead: false,
   },
 ];
 

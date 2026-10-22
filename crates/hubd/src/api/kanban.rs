@@ -611,6 +611,10 @@ pub(super) async fn agent_done(
 }
 
 /// POST /v1/kanban/release `{id}`: devolve ao backlog uma tarefa que esta sessão segura.
+///
+/// F14.4: a sessão que desiste fica com o painel na tela (o `remain-on-exit` da janela dela
+/// é ligado aqui). É o trabalhador que desiste: ele sai logo depois (código 1) e, sem isto,
+/// a sessão morria junto com ele e o erro sumia.
 pub(super) async fn agent_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -629,6 +633,11 @@ pub(super) async fn agent_release(
         &board,
         &format!("kanban: {} devolvida ao backlog", card.id),
     )?;
+    // A sessão que desiste guarda o painel: quem chamou está a caminho de morrer e o erro
+    // precisa ficar visível na aba.
+    if let Err(e) = state.0.tmux.keep_panel(&session.id).await {
+        tracing::warn!("sessão {}: não consegui manter o painel: {e}", session.id);
+    }
     Ok(Json(card))
 }
 
@@ -813,6 +822,11 @@ mod tests {
 
     /// `exec` liga a API dos agentes, sem a qual o trabalhador não abre (como na VM).
     fn hub(t: &TestTmux, exec: bool) -> Hub {
+        hub_com(t, exec, vec!["bash".into(), "--norc".into(), "-i".into()])
+    }
+
+    /// O mesmo hub, mas com outro comando no lugar do agente (o trabalhador também usa).
+    fn hub_com(t: &TestTmux, exec: bool, argv: Vec<String>) -> Hub {
         let root = t.dir.join("raiz");
         let proj = root.join("proj");
         init_repo(&proj);
@@ -821,7 +835,7 @@ mod tests {
             EXAMPLE_TOML.replace("~/Documentos/pessoal/projetos", &root.display().to_string());
         let config = Config::parse(&text, &home).unwrap();
         let mut state = AppState::new(config, home.clone(), None, None, t.tmux.clone())
-            .with_argv_override(vec!["bash".into(), "--norc".into(), "-i".into()]);
+            .with_argv_override(argv);
         if exec {
             let client = exec_client_dir(&home);
             std::fs::create_dir_all(&client).unwrap();
@@ -1619,5 +1633,139 @@ mod tests {
 
         let out = client(&["criar"]).await;
         assert!(!out.status.success(), "criar sem título precisa falhar");
+    }
+
+    /// F14.4: o trabalhador que termina bem fecha a própria sessão (não sobra aba morta na
+    /// UI) e o Claude que sai com erro continua no tmux, marcado como morto.
+    #[tokio::test]
+    async fn worker_that_finishes_leaves_no_dead_session_and_a_failing_claude_stays() {
+        let t = TestTmux::new("kanban-viva");
+        // O trabalhador tem `AGENTE_TAREFA` no env: sai com 0. O Claude não tem: sai com 127.
+        let hub = hub_com(
+            &t,
+            true,
+            vec![
+                "bash".into(),
+                "-c".into(),
+                "if [ -n \"${AGENTE_TAREFA:-}\" ]; then sleep 0.5; exit 0; fi; \
+                 echo 'claude: not found'; exit 127"
+                    .into(),
+            ],
+        );
+        let (status, _) = send(
+            hub.app.clone(),
+            "POST",
+            CARDS,
+            Some(r#"{"title":"Tarefa"}"#),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        // O trabalhador precisa de modelo: o do projeto (sem o catálogo do opencode).
+        std::fs::write(
+            hub.proj.join(".assistente.toml"),
+            "[workers]\nmodels = [\"x/a\"]\n",
+        )
+        .unwrap();
+        git_sync(&hub.proj, &["add", ".assistente.toml"]);
+        git_sync(&hub.proj, &["commit", "-q", "-m", "config do projeto"]);
+
+        // "Mandar": o trabalhador abre e sai com 0.
+        let (status, info) = send(
+            hub.app.clone(),
+            "POST",
+            &format!("{CARDS}/T1/mandar"),
+            Some("{}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{info}");
+        let worker = info["id"].as_str().unwrap().to_owned();
+        assert_eq!(worker, "pessoal--proj--opencode-1");
+
+        // A sessão do trabalhador morre com ele: a lista fica sem aba morta.
+        let mut sessions = serde_json::Value::Null;
+        for _ in 0..50 {
+            let (_, listed) = send(hub.app.clone(), "GET", "/api/sessions", None, None).await;
+            sessions = listed;
+            if sessions.as_array().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(
+            sessions.as_array().unwrap().is_empty(),
+            "o trabalhador que terminou bem deixou sessão morta: {sessions}"
+        );
+
+        // O Claude que sai com erro fica: a sessão continua, morta, com o painel na tela.
+        let spec = r#"{"profile":"pessoal","project":"proj","agent":"claude"}"#;
+        let (status, body) = send(hub.app.clone(), "POST", "/api/sessions", Some(spec), None).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (_, sessions) = send(hub.app.clone(), "GET", "/api/sessions", None, None).await;
+        let claude = &sessions.as_array().unwrap()[0];
+        assert_eq!(claude["id"], "pessoal--proj--claude-1");
+        assert_eq!(claude["dead"], true, "{claude}");
+        // A saída do processo continua no painel.
+        let pane = t
+            .tmux
+            .capture_pane("pessoal--proj--claude-1", -20)
+            .await
+            .unwrap();
+        assert!(pane.contains("claude: not found"), "{pane}");
+    }
+
+    /// F14.4: a sessão que desiste da tarefa fica com o painel na tela, para o erro ficar
+    /// visível depois que o processo morre.
+    #[tokio::test]
+    async fn releasing_a_task_keeps_the_panel_of_the_session() {
+        let t = TestTmux::new("kanban-painel");
+        let hub = hub(&t, true);
+        let (id, token) = session(&t, AgentKind::Opencode, 1).await;
+        // A sessão segura a tarefa e desiste dela.
+        send(
+            hub.app.clone(),
+            "POST",
+            CARDS,
+            Some(r#"{"title":"um","kind":"agente"}"#),
+            None,
+        )
+        .await;
+        send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/pull",
+            None,
+            Some(&token),
+        )
+        .await;
+        let (status, _) = send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/release",
+            Some(r#"{"id":"T1"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // A janela da sessão ficou com o `remain-on-exit`: o painel não some com o processo.
+        let option = t
+            .tmux
+            .command(&[
+                "show-options".into(),
+                "-w".into(),
+                "-v".into(),
+                "-t".into(),
+                format!("={id}:"),
+                "remain-on-exit".into(),
+            ])
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&option.stdout).trim(),
+            "on",
+            "a sessão que desiste fica com o painel"
+        );
     }
 }

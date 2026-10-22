@@ -327,9 +327,12 @@ comandos do app.
   fora da lista em Rust; chamada com token errado responde 401.
   Pronto quando: um agente dentro de uma sessão do projeto lê o journal do hubd e a saída de uma sessão
   morta sem pedir aprovação. Como testar: `cargo test` das rotas + uma sessão de agente que chama a rota.
-- [ ] **F14.2 Journal do hubd sem sudo.** `vm/provisionar.sh` põe o usuário no grupo `systemd-journal`,
+- [x] **F14.2 Journal do hubd sem sudo.** `vm/provisionar.sh` põe o usuário no grupo `systemd-journal`,
   para `journalctl -u hubd` rodar sem senha de `sudo` (a VM tem a senha travada, `lock_passwd: true`).
-  Vale depois de relogar. Idempotente: rodar `provisionar.sh` duas vezes não falha.
+  Vale depois de relogar. Idempotente: rodar `provisionar.sh` duas vezes não falha. Feito: `usermod -aG`
+  no `provisionar.sh` (avisa e segue se o grupo não existir ou não entrar na conta); o restart do hubd
+  logo abaixo já roda com o grupo novo, que é o que a rota de diagnóstico (F14.1) usa.
+  Falta: conferir na VM (manual, `groups` e `journalctl -u hubd -n 5`).
   Pronto quando: `groups` mostra `systemd-journal` e `journalctl -u hubd -n 5` lê as linhas sem `sudo`.
   Como testar: `bash -n vm/provisionar.sh` e `shellcheck`; na VM, `groups` e `journalctl -u hubd -n 5`.
 - [ ] **F14.3 Sessão que morre deixa o painel.** Sessões de agente sobem com `remain-on-exit` no tmux

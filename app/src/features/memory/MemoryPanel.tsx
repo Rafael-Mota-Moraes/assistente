@@ -8,7 +8,7 @@ import {
   type PanelRect,
   updateMemoryPanelBounds,
 } from "../../bridge/host";
-import { useAppStore } from "../../store";
+import { anyOverlayOpen, useAppStore } from "../../store";
 
 /** Retângulo do âncora em pixels lógicos (igual ao px do CSS). */
 function rectOf(anchor: HTMLElement): PanelRect {
@@ -23,36 +23,18 @@ export function MemoryPanel() {
   const hub = useAppStore((s) => s.hub);
   const memory = useAppStore((s) => s.memory);
   const open = useAppStore((s) => s.memoryPanelOpen);
-  const morning = useAppStore((s) => s.morning);
-  const projectSettings = useAppStore((s) => s.projectSettings);
-  const pending = useAppStore((s) =>
-    s.execRequests
-      .filter((r) => r.state === "pending")
-      .map((r) => r.id)
-      .join(","),
-  );
+  const overlayOpen = useAppStore(anyOverlayOpen);
   const anchorRef = useRef<HTMLDivElement | null>(null);
-  /** Modais React (Bom dia, configurações) e cartões de aprovação ficariam ATRÁS da webview
-   * filha; então sobrepõem → fecha o painel. `seen` guarda o que já estava pendente no
-   * instante da abertura: pendência nova sim fecha o painel. */
-  const seen = useRef<string[]>([]);
 
+  /** Qualquer sobreposição aberta (Bom dia, configurações, Assistente, aviso, pedidos
+   * pendentes): fecha o painel da memória, pois a webview filha ficaria por cima (F12.6).
+   * Aqui o painel fecha (a webview é o painel inteiro); no preview (F12.1), que tem chrome
+   * em volta, a webview é que some e volta. */
   useEffect(() => {
-    if (!open) {
-      seen.current = [];
-      return;
-    }
-    if (morning || projectSettings) {
+    if (open && overlayOpen) {
       useAppStore.setState({ memoryPanelOpen: false });
-      return;
     }
-    const fresh = pending.split(",").filter((id) => id && !seen.current.includes(id));
-    if (fresh.length > 0) {
-      useAppStore.setState({ memoryPanelOpen: false });
-      return;
-    }
-    if (!seen.current.length && pending) seen.current = pending.split(",");
-  }, [open, morning, projectSettings, pending]);
+  }, [open, overlayOpen]);
 
   const url = hub ? hub.memoryLoginUrl() : "";
 

@@ -1,7 +1,7 @@
 import { Check, ChevronDown, ChevronUp, ShieldAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ExecView } from "../../bridge/types";
-import { useAppStore } from "../../store";
+import { previewFocused, useAppStore } from "../../store";
 import { tabLabel } from "../sessions/SessionArea";
 import { approveOnHost } from "./hostExec";
 
@@ -56,6 +56,10 @@ export function ExecApprovals() {
   useExecPolling();
   const requests = useAppStore((s) => s.execRequests);
   const sessions = useAppStore((s) => s.sessions);
+  /** A webview do preview (F12.1) fica por cima da UI: com ela à vista, o resumo dos
+   * pedidos recentes ficaria embaixo, sem clique (F12.6). Os pedidos pendentes são
+   * diferentes: eles escondem a webview e precisam aparecer. */
+  const previewEmFoco = useAppStore(previewFocused);
   const [showRecent, setShowRecent] = useState(false);
   // Pedido em andamento (rodando no PC, F9.10): não aprova de novo.
   const [busy, setBusy] = useState<string[]>([]);
@@ -140,7 +144,7 @@ export function ExecApprovals() {
         </section>
       ))}
 
-      {recent.length > 0 && (
+      {recent.length > 0 && !previewEmFoco && (
         <section className="rounded-xl border border-line bg-surface-strong text-sm shadow-xl backdrop-blur">
           <button
             type="button"

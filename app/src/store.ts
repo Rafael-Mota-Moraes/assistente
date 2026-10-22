@@ -73,6 +73,10 @@ type State = {
   activeView: { key: string; kind: ViewKind } | null;
   /** Painel da web UI do ai-memory (F5.5); `true` = aberto. */
   memoryPanelOpen: boolean;
+  /** Painel do Assistente (F8) aberto como modal; `true` = aberto. */
+  assistantPanelOpen: boolean;
+  /** Estado do ai-memory (F5.6) aberto como modal; `true` = aberto. */
+  memoryStatusOpen: boolean;
   /** Pedidos dos agentes para rodar fora do jail (F9.7), atualizados a cada 2 s. */
   execRequests: ExecView[];
 };
@@ -99,6 +103,8 @@ export const initialState: State = {
   projectSettings: null,
   pick: null,
   memoryPanelOpen: false,
+  assistantPanelOpen: false,
+  memoryStatusOpen: false,
   execRequests: [],
   views: [],
   activeView: null,
@@ -152,6 +158,42 @@ export function visibleProjectSessions(
       !state.closedTabs.includes(s.id) &&
       s.id !== state.boardChat?.sessionId,
   );
+}
+
+/** Indica se há alguma sobreposição aberta que precisa ficar por cima das webviews filhas
+ * (preview F12.1, memória F5.5): elas são widgets nativos, por cima de toda a UI (F12.6).
+ * Inclui: configurações do projeto, caixa de apontar, "Bom dia", painel do Assistente,
+ * estado do ai-memory, avisos (toast) e pedidos de execução pendentes. */
+export function anyOverlayOpen(state: Pick<
+  State,
+  | "projectSettings"
+  | "pick"
+  | "morning"
+  | "assistantPanelOpen"
+  | "memoryStatusOpen"
+  | "toast"
+  | "execRequests"
+>): boolean {
+  return (
+    state.projectSettings !== null ||
+    state.pick !== null ||
+    state.morning !== null ||
+    state.assistantPanelOpen ||
+    state.memoryStatusOpen ||
+    state.toast !== null ||
+    state.execRequests.some((r) => r.state === "pending")
+  );
+}
+
+/** A webview do preview (F12.1) só existe com a aba "Preview" do projeto em foco: o que está
+ * embaixo dela some. Serve para o app não desenhar por baixo da webview (F12.6). */
+export function previewFocused(state: Pick<
+  State,
+  "activeView" | "activeProfile" | "activeProject"
+>): boolean {
+  if (state.activeView?.kind !== "preview") return false;
+  if (state.activeProfile === null || state.activeProject === null) return false;
+  return state.activeView.key === viewKey(state.activeProfile, state.activeProject);
 }
 
 /** F8.2: recarregar a página (ou o hubd aplicar uma UI nova, F8.7) volta para o mesmo

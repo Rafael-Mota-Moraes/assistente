@@ -10,7 +10,7 @@ import {
   previewPicker,
   updatePreviewPanelBounds,
 } from "../../bridge/host";
-import { closeView, openPick, useAppStore, viewKey } from "../../store";
+import { closeView, anyOverlayOpen, openPick, useAppStore, viewKey } from "../../store";
 import { toPickDetail } from "../pick/detail";
 
 /** Retângulo do âncora em pixels lógicos (igual ao px do CSS). */
@@ -30,9 +30,11 @@ export function PreviewPanel() {
   const hub = useAppStore((s) => s.hub);
   const profile = useAppStore((s) => s.activeProfile);
   const project = useAppStore((s) => s.activeProject);
-  /** Modal aberto (engrenagem ou caixa do apontar): a webview é um widget nativo por cima da
-   * UI, então precisa sumir. */
-  const modalAberto = useAppStore((s) => s.projectSettings !== null || s.pick !== null);
+  /** Sobreposição aberta (F12.6): a webview do preview é um widget nativo por cima de toda a
+   * UI, então precisa sumir enquanto houver algo do app por cima: pedidos do agente para
+   * rodar fora do jail, avisos, "Bom dia", painel do Assistente, engrenagem e caixa do
+   * apontar. */
+  const overlayAberto = useAppStore(anyOverlayOpen);
   const [url, setUrl] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [apontando, setApontando] = useState(false);
@@ -98,15 +100,20 @@ export function PreviewPanel() {
     };
   }, [url]);
 
-  /** Modal aberto: esconde a webview; ao fechar, mostra de novo e relê a URL. */
+  /** Sobreposição aberta (F12.6): a webview é um widget nativo por cima da UI, então fica
+   * escondida; quando a sobreposição fecha, ela volta (a página continua onde estava). */
   useEffect(() => {
-    if (!url || !modalAberto) return;
-    previewPanelVisible(false).catch(() => {});
-    return () => {
-      previewPanelVisible(true).catch(() => {});
-      carregar();
-    };
-  }, [url, modalAberto, carregar]);
+    if (!url) return;
+    previewPanelVisible(!overlayAberto).catch(() => {});
+  }, [url, overlayAberto]);
+
+  /** A URL é relida quando a sobreposição fecha: a engrenagem (F9.3) pode ter mudado ela
+   * enquanto o preview estava escondido. */
+  const overlayEstavaAberto = useRef(false);
+  useEffect(() => {
+    if (overlayEstavaAberto.current && !overlayAberto) carregar();
+    overlayEstavaAberto.current = overlayAberto;
+  }, [overlayAberto, carregar]);
 
   /** O pick da página (F12.2, evento do Rust) abre a caixa de pedido deste projeto (F12.4). */
   useEffect(() => {
@@ -219,8 +226,10 @@ export function PreviewPanel() {
         {url ? (
           isTauri() ? (
             // Enquanto a webview filha termina de carregar, este cartão fica por baixo dela.
-            <div className="flex h-full items-center justify-center text-sm text-slate-400">
-              Carregando o preview…
+            <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-400">
+              {overlayAberto
+                ? "O preview fica escondido enquanto há algo do app por cima (um pedido do agente, um aviso…)."
+                : "Carregando o preview…"}
             </div>
           ) : (
             <iframe

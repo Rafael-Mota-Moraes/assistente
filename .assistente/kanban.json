@@ -57,7 +57,8 @@
       "description": "No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.\nPronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.\nComo testar: vitest com DOM fake + um build de produção.",
       "priority": "normal",
       "kind": "manual",
-      "column": "backlog",
+      "column": "fazendo",
+      "holder": "pessoal--assistente--opencode-5",
       "created_at": 1792614072
     },
     {

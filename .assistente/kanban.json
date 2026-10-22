@@ -8,7 +8,6 @@
       "priority": "normal",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-2",
       "commit": "b34dc696311a57f8782a143eb6660af19ef0dfd1",
       "merged": {
         "branch": "main",
@@ -23,7 +22,6 @@
       "priority": "normal",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-2",
       "commit": "801ee991bc09bdf3339c9313ad57bf9c2b5929c6",
       "merged": {
         "branch": "main",
@@ -48,7 +46,6 @@
       "priority": "normal",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-2",
       "commit": "a9647cd6f38b39d4b6c6a82c19d2d1113ebc2caa",
       "merged": {
         "branch": "main",
@@ -63,7 +60,6 @@
       "priority": "normal",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-2",
       "commit": "73ca375847997689df4e20365766bf5a67ecbf36",
       "merged": {
         "branch": "main",
@@ -88,7 +84,6 @@
       "priority": "normal",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-2",
       "commit": "9c5ea2c90de9436237282c797e529a0acd565c51",
       "merged": {
         "branch": "main",
@@ -103,7 +98,6 @@
       "priority": "normal",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-2",
       "commit": "b8fb8a7332d4308a9bef31241d67280b572ed39b",
       "merged": {
         "branch": "main",
@@ -118,7 +112,6 @@
       "priority": "normal",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-2",
       "commit": "5165d994d7dc9944e0c94f567130ac210f543d7e",
       "merged": {
         "branch": "main",
@@ -133,7 +126,6 @@
       "priority": "alta",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-2",
       "commit": "cc9032e4610f70e4d83537fae58a9ef7727864ce",
       "merged": {
         "branch": "main",

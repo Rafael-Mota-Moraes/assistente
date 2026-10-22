@@ -28,7 +28,7 @@ kanban() {
   if [ -z "$url" ] || [ -z "$token" ]; then
     die "fora de uma sessão do Assistente (sem ASSISTENTE_EXEC_URL/ASSISTENTE_EXEC_TOKEN)"
   fi
-  local acao="${1:-}" id="" commit="" modelos="" titulo="" descricao="" tipo="" prioridade="" motivo="" branch="" nota=""
+  local acao="${1:-}" id="" commit="" modelos="" titulo="" descricao="" tipo="" prioridade="" motivo="" branch="" nota="" depende_de=""
   [ $# -gt 0 ] && shift
   case "$acao" in
     pull|listar|criar) ;;
@@ -50,6 +50,7 @@ kanban() {
       --motivo) [ $# -ge 2 ] || uso_kanban; motivo="$2"; shift 2 ;;
       --branch) [ $# -ge 2 ] || uso_kanban; branch="$2"; shift 2 ;;
       --nota) [ $# -ge 2 ] || uso_kanban; nota="$2"; shift 2 ;;
+      --depende-de) [ $# -ge 2 ] || uso_kanban; depende_de="$2"; shift 2 ;;
       *) uso_kanban ;;
     esac
   done
@@ -78,7 +79,7 @@ kanban() {
   esac
   body="$(python3 -c '
 import json, sys
-acao, task, commit, modelos, titulo, descricao, tipo, prioridade, motivo, branch, nota = sys.argv[1:12]
+acao, task, commit, modelos, titulo, descricao, tipo, prioridade, motivo, branch, nota, depende_de = sys.argv[1:13]
 if acao == "done":
     body = {"id": task, "commit": commit or None}
 elif acao == "release":
@@ -99,9 +100,11 @@ elif acao == "criar":
         body["kind"] = tipo
     if prioridade:
         body["priority"] = prioridade
+    if depende_de:
+        body["depends_on"] = [d.strip() for d in depende_de.split(",") if d.strip()]
 else:
     body = {}
-print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos" "$titulo" "$descricao" "$tipo" "$prioridade" "$motivo" "$branch" "$nota")"
+print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos" "$titulo" "$descricao" "$tipo" "$prioridade" "$motivo" "$branch" "$nota" "$depende_de")"
   local response status json
   if [ "$method" = GET ]; then
     response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
@@ -124,7 +127,7 @@ except ValueError:
   esac
 }
 uso_kanban() {
-  echo "uso: fora-do-jail kanban listar | criar --titulo T [--descricao D] [--tipo manual|agente] [--prioridade alta|normal|baixa]" >&2
+  echo "uso: fora-do-jail kanban listar | criar --titulo T [--descricao D] [--tipo manual|agente] [--prioridade alta|normal|baixa] [--depende-de T1,T3]" >&2
   echo "     fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> [--modelos m1,m2]" >&2
   echo "     fora-do-jail kanban bloquear <id> --motivo M   (cota esgotada: pausa o orquestrador)" >&2
   echo "     fora-do-jail kanban validar <id> --branch B | reabrir <id> --nota N   (QA de um card feito)" >&2

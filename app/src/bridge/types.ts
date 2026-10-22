@@ -190,6 +190,8 @@ export type KanbanCard = {
   blocked?: string;
   /** Onde o QA juntou a tarefa (`validado`, F11.15). */
   merged?: KanbanMerged;
+  /** IDs das tarefas das quais esta depende (F11.13). */
+  depends_on?: string[];
   created_at: number;
 };
 
@@ -228,6 +230,8 @@ export type KanbanDraft = {
   column?: KanbanColumn;
   /** `0` = "Tentar de novo": o orquestrador automático volta a puxar. */
   failures?: number;
+  /** IDs das tarefas das quais esta depende (F11.13). Na edição, ausente = não muda; vazio = limpa. */
+  depends_on?: string[];
 };
 
 export type CollectedCommit = { hash: string; subject: string };

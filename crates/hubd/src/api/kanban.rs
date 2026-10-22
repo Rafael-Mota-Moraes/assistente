@@ -101,6 +101,12 @@ fn clean_validated(dir: &Path, board: &Board, released: &[String]) {
     }
 }
 
+/// Dependência na `main` (F11.13): o commit que o QA juntou está no `HEAD` do projeto, de onde o
+/// worktree do trabalhador nasce. Juntada noutra branch não conta.
+fn landed(dir: &Path) -> impl Fn(&Merged) -> bool + '_ {
+    move |merged| git_out(dir, &["merge-base", "--is-ancestor", &merged.commit, "HEAD"]).is_ok()
+}
+
 fn persist(dir: &Path, board: &Board, message: &str) -> Reply<()> {
     store::save(dir, board, message).map_err(|e| internal(&e))
 }
@@ -594,6 +600,14 @@ async fn start_worker(
         .get(id)
         .cloned()
         .ok_or_else(|| kanban_error(KanbanError::NotFound))?;
+    // O worktree nasce do `HEAD`: sem as dependências na `main`, sairia sem o código delas.
+    if !board.dependencies_satisfied(&card, landed(&dir)) {
+        let deps = card.depends_on.join(", ");
+        return Err(error(
+            StatusCode::CONFLICT,
+            &format!("{id} espera {deps} entrar na main (validado pelo QA)"),
+        ));
+    }
     match holder {
         Some(_) if card.column != Column::Fazendo => {
             return Err(kanban_error(KanbanError::NotInProgress(card.column)));
@@ -828,7 +842,7 @@ pub(super) async fn agent_pull(
     let dir = project_dir(&state, &session.profile, &session.project)?;
     let _guard = state.0.kanban_lock.lock().await;
     let mut board = load(&state, &dir).await?;
-    let card = board.pull(&session.id).cloned();
+    let card = board.pull(&session.id, landed(&dir)).cloned();
     if let Some(card) = &card {
         let message = format!("kanban: {} puxada por {}", card.id, session.id);
         persist(&dir, &board, &message)?;
@@ -1267,7 +1281,7 @@ async fn orchestrate(
             {
                 break;
             }
-            match board.next_auto() {
+            match board.next_auto(landed(&dir)) {
                 Some(card) => card.id.clone(),
                 None => break,
             }
@@ -2562,5 +2576,86 @@ mod tests {
         let out = client(&["validar", "T1", "--branch", "main"]).await;
         assert_eq!(out.status.code(), Some(1));
         assert!(String::from_utf8_lossy(&out.stderr).contains("HTTP 409"));
+    }
+
+    #[tokio::test]
+    async fn orchestrator_opens_a_dependent_card_only_after_its_dependency_reaches_main() {
+        let t = TestTmux::new("kanban-deps");
+        let hub = hub(&t, true);
+        std::fs::write(
+            hub.proj.join(".assistente.toml"),
+            "[workers]\nmodels = [\"x/a\"]\n",
+        )
+        .unwrap();
+        git_sync(&hub.proj, &["add", ".assistente.toml"]);
+        git_sync(&hub.proj, &["commit", "-q", "-m", "config do projeto"]);
+        for body in [
+            r#"{"title":"A","kind":"agente"}"#,
+            r#"{"title":"B","kind":"agente","priority":"alta","depends_on":["T1"]}"#,
+        ] {
+            let (status, card) = send(hub.app.clone(), "POST", CARDS, Some(body), None).await;
+            assert_eq!(status, StatusCode::CREATED, "{card}");
+        }
+        let uri = format!("{CARDS}/orquestrador");
+        let orchestrate = || {
+            let app = hub.app.clone();
+            let uri = uri.clone();
+            async move {
+                let body = r#"{"enabled":true,"max_workers":2}"#;
+                send(app, "PUT", &uri, Some(body), None).await
+            }
+        };
+        let mandar_b = || {
+            let app = hub.app.clone();
+            async move { send(app, "POST", &format!("{CARDS}/T2/mandar"), Some("{}"), None).await }
+        };
+
+        // A → B: só A abre, mesmo com B na frente pela prioridade; "Mandar" B também recusa.
+        let (status, board) = orchestrate().await;
+        assert_eq!(status, StatusCode::OK, "{board}");
+        assert_eq!(board["started"], json!(["T1"]), "{board}");
+        let (status, body) = mandar_b().await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("T1"), "{body}");
+
+        // A feito: o commit está só na branch dela, então B continua esperando.
+        let holder = board["cards"][0]["holder"].as_str().unwrap().to_owned();
+        let worker_token = exec_token(&t, &holder).await;
+        let a = worker::worktree_dir(&hub.proj, "T1");
+        let commit = crate::sleep::tests::commit(&a, "a.txt", "feito por A");
+        let body = format!(r#"{{"id":"T1","commit":"{commit}"}}"#);
+        let (status, _) = send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/done",
+            Some(&body),
+            Some(&worker_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, board) = orchestrate().await;
+        assert!(board.get("started").is_none(), "{board}");
+        assert_eq!(mandar_b().await.0, StatusCode::CONFLICT);
+
+        // O QA junta A na main: B abre, num worktree que já tem o código de A.
+        let (status, info) = send(hub.app.clone(), "POST", &format!("{CARDS}/T1/qa"), None, None).await;
+        assert_eq!(status, StatusCode::CREATED, "{info}");
+        let qa_token = exec_token(&t, info["id"].as_str().unwrap()).await;
+        let (status, done) = send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/validate",
+            Some(r#"{"id":"T1","branch":"main"}"#),
+            Some(&qa_token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{done}");
+        let (_, board) = orchestrate().await;
+        assert_eq!(board["started"], json!(["T2"]), "{board}");
+        let b = worker::worktree_dir(&hub.proj, "T2");
+        assert_eq!(
+            std::fs::read_to_string(b.join("a.txt")).unwrap(),
+            "feito por A"
+        );
     }
 }

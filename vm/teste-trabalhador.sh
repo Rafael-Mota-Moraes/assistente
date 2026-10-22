@@ -42,6 +42,8 @@ case "$modelo" in
   # cota grátis esgotada (mensagem real do opencode, F11.14): morre logo, ou fica preso.
   cota) echo "Error: Free usage limit reached. Subscribe to OpenCode Go to keep going: https://opencode.ai/go"; exit 1 ;;
   cotapresa) echo "Error: Free usage limit reached. Subscribe to OpenCode Go to keep going"; exec sleep 300 ;;
+  # só junta a branch de outra tarefa, sem mudança própria (a T3 da revisão de 2026-10-22, F11.13).
+  merge) git merge -q --no-ff outra -m "merge: outra"; exit 0 ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -181,6 +183,24 @@ if [ "$rc" = 3 ] && [ "$duracao" -lt 60 ] && grep -q '^kanban bloquear T3 --moti
   ok "cota no meio da tentativa bloqueia na hora"
 else
   falha "cotapresa: rc=$rc duracao=${duracao}s chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null)"
+fi
+
+# 9) Só merge não é progresso (F11.13): o merge traz o diff da outra branch, mas nenhum commit
+#    da linha da tarefa muda algo; a tarefa volta ao backlog e o merge é desfeito.
+repo="$(repo_novo merge)"
+git -C "$repo" checkout -q -b outra
+echo z >"$repo/outra.txt"
+git -C "$repo" add outra.txt
+git -C "$repo" commit -qm "trabalho de outra tarefa"
+git -C "$repo" checkout -q agente/T3
+antes="$(git -C "$repo" rev-parse HEAD)"
+rc="$(rodar "$repo" "merge" 1)"
+if [ "$rc" = 1 ] && grep -qx "kanban release T3" "$work/chamadas" \
+  && ! grep -q 'kanban done' "$work/chamadas" && grep -q "sem mudança própria" "$work/log" \
+  && [ "$(git -C "$repo" rev-parse HEAD)" = "$antes" ]; then
+  ok "merge sem mudança própria não é progresso"
+else
+  falha "merge: rc=$rc chamadas=$(tr '\n' ' ' <"$work/chamadas" 2>/dev/null) log=$(tr '\n' ' ' <"$work/log" 2>/dev/null)"
 fi
 
 if [ "$falhas" -gt 0 ]; then

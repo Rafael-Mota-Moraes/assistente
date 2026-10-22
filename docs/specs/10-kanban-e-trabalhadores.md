@@ -14,7 +14,8 @@ reaproveitado), `title`, `description`, `priority` (`alta` · `normal` · `baixa
 `holder` (a sessão que segura: o trabalhador em "fazendo", o QA em "feito"/"validado"), `commit` (o
 que fechou a tarefa, em "feito"), `merged` `{branch, commit}` (onde o QA juntou, em "validado"), `failures` (vezes que voltou do
 "fazendo" sem concluir: `release` ou sessão morta; omitido quando zero), `blocked` (a linha de erro
-de quando parou por cota, F11.14; some quando a tarefa começa de novo). No nível do quadro,
+de quando parou por cota, F11.14; some quando a tarefa começa de novo), `depends_on` (ids `T<n>`
+das tarefas das quais esta depende, F11.13; omitido quando vazio). No nível do quadro,
 `orchestrator` (`enabled`, `max_workers`, `instructions`, `paused` `{reason, at}`), omitido enquanto
 estiver no padrão (desligado, 1, sem instruções, sem pausa).
 
@@ -23,6 +24,13 @@ estiver no padrão (desligado, 1, sem instruções, sem pausa).
 - `manual` (padrão): nunca roda sozinho. Só roda quando você manda ("Mandar" no card).
 - `agente`: marcado para o agente implementar. O orquestrador (F11.7) e o modo dormir (F11.4)
   puxam a próxima tarefa `agente` do backlog: prioridade, depois criação, depois número.
+
+**Dependências** (F11.13): nenhum trabalhador abre (`pull`, orquestrador automático, "Mandar") para
+card cuja dependência ainda não está na `main`, isto é, validada pelo QA com o commit de `merged` no
+`HEAD` do projeto (`git merge-base --is-ancestor`). O worktree nasce do `HEAD`, então já sai com o
+código dela. "Feito" não basta: o commit só está na branch `agente/<id>`. Dependência que não existe
+nunca é atendida. O "Popular pelo backlog" preenche pelo "Ordem:" das seções e pelo "Depende de" dos
+itens; a engrenagem do card edita.
 
 **Posse**: só quem segura a tarefa conclui (`done`) ou solta (`release`). Duas sessões nunca levam a
 mesma tarefa (o pull é atômico sob `kanban_lock`). Sessão morta = tarefa solta na próxima leitura do
@@ -45,6 +53,9 @@ cada item pendente. Cards nascem `manual`. A sessão não implementa nada.
 
 Uma sessão do opencode no jail, rodando `vm/trabalhador`, no worktree da tarefa:
 
+- Progresso conta só com mudança própria (F11.13): um commit da linha da tarefa (primeiro pai), que
+  não seja merge e mude algum arquivo. Só um merge (o diff dele é o da outra branch) é desfeito e
+  não fecha o card.
 - Worktree: `<projeto>/.assistente/worktrees/<id>`, branch `agente/<id>`. Fica fora do `git status`
   pelo `info/exclude`. Você revisa e mescla a branch (F10.4 mostra o diff).
 - Prompt e registro: `~/.assistente/perfis/<perfil>/trabalhadores/<sessão>.{md,json}`, fora do repo

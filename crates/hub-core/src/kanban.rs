@@ -90,6 +90,10 @@ pub struct Card {
     /// Onde o QA juntou a tarefa (`validado`, F11.15).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merged: Option<Merged>,
+    /// Tarefas das quais esta depende (ex.: `["T1", "T3"]`). Nenhum trabalhador abre antes de
+    /// todas estarem na `main` (F11.13): o worktree nasce do `HEAD` e já sai com o código delas.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
     pub created_at: u64,
 }
 
@@ -165,6 +169,9 @@ pub struct Draft {
     pub column: Option<Column>,
     /// `0` = "Tentar de novo": o orquestrador automático volta a puxar a tarefa.
     pub failures: Option<u32>,
+    /// IDs das tarefas das quais esta depende. Na edição, `None` = não muda; vetor vazio = limpa.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +244,7 @@ impl Board {
             failures: 0,
             blocked: None,
             merged: None,
+            depends_on: checked_depends_on(draft.depends_on.unwrap_or_default())?,
             created_at: now,
         });
         Ok(self.cards.last().expect("acabou de ser empurrado"))
@@ -260,6 +268,13 @@ impl Board {
         }
         if let Some(failures) = draft.failures {
             card.failures = failures;
+        }
+        if let Some(depends_on) = draft.depends_on {
+            let depends_on = checked_depends_on(depends_on)?;
+            if depends_on.contains(&card.id) {
+                return Err(KanbanError::Invalid("a tarefa não depende de si mesma".to_owned()));
+            }
+            card.depends_on = depends_on;
         }
         if let Some(column) = draft.column
             && column != card.column
@@ -301,16 +316,20 @@ impl Board {
     }
 
     /// `pull` da API dos agentes: a primeira tarefa `agente` do backlog (prioridade, depois
-    /// criação, depois número), já presa a `holder`. `None` = quadro sem trabalho para agente.
-    pub fn pull(&mut self, holder: &str) -> Option<&Card> {
-        let id = self.first_agent_card(|_| true)?.id.clone();
+    /// criação, depois número) com as dependências na `main` (`landed`, ver
+    /// `dependencies_satisfied`), já presa a `holder`. `None` = quadro sem trabalho para agente.
+    pub fn pull(&mut self, holder: &str, landed: impl Fn(&Merged) -> bool) -> Option<&Card> {
+        let id = self
+            .first_agent_card(|card| self.dependencies_satisfied(card, &landed))?
+            .id
+            .clone();
         self.claim(&id, holder).ok()
     }
 
     /// Próxima tarefa do orquestrador automático, na ordem do `pull`, sem as que já voltaram do
-    /// "fazendo": ele não insiste sozinho no que deu errado. Não prende nada.
-    pub fn next_auto(&self) -> Option<&Card> {
-        self.first_agent_card(|card| card.failures == 0)
+    /// "fazendo". Não prende nada.
+    pub fn next_auto(&self, landed: impl Fn(&Merged) -> bool) -> Option<&Card> {
+        self.first_agent_card(|card| card.failures == 0 && self.dependencies_satisfied(card, &landed))
     }
 
     fn first_agent_card(&self, extra: impl Fn(&Card) -> bool) -> Option<&Card> {
@@ -327,6 +346,18 @@ impl Board {
             .iter()
             .filter(|card| card.column == Column::Fazendo)
             .count()
+    }
+
+    /// As dependências de `card` estão na `main`: cada uma foi juntada pelo QA (`validado`) e
+    /// `landed` confirma o commit juntado (o hubd pergunta ao git se ele está no `HEAD`, de onde
+    /// o worktree nasce). "Feito" não basta: o commit só está na branch da tarefa. Dependência
+    /// que não existe nunca é atendida.
+    pub fn dependencies_satisfied(&self, card: &Card, landed: impl Fn(&Merged) -> bool) -> bool {
+        card.depends_on.iter().all(|id| {
+            self.get(id).is_some_and(|dep| {
+                dep.column == Column::Validado && dep.merged.as_ref().is_some_and(&landed)
+            })
+        })
     }
 
     /// Liga ou desliga o orquestrador automático; `max_workers` vai para `1..=MAX_WORKERS`.
@@ -564,6 +595,22 @@ fn number(id: &str) -> u32 {
     id.trim_start_matches('T').parse().unwrap_or(u32::MAX)
 }
 
+/// Dependências: ids `T<n>` sem espaços nas pontas e sem repetir, na ordem dada.
+fn checked_depends_on(ids: Vec<String>) -> Result<Vec<String>, KanbanError> {
+    let mut checked: Vec<String> = Vec::new();
+    for id in ids {
+        let id = id.trim().to_owned();
+        let digits = id.strip_prefix('T').unwrap_or("");
+        if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+            return Err(KanbanError::Invalid(format!("dependência inválida: {id:?}")));
+        }
+        if !checked.contains(&id) {
+            checked.push(id);
+        }
+    }
+    Ok(checked)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,11 +678,11 @@ mod tests {
         board
             .create(agent_draft("alta nova", Priority::Alta), 9)
             .unwrap();
-        assert_eq!(board.pull("s1").unwrap().title, "alta nova");
-        assert_eq!(board.pull("s2").unwrap().title, "normal");
-        assert_eq!(board.pull("s3").unwrap().title, "baixa antiga");
+        assert_eq!(board.pull("s1", |_| true).unwrap().title, "alta nova");
+        assert_eq!(board.pull("s2", |_| true).unwrap().title, "normal");
+        assert_eq!(board.pull("s3", |_| true).unwrap().title, "baixa antiga");
         // Sobrou só a manual: o agente não pega.
-        assert!(board.pull("s4").is_none());
+        assert!(board.pull("s4", |_| true).is_none());
     }
 
     #[test]
@@ -643,17 +690,17 @@ mod tests {
         let mut board = Board::default();
         board.create(agent_draft("a", Priority::Normal), 1).unwrap();
         board.create(agent_draft("b", Priority::Normal), 2).unwrap();
-        let first = board.pull("s1").unwrap().id.clone();
-        let second = board.pull("s2").unwrap().id.clone();
+        let first = board.pull("s1", |_| true).unwrap().id.clone();
+        let second = board.pull("s2", |_| true).unwrap().id.clone();
         assert_ne!(first, second);
-        assert!(board.pull("s3").is_none());
+        assert!(board.pull("s3", |_| true).is_none());
     }
 
     #[test]
     fn only_the_holder_can_finish_or_release() {
         let mut board = Board::default();
         board.create(agent_draft("a", Priority::Normal), 1).unwrap();
-        board.pull("s1");
+        board.pull("s1", |_| true);
         assert_eq!(board.done("T1", "outra", None), Err(KanbanError::NotHolder));
         assert_eq!(board.release("T1", "outra"), Err(KanbanError::NotHolder));
         let done = board
@@ -709,7 +756,7 @@ mod tests {
         board.create(agent_draft("a", Priority::Alta), 1).unwrap();
         board.create(agent_draft("b", Priority::Normal), 2).unwrap();
         board.create(draft("manual"), 3).unwrap();
-        assert_eq!(board.next_auto().unwrap().id, "T1");
+        assert_eq!(board.next_auto(|_| true).unwrap().id, "T1");
         board.claim("T1", "s1").unwrap();
         assert_eq!(board.in_progress(), 1);
         board.release("T1", "s1").unwrap();
@@ -718,14 +765,14 @@ mod tests {
         assert_eq!(board.get("T1").unwrap().failures, 1);
         assert_eq!(board.get("T2").unwrap().failures, 1);
         // O automático não insiste; o pull explícito (orquestrador Claude, dormir) continua.
-        assert!(board.next_auto().is_none());
+        assert!(board.next_auto(|_| true).is_none());
         assert_eq!(board.in_progress(), 0);
         let retry = Draft {
             failures: Some(0),
             ..Draft::default()
         };
         board.update("T2", retry).unwrap();
-        assert_eq!(board.next_auto().unwrap().id, "T2");
+        assert_eq!(board.next_auto(|_| true).unwrap().id, "T2");
     }
 
     #[test]
@@ -765,7 +812,7 @@ mod tests {
         // Retomar: o automático volta a puxar o bloqueado; começar de novo limpa o motivo.
         board.resume();
         assert_eq!(board.orchestrator.paused, None);
-        assert_eq!(board.next_auto().unwrap().id, "T1");
+        assert_eq!(board.next_auto(|_| true).unwrap().id, "T1");
         assert_eq!(board.claim("T1", "s3").unwrap().blocked, None);
     }
 
@@ -812,7 +859,7 @@ mod tests {
         assert_eq!(card.failures, 0);
         assert_eq!(card.commit, None);
         assert_eq!(card.description, "Revisão (2026-10-22): falta o botão");
-        assert_eq!(board.next_auto().unwrap().id, "T2");
+        assert_eq!(board.next_auto(|_| true).unwrap().id, "T2");
         // A sessão do QA acabou: o card validado fica, só perde quem segurava.
         assert_eq!(board.validated_worktrees().count(), 0);
         assert_eq!(board.release_dead(|_| false), vec!["T1".to_owned()]);
@@ -859,7 +906,7 @@ mod tests {
     fn hand_over_moves_the_holder_only_for_the_current_one() {
         let mut board = Board::default();
         board.create(agent_draft("a", Priority::Normal), 1).unwrap();
-        board.pull("orquestrador");
+        board.pull("orquestrador", |_| true);
         assert_eq!(
             board.hand_over("T1", "outro", "trabalhador"),
             Err(KanbanError::NotHolder)
@@ -894,10 +941,91 @@ mod tests {
     fn round_trip_keeps_the_board_and_empty_text_is_a_new_board() {
         let mut board = Board::default();
         board.create(agent_draft("a", Priority::Alta), 1).unwrap();
-        board.pull("s1");
+        board.pull("s1", |_| true);
         let text = board.to_json();
         assert_eq!(Board::parse(&text).unwrap(), board);
         assert_eq!(Board::parse("  \n").unwrap(), Board::default());
         assert!(Board::parse("{quebrado").is_err());
+    }
+
+    /// Junta a tarefa (que precisa estar em "feito") como o QA faz: vai para "validado".
+    fn validate(board: &mut Board, id: &str, commit: &str) {
+        board.start_qa(id, "qa").unwrap();
+        let merged = Merged {
+            branch: "main".to_owned(),
+            commit: commit.to_owned(),
+        };
+        board.validate(id, "qa", merged).unwrap();
+    }
+
+    fn depends(title: &str, ids: &[&str]) -> Draft {
+        Draft {
+            depends_on: Some(ids.iter().map(|id| (*id).to_owned()).collect()),
+            ..agent_draft(title, Priority::Alta)
+        }
+    }
+
+    #[test]
+    fn queue_waits_for_dependencies_to_land_on_main() {
+        let mut board = Board::default();
+        board.create(agent_draft("A", Priority::Normal), 1).unwrap();
+        board.create(depends("B", &["T1"]), 2).unwrap();
+        let on_main = |m: &Merged| m.commit == "c1";
+
+        // B tem prioridade maior, mas espera A: só A abre.
+        assert_eq!(board.next_auto(on_main).unwrap().id, "T1");
+        assert_eq!(board.pull("s1", on_main).unwrap().id, "T1");
+        assert!(board.next_auto(on_main).is_none());
+        assert!(board.pull("s2", on_main).is_none());
+
+        // "Feito" com commit ainda não está na main: o commit só existe na branch de A.
+        board.done("T1", "s1", Some("a1".to_owned())).unwrap();
+        assert!(board.next_auto(on_main).is_none());
+        assert!(board.pull("s2", on_main).is_none());
+
+        // Juntada, mas o git não acha o commit no HEAD (juntada em outra branch): espera.
+        validate(&mut board, "T1", "c0");
+        assert!(board.next_auto(on_main).is_none());
+
+        board.get_mut("T1").unwrap().merged.as_mut().unwrap().commit = "c1".to_owned();
+        assert_eq!(board.next_auto(on_main).unwrap().id, "T2");
+        assert_eq!(board.pull("s2", on_main).unwrap().id, "T2");
+    }
+
+    #[test]
+    fn missing_dependency_never_lands() {
+        let mut board = Board::default();
+        board.create(depends("B", &["T9"]), 1).unwrap();
+        let card = board.get("T1").unwrap();
+        assert!(!board.dependencies_satisfied(card, |_| true));
+        assert!(board.next_auto(|_| true).is_none());
+        assert!(board.pull("s1", |_| true).is_none());
+    }
+
+    #[test]
+    fn depends_on_is_checked_and_editable() {
+        let mut board = Board::default();
+        board.create(draft("A"), 1).unwrap();
+        let card = board.create(depends("B", &[" T1", "T1"]), 2).unwrap();
+        assert_eq!(card.depends_on, vec!["T1"]);
+        assert!(board.create(depends("C", &["x"]), 3).is_err());
+
+        let edit = |ids: &[&str]| Draft {
+            depends_on: Some(ids.iter().map(|id| (*id).to_owned()).collect()),
+            ..Draft::default()
+        };
+        assert!(board.update("T2", edit(&["T2"])).is_err());
+        assert_eq!(board.get("T2").unwrap().depends_on, vec!["T1"]);
+        assert!(board.update("T2", edit(&[])).unwrap().depends_on.is_empty());
+        // `None` não mexe nas dependências.
+        board.update("T2", edit(&["T1"])).unwrap();
+        assert_eq!(
+            board.update("T2", draft("B2")).unwrap().depends_on,
+            vec!["T1"]
+        );
+
+        let text = board.to_json();
+        assert_eq!(Board::parse(&text).unwrap(), board);
+        assert!(!text.contains("\"depends_on\": []"));
     }
 }

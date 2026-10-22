@@ -324,7 +324,7 @@ hubd); F11.2 antes de F11.4.
   apaga os worktrees, sem conversa à mão. Como testar: `api::kanban::tests` com repo git real
   (`init_repo`): sessão do revisor aberta com o prompt, `reabrir` com nota, `merged`, `main` movida =
   nada muda; `KanbanBoard.test.tsx` (botão, selo, resumo).
-- [ ] **F11.13 Cards com dependência e progresso de verdade.** O card ganha `depends_on` (ids). O
+- [x] **F11.13 Cards com dependência e progresso de verdade.** O card ganha `depends_on` (ids). O
   "Popular pelo backlog" (F11.9) preenche pela "Ordem:" das seções e pelos "Depende de" dos itens, e
   a engrenagem do card deixa editar. O orquestrador e o "Mandar" não abrem trabalhador para card
   cuja dependência ainda não está na `main` (F11.12): o worktree nasce do `HEAD`, então já sai com o
@@ -334,7 +334,11 @@ hubd); F11.2 antes de F11.4.
   Pronto quando: um quadro com A → B abre só A, e B abre depois que A entra na `main`, num worktree
   com o código de A; um trabalhador que só faz merge volta ao backlog. Como testar:
   `kanban::tests` (a fila respeita `depends_on`), `api::kanban::tests::orchestrator_…` e
-  `vm/teste-trabalhador.sh` (merge sem diff não é progresso).
+  `vm/teste-trabalhador.sh` (merge sem diff não é progresso). Feito: "na `main`" = validado pelo
+  QA (F11.15) com o commit juntado no `HEAD` do projeto (`git merge-base --is-ancestor`); "feito"
+  não basta, o commit só está na branch da tarefa. Testes: `kanban::tests::queue_waits_…`,
+  `api::kanban::tests::orchestrator_opens_a_dependent_card_…` e o caso 9 do
+  `teste-trabalhador.sh`. `fora-do-jail kanban criar --depende-de T1,T3`.
 - [x] **F11.14 Cota esgotada pausa tudo e deixa escolher outro harness.** Antes, a cota grátis do
   opencode acabar parecia "modelo recusado" (F11.10): o `trabalhador` passava por todos os grátis
   (que dividem a mesma cota), devolvia o card com `failures` + 1, e o orquestrador puxava o próximo a

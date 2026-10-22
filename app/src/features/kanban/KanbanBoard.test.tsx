@@ -18,6 +18,7 @@ const card = (id: string, extra: Partial<KanbanCard> = {}): KanbanCard => ({
   kind: "manual",
   column: "backlog",
   created_at: 0,
+  depends_on: [],
   ...extra,
 });
 
@@ -387,5 +388,14 @@ describe("KanbanBoard", () => {
     });
     expect(await screen.findByRole("alert", {}, { timeout: 4000 })).toBeInTheDocument();
     expect(useAppStore.getState().toast).toMatch(/Cota do provedor esgotada/);
+  });
+
+  it("mostra dependências do card no backlog", async () => {
+    const hub = connect({
+      next: 3,
+      cards: [card("T1"), card("T2", { kind: "agente", depends_on: ["T1", "T3"] })],
+    });
+    const backlog = await column("Backlog");
+    expect(within(backlog).getByText("← T1, T3")).toBeInTheDocument();
   });
 });

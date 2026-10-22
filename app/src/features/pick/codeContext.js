@@ -8,9 +8,15 @@
  *
  * e manda o resultado no payload do pick (campo `code`).
  *
- * Em dev (Vite + React) o React deixa o `_debugSource` no fiber: dá para dizer de qual arquivo
- * e linha veio o elemento. Em build de produção não há fonte: aí sobram o componente e a pilha,
- * e o agente procura o arquivo pelo texto/classe/componente antes de editar.
+ * De onde sai o "arquivo:linha":
+ *
+ * - React 18 e anteriores: o `_debugSource` do fiber (o `__source` do JSX).
+ * - React 19+: o `_debugSource` sumiu; o React põe um Error no `_debugStack` do fiber, criado
+ *   no momento do JSX — a pilha dele tem o arquivo e a linha (o frame do próprio React vem
+ *   antes e é pulado).
+ *
+ * Em build de produção não há fonte: aí sobram o componente e a pilha, e o agente procura o
+ * arquivo pelo texto/classe/componente antes de editar.
  */
 (() => {
   /** Chave que o React deixa no DOM: `__reactFiber$…` (React 17+) ou `__reactInternalInstance$…`. */
@@ -35,35 +41,79 @@
     if (type && typeof type === "object") {
       // memo()/forwardRef(): o nome do componente de verdade está dentro.
       if (typeof type.type === "function") return type.type.displayName || type.type.name || null;
-      if (typeof type.render === "function")
+      if (typeof type.render === "function") {
         return type.render.displayName || type.render.name || null;
+      }
     }
     return null;
   }
 
   /** `arquivo:linha` do JSX, quando o build expõe (só em dev). */
   function debugSource(fiber) {
-    const candidates = [
-      fiber._debugSource,
-      propsSource(fiber.memoizedProps),
-      propsSource(fiber.pendingProps),
-    ];
-    for (const candidate of candidates) {
-      if (candidate && typeof candidate.fileName === "string" && candidate.fileName !== "") {
-        return {
-          file: candidate.fileName,
-          line: numberOrNull(candidate.lineNumber),
-          column: numberOrNull(candidate.columnNumber),
-        };
-      }
+    // React 18 e anteriores: o `_debugSource` do fiber.
+    const direct = fiber._debugSource;
+    if (direct && typeof direct.fileName === "string" && direct.fileName !== "") {
+      return {
+        file: direct.fileName,
+        line: numberOrNull(direct.lineNumber),
+        column: numberOrNull(direct.columnNumber),
+      };
     }
-    return null;
+    // React 17 e anteriores: o `__source` ia nas props do elemento.
+    const props = propsSource(fiber.memoizedProps) || propsSource(fiber.pendingProps);
+    if (props && typeof props.fileName === "string" && props.fileName !== "") {
+      return {
+        file: props.fileName,
+        line: numberOrNull(props.lineNumber),
+        column: numberOrNull(props.columnNumber),
+      };
+    }
+    // React 19+: o `_debugStack` (Error criado no JSX) tem o lugar do JSX na pilha.
+    return stackSource(fiber._debugStack);
   }
 
   /** React 17 e anteriores: o `__source` ia nas props do elemento. */
   function propsSource(props) {
     if (!props || typeof props !== "object") return null;
     return props.__source || null;
+  }
+
+  /** React 19+: o primeiro frame que não é do próprio React é o do JSX. */
+  function stackSource(error) {
+    if (!error || typeof error.stack !== "string") return null;
+    const lines = error.stack.split("\n");
+    for (const line of lines) {
+      const location = frameLocation(line);
+      if (!location) continue;
+      if (isReactInternal(location.file)) continue;
+      return location;
+    }
+    return null;
+  }
+
+  /** "at Botao (/caminho/Botao.tsx:42:17)" → {file, line, column}. */
+  function frameLocation(line) {
+    const match = line.match(/([^\s()]+?):(\d+):(\d+)/);
+    if (!match) return null;
+    let file = match[1];
+    // Firefox e Safari: "Botao@http://localhost:5173/src/x.tsx:42:17".
+    const at = file.lastIndexOf("@");
+    if (at > 0 && !file.slice(0, at).includes("/") && !file.slice(0, at).includes(":")) {
+      file = file.slice(at + 1);
+    }
+    return { file, line: Number(match[2]), column: Number(match[3]) };
+  }
+
+  /** O frame é do próprio React (o `jsxDEV` e o react-dom)? Aí não é o arquivo do usuário. */
+  function isReactInternal(file) {
+    return (
+      file.includes("node_modules") ||
+      file.includes("react-dom") ||
+      file.includes("react_jsx") ||
+      file.includes("react.development") ||
+      file.includes("react.production") ||
+      /[/\\]react[/\\]/.test(file)
+    );
   }
 
   function numberOrNull(value) {
@@ -90,7 +140,7 @@
     for (let depth = 0; fiber && depth < 500; depth += 1) {
       const name = componentName(fiber);
       if (name && stack[stack.length - 1] !== name) stack.push(name);
-      // O primeiro `_debugSource` é o do elemento apontado (o do JSX que o criou).
+      // O primeiro frame com fonte é o do elemento apontado (o do JSX que o criou).
       if (!source) source = debugSource(fiber);
       fiber = fiber.return;
     }

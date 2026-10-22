@@ -13,7 +13,9 @@ pub mod worker;
 
 pub use config::{Config, ConfigError, Profile, expand_home};
 pub use project::{Project, discover_projects};
-pub use project_settings::{ProjectSettings, SettingsFile, load_settings, settings_path};
+pub use project_settings::{
+    ProjectSettings, SettingsFile, load_settings, settings_path, validate_preview_url,
+};
 pub use session::{
     AgentKind, ExecAccess, LaunchOptions, LaunchPlan, SessionSpec, claude_logged_in,
     exec_client_dir, profile_data_dir,

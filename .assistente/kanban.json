@@ -87,7 +87,8 @@
       "description": "`vm/provisionar.sh` põe o usuário no grupo `systemd-journal`,\npara `journalctl -u hubd` rodar sem senha de `sudo` (a VM tem a senha travada, `lock_passwd: true`).\nVale depois de relogar. Idempotente: rodar `provisionar.sh` duas vezes não falha.\nPronto quando: `groups` mostra `systemd-journal` e `journalctl -u hubd -n 5` lê as linhas sem `sudo`.\nComo testar: `bash -n vm/provisionar.sh` e `shellcheck`; na VM, `groups` e `journalctl -u hubd -n 5`.",
       "priority": "normal",
       "kind": "manual",
-      "column": "backlog",
+      "column": "fazendo",
+      "holder": "pessoal--assistente--opencode-8",
       "created_at": 1792614073
     },
     {

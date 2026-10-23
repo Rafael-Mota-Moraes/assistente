@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest";
 import { previewPanelVisible } from "../../bridge/host";
 import type { HubClient } from "../../bridge/hub";
-import type { PickedElement } from "../../bridge/types";
+import type { ExecView, PickedElement } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { PreviewPanel } from "./PreviewPanel";
 
@@ -34,6 +34,21 @@ const pick: PickedElement = {
   viewport: { width: 1280, height: 720 },
   scroll: { x: 0, y: 0 },
   url: "http://10.77.0.10:5173/",
+};
+
+const pedido: ExecView = {
+  id: "e1",
+  session: "pessoal--game--claude-1",
+  profile: "pessoal",
+  project: "game",
+  cwd: "/raiz/game",
+  command: "./dev just check",
+  target: "host",
+  timeout_secs: 600,
+  created_at: 0,
+  state: "pending",
+  auto_approved: false,
+  result: null,
 };
 
 function fakeHub(previewUrl: string | null) {
@@ -154,5 +169,22 @@ describe("PreviewPanel", () => {
     fireEvent.keyDown(campo, { key: "Escape" });
     expect(useAppStore.getState().views).toHaveLength(1);
     campo.remove();
+  });
+
+  it("pedido pendente do agente esconde a webview; sem pedido, ela volta (F12.6)", async () => {
+    useAppStore.setState({
+      hub: fakeHub("http://10.77.0.10:5173"),
+      activeProfile: "pessoal",
+      activeProject: "game",
+    });
+    render(<PreviewPanel />);
+    await screen.findByText("http://10.77.0.10:5173");
+    await waitFor(() => expect(previewPanelVisible).toHaveBeenLastCalledWith(true));
+
+    act(() => useAppStore.setState({ execRequests: [pedido] }));
+    await waitFor(() => expect(previewPanelVisible).toHaveBeenLastCalledWith(false));
+
+    act(() => useAppStore.setState({ execRequests: [{ ...pedido, state: "running" }] }));
+    await waitFor(() => expect(previewPanelVisible).toHaveBeenLastCalledWith(true));
   });
 });

@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HubClient } from "../../bridge/hub";
+import type { ExecView } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { MemoryPanel } from "./MemoryPanel";
 
@@ -15,6 +16,21 @@ const memory = {
   last_commit: null,
   web_url: "/web",
 };
+
+const pedido = (id: string): ExecView => ({
+  id,
+  session: "pessoal--game--claude-1",
+  profile: "pessoal",
+  project: "game",
+  cwd: "/raiz/game",
+  command: "./dev just check",
+  target: "vm",
+  timeout_secs: 600,
+  created_at: 0,
+  state: "pending",
+  auto_approved: false,
+  result: null,
+});
 
 function fakeHub() {
   return {
@@ -32,6 +48,20 @@ describe("MemoryPanel", () => {
     render(<MemoryPanel />);
 
     useAppStore.setState({ projectSettings: { profile: "pessoal", project: "game" } });
+    await waitFor(() => expect(useAppStore.getState().memoryPanelOpen).toBe(false));
+  });
+
+  it("pedido já pendente na abertura não fecha; pedido novo fecha", async () => {
+    useAppStore.setState({
+      hub: fakeHub(),
+      memory,
+      memoryPanelOpen: true,
+      execRequests: [pedido("e1")],
+    });
+    render(<MemoryPanel />);
+    expect(useAppStore.getState().memoryPanelOpen).toBe(true);
+
+    act(() => useAppStore.setState({ execRequests: [pedido("e1"), pedido("e2")] }));
     await waitFor(() => expect(useAppStore.getState().memoryPanelOpen).toBe(false));
   });
 

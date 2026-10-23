@@ -456,7 +456,7 @@ comandos do app.
   Feito: `crates/hubd/src/api/picks.rs` + `hub_core::pick` (prompt, card e arquivo) e a caixa em
   `features/pick/PickDialog.tsx`, aberta pelo pick da F12.2 (ligada no merge da revisão de
   2026-10-22: a T7 tinha a caixa, mas nada a abria). Sessão com painel morto (F14.3) responde 409.
-- [ ] **F12.6 O preview não cobre o app.** A webview do preview é um widget nativo por cima de toda a
+- [x] **F12.6 O preview não cobre o app.** A webview do preview é um widget nativo por cima de toda a
   UI: hoje ela só some com a engrenagem e com a caixa do apontar. Ficam por baixo dela o painel de
   pedidos (`ExecApprovals`, no canto inferior direito, inclusive os pedidos para o PC da F9.10), o
   `Toast`, o "Bom dia" (F6.6) e o painel do Assistente (F8). Esconder a webview enquanto qualquer

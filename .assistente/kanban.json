@@ -176,7 +176,7 @@
     }
   ],
   "orchestrator": {
-    "enabled": true,
+    "enabled": false,
     "max_workers": 4,
     "paused": {
       "reason": "\"Free usage limit reached\" / \"Subscribe to OpenCode Go\", mensagem vista na VM em 2026-10-22) de",

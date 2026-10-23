@@ -73,7 +73,6 @@
       "priority": "normal",
       "kind": "agente",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-1",
       "commit": "85dd6a183baf00a7a99f35f33bc76d51f3073460",
       "merged": {
         "branch": "main",
@@ -153,7 +152,6 @@
       "priority": "normal",
       "kind": "agente",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-1",
       "commit": "2133338f4f16f0d91be4ad6de10c032c53fdd72a",
       "merged": {
         "branch": "main",
@@ -168,7 +166,6 @@
       "priority": "normal",
       "kind": "agente",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-1",
       "commit": "480cf128ef90d793bf933b43fdaeb81ccb7b47ca",
       "merged": {
         "branch": "main",
@@ -183,7 +180,6 @@
       "priority": "normal",
       "kind": "manual",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-1",
       "commit": "d341a64a0acfce15985c5ebf5c1316299f0bc685",
       "failures": 2,
       "merged": {

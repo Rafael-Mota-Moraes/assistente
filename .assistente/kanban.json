@@ -1,5 +1,5 @@
 {
-  "next": 16,
+  "next": 17,
   "cards": [
     {
       "id": "T1",
@@ -196,6 +196,15 @@
       "id": "T15",
       "title": "F9.13 Verificação do projeto vai para o PC",
       "description": "Enquanto a F1.6 não sai, o `./dev` não roda na VM: nem no jail, nem fora dele (`Bad address` do virtiofs), com Docker ligado ou não. Um agente que precisava do check pediu `sudo systemctl start docker` e parou. As instruções passam a dizer o caminho certo. No bloco \"Fora do jail\" do `vm/configurar-agentes.sh`: \"`./dev` (e o check do projeto) roda no PC: `\"$ASSISTENTE_FORA_DO_JAIL\" --pc --timeout 1500 './dev just check'`; não peça `sudo` nem Docker; sem check verde, não diga que está pronto\". Nos prompts de QA e de QA geral (`crates/hub-core/src/worker.rs`), \"rode as verificações\" vira esse pedido, e `validar` só com o check verde. No prompt do trabalhador (opencode, sem ninguém para aprovar), ele não roda `./dev` e escreve na nota do `done` que o check fica para o QA.\nPronto quando: as três instruções trazem o `--pc` e a regra \"sem check verde, não valida\".\nComo testar: `worker::tests` (os prompts de QA têm `--pc` e `./dev just check`; o do trabalhador não pede `./dev`) e `bash vm/configurar-agentes.sh` num home falso, se o teste dele existir.",
+      "priority": "alta",
+      "kind": "manual",
+      "column": "backlog",
+      "created_at": 1792754930
+    },
+    {
+      "id": "T16",
+      "title": "F11.17 validar só com o check verde",
+      "description": "Hoje o `kanban validar` junta a branch confiando na palavra do QA de que o check passou. Agora quem roda o check é o hubd, no commit que a `target` vai receber: na worktree descartável do merge (`.assistente/qa-juntar-*`, já dentro da pasta do projeto) ou, no fast-forward, numa worktree do commit da tarefa. Enquanto a F1.6 não sai, o check roda no PC: o hubd abre um pedido `host` (F9.9) com o comando e essa pasta, e você aprova no app como qualquer outro, sem \"sempre permitir\". O card fica \"validando\" até o resultado. Verde: a `target` anda (regra da F8.8) e o card vai para Validado. Vermelho, negado ou expirado: nada muda, e o fim da saída volta ao QA na resposta do `validar` (o `fora-do-jail kanban validar` espera, com timeout longo). O comando vem da engrenagem do projeto (`check` novo em `ProjectSettings`, `~/.assistente/projetos.toml`, padrão `./dev just check`), nunca do `.assistente.toml` (o agente edita esse arquivo, e o comando roda fora do jail). Tipos novos em `api.rs` e `app/src/bridge/types.ts` juntos. Depois da F1.6, o mesmo check pode rodar na VM.\nPronto quando: `validar` com check vermelho não muda a `target` e devolve a saída; com verde, junta como hoje; um `check` no `.assistente.toml` é ignorado.\nComo testar: `api::kanban::tests` com repo git real e o app fingido (resultado do pedido `host` via `POST /api/exec/{id}/result`: código 0 junta, 1 não muda nada, negado = nada muda), `ProjectSettingsDialog` com o campo e `KanbanBoard.test.tsx` (estado \"validando\").",
       "priority": "alta",
       "kind": "manual",
       "column": "backlog",

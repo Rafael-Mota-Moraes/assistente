@@ -170,7 +170,8 @@ export type ProjectSettingsView = {
 };
 
 /** Quadro do projeto (F11): `.assistente/kanban.json` no repo, espelho de hubd `kanban`. */
-export type KanbanColumn = "backlog" | "fazendo" | "feito";
+/** `validado` = passou no QA e foi juntado numa branch (F11.15). */
+export type KanbanColumn = "backlog" | "fazendo" | "feito" | "validado";
 /** `manual` só roda quando você manda; `agente` é puxado pelo orquestrador (F11.2). */
 export type KanbanKind = "manual" | "agente";
 export type KanbanPriority = "alta" | "normal" | "baixa";
@@ -187,8 +188,17 @@ export type KanbanCard = {
   commit?: string;
   /** Vezes que voltou do "fazendo" sem concluir; o orquestrador automático pula (F11.11). */
   failures?: number;
+  /** Parou sem culpa da tarefa (cota esgotada, F11.14): a linha de erro do provedor. */
+  blocked?: string;
+  /** Onde o QA juntou a tarefa (`validado`, F11.15). */
+  merged?: KanbanMerged;
+  /** IDs das tarefas das quais esta depende (F11.13). */
+  depends_on?: string[];
   created_at: number;
 };
+
+/** Branch que recebeu a tarefa e o commit dela depois da junção. */
+export type KanbanMerged = { branch: string; commit: string };
 
 /** Orquestrador automático do projeto (F11.11); ausente = desligado. */
 export type KanbanOrchestrator = {
@@ -196,7 +206,12 @@ export type KanbanOrchestrator = {
   max_workers: number;
   /** Somadas às regras padrão no prompt de todo trabalhador do projeto. No `PUT`, ausente mantém. */
   instructions?: string;
+  /** Pausado por cota esgotada (F11.14): nada abre sozinho até "Retomar". O `PUT` não mexe. */
+  paused?: KanbanPause;
 };
+
+/** Por que e quando (segundos Unix) o orquestrador pausou. */
+export type KanbanPause = { reason: string; at: number };
 
 export type KanbanBoard = {
   next: number;
@@ -217,6 +232,8 @@ export type KanbanDraft = {
   column?: KanbanColumn;
   /** `0` = "Tentar de novo": o orquestrador automático volta a puxar. */
   failures?: number;
+  /** IDs das tarefas das quais esta depende (F11.13). Na edição, ausente = não muda; vazio = limpa. */
+  depends_on?: string[];
 };
 
 export type CollectedCommit = { hash: string; subject: string };
@@ -262,6 +279,18 @@ export type GitStatus = { files: GitFileStatus[] };
 /** F10.1: diff de um arquivo (HEAD × árvore de trabalho). */
 export type GitDiff = { path: string; head: string | null; working: string | null };
 
+/** Contexto de código do elemento apontado (F12.3). */
+export type PickCodeContext = {
+  /** A página usa React? */
+  react: boolean;
+  /** Componente mais próximo do elemento (null se a página não usa React). */
+  component: string | null;
+  /** Pilha de componentes, do mais interno ao mais externo. */
+  stack: string[];
+  /** Arquivo e linha do JSX (null em build de produção). */
+  source: { file: string; line: number | null; column: number | null } | null;
+};
+
 /** Elemento apontado na página do preview (F12.2). Espelha `app/src-tauri/src/pick.rs`. */
 export type PickedElement = {
   /** Tag do elemento (`button`, `div`…). */
@@ -290,6 +319,8 @@ export type PickedElement = {
   scroll: { x: number; y: number };
   /** URL real da webview (o Rust troca pela URL carregada; a do payload não vale). */
   url: string;
+  /** Contexto de código (F12.3). */
+  code?: PickCodeContext | null;
 };
 
 /** Elemento apontado na página (F12.2) e contexto de código (F12.3). */

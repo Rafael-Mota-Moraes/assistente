@@ -2,7 +2,7 @@
 //! agente ficam em opções do próprio tmux (`@assistente_*`), então a lista sobrevive a um
 //! restart do hubd. Spec: docs/specs/02-hubd-e-sessoes.md
 
-use hub_core::{AgentKind, LaunchPlan, SessionSpec};
+use hub_core::{AgentKind, LaunchPlan, PROMPTS_EXCLUDE, PromptFile, SessionSpec};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -128,7 +128,13 @@ impl Tmux {
         // F14.3/F14.4: `remain-on-exit` na janela da sessão só para agentes interativos
         // (Claude, OpenCode): o painel fica com a saída e o status de saída. O trabalhador e
         // o Terminal não usam: o trabalhador que sai com 0 fecha a própria sessão e o Terminal
-        // fecha no `exit`. O trabalhador que falha pede o painel de volta (`keep_panel`).
+        // fecha no `exit`. O trabalhador que falha pede o painel de volta (`keep_panel`). Só
+        // esta janela: o servidor tmux do usuário continua sem a opção. O `;` encadeia no mesmo
+        // tmux, senão a opção chegaria depois do processo e quem morre na hora levaria a sessão
+        // junto. O prompt inicial vai em arquivo, não no comando (o tmux recusa comando grande).
+        if let Some(prompt) = &plan.prompt {
+            write_prompt(&plan.cwd, prompt).await?;
+        }
         let mut argv = plan.tmux_new_session_argv();
         argv.remove(0); // o "tmux" do começo
         if plan.remain_on_exit {
@@ -374,6 +380,18 @@ impl Tmux {
 const BUFFER: &str = "assistente-pick";
 
 /// Uma linha só: no tmux, uma quebra no buffer vale como Enter (F12.4).
+/// Grava o prompt inicial na pasta da sessão, fora do `git status` (`info/exclude`).
+async fn write_prompt(cwd: &std::path::Path, prompt: &PromptFile) -> Result<(), String> {
+    if let Some(parent) = prompt.path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("pasta do prompt: {e}"))?;
+    }
+    std::fs::write(&prompt.path, &prompt.text).map_err(|e| format!("gravando o prompt: {e}"))?;
+    if let Err(e) = crate::sleep::exclude_line(cwd, PROMPTS_EXCLUDE).await {
+        tracing::warn!("sem exclude dos prompts em {}: {e:#}", cwd.display());
+    }
+    Ok(())
+}
+
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -480,6 +498,7 @@ pub(crate) mod tests {
                 env: vec![("ASSISTENTE_TESTE".into(), "sim".into())],
                 argv: vec!["bash".into(), "-c".into(), script.into()],
                 remain_on_exit,
+                prompt: None,
             }
         }
     }

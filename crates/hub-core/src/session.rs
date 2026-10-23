@@ -57,6 +57,30 @@ pub struct LaunchPlan {
     /// sai com 0 fecha a própria sessão (o que falha fica, com o painel, para ver o erro) e o
     /// Terminal fecha no `exit` (F14.4).
     pub remain_on_exit: bool,
+    /// Prompt inicial do Claude (exploração, "Terminar com", QA), que o hubd grava antes de
+    /// criar a sessão. Não vai inteiro no `argv`: o tmux recusa comando grande ("command too
+    /// long"), e o QA geral com vários cards passa disso.
+    pub prompt: Option<PromptFile>,
+}
+
+/// Arquivo do prompt inicial, dentro da pasta da sessão: o Claude lê sem pedir permissão.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptFile {
+    pub path: PathBuf,
+    pub text: String,
+}
+
+/// Pasta dos prompts iniciais, relativa à pasta da sessão (projeto ou worktree).
+pub const PROMPTS_DIR: &str = ".assistente/prompts";
+/// Linha do `info/exclude` que tira os prompts do `git status`.
+pub const PROMPTS_EXCLUDE: &str = "/.assistente/prompts/";
+
+/// Argumento curto do `claude` que aponta para o prompt gravado.
+fn prompt_pointer(session: &str) -> String {
+    format!(
+        "Suas instruções estão em {PROMPTS_DIR}/{session}.md. Leia esse arquivo inteiro antes \
+         de qualquer coisa e siga-o."
+    )
 }
 
 /// O que o hubd lê de fora (arquivos, segredos) e entrega pronto: o `LaunchPlan` fica puro.
@@ -166,6 +190,27 @@ impl LaunchPlan {
         Self::assemble(config, home, spec, seq, options, Mode::Explore(prompt))
     }
 
+    /// Claude que termina uma tarefa parada (F11.14): como o `build_explore`, mas no worktree da
+    /// tarefa, com o `.git` do projeto gravável (o worktree grava nele).
+    pub fn build_finish(
+        config: &Config,
+        home: &Path,
+        spec: &SessionSpec,
+        seq: u32,
+        options: &LaunchOptions,
+        prompt: &str,
+        worktree: &Path,
+    ) -> Result<Self, LaunchError> {
+        Self::assemble(
+            config,
+            home,
+            spec,
+            seq,
+            options,
+            Mode::Finish { prompt, worktree },
+        )
+    }
+
     /// Sessão de trabalhador (F11.6): o opencode roda `vm/trabalhador` no worktree da tarefa,
     /// no mesmo jail de um agente. Os arquivos da execução ficam em `worker::files`.
     pub fn build_worker(
@@ -229,6 +274,7 @@ impl LaunchPlan {
         // fica na tela com a saída e o status de saída. O Terminal fecha no `exit` e o
         // trabalhador que termina bem fecha a própria sessão.
         let mut remain_on_exit = false;
+        let mut prompt_text: Option<&str> = None;
         let argv = if spec.agent == AgentKind::Shell {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
             vec!["bash".to_owned(), "-l".to_owned()]
@@ -236,7 +282,16 @@ impl LaunchPlan {
             let command = match mode {
                 // Sem `bash`: dentro do jail o PATH não acha o `claude` (a home é privada,
                 // e ~/.local/bin fica de fora). O ai-jail resolve o binário, como no agente.
-                Mode::Explore(prompt) => vec!["claude".to_owned(), prompt.to_owned()],
+                Mode::Explore(prompt) => {
+                    prompt_text = Some(prompt);
+                    vec!["claude".to_owned(), prompt_pointer(&session)]
+                }
+                Mode::Finish { prompt, worktree } => {
+                    cwd = worktree.to_path_buf();
+                    rw_maps.push(profile.root.join(&spec.project).join(".git"));
+                    prompt_text = Some(prompt);
+                    vec!["claude".to_owned(), prompt_pointer(&session)]
+                }
                 Mode::Worker(run) => {
                     cwd = run.worktree.clone();
                     let files = crate::worker::files(&data_dir, &session);
@@ -269,12 +324,17 @@ impl LaunchPlan {
             };
             jail_argv(config, home, profile, &data_dir, &env, spec.agent, &jail)
         };
+        let prompt = prompt_text.map(|text| PromptFile {
+            path: cwd.join(PROMPTS_DIR).join(format!("{session}.md")),
+            text: text.to_owned(),
+        });
         Ok(Self {
             tmux_session: session,
             cwd,
             argv,
             env,
             remain_on_exit,
+            prompt,
         })
     }
 
@@ -407,12 +467,14 @@ fn jail_argv(
     argv
 }
 
-/// Como a sessão foi montada: agente comum, trabalhador do quadro (F11.6) ou exploração (F11.9).
+/// Como a sessão foi montada: agente comum, trabalhador do quadro (F11.6), exploração (F11.9)
+/// ou Claude terminando uma tarefa parada (F11.14).
 #[derive(Clone, Copy)]
 enum Mode<'a> {
     Agent,
     Worker(&'a WorkerRun),
     Explore(&'a str),
+    Finish { prompt: &'a str, worktree: &'a Path },
 }
 
 /// Comando do agente dentro do jail. O opencode 2 roda como cliente de um servidor em segundo
@@ -806,12 +868,65 @@ mod tests {
             "monte o quadro",
         )
         .unwrap();
-        // O `claude` roda direto pelo ai-jail (sem bash): o PATH do jail não o acharia.
+        // O `claude` roda direto pelo ai-jail (sem bash): o PATH do jail não o acharia. O prompt
+        // vai num arquivo da pasta do projeto, e o argumento só aponta para ele.
+        assert_eq!(plan.argv[plan.argv.len() - 2], "claude");
+        let pointer = &plan.argv[plan.argv.len() - 1];
+        assert!(
+            pointer.contains(".assistente/prompts/pessoal--x--claude-1.md"),
+            "{pointer}"
+        );
+        let prompt = plan.prompt.clone().unwrap();
+        assert_eq!(prompt.text, "monte o quadro");
         assert_eq!(
-            plan.argv[plan.argv.len() - 2..],
-            ["claude", "monte o quadro"]
+            prompt.path,
+            plan.cwd.join(".assistente/prompts/pessoal--x--claude-1.md")
         );
         assert_eq!(env(&plan, "ASSISTENTE_PROMPT_FILE"), None);
+    }
+
+    #[test]
+    fn finish_starts_claude_in_the_worktree_with_the_git_writable() {
+        let (config, home) = setup();
+        let worktree =
+            PathBuf::from("/home/rafa/Documentos/pessoal/projetos/x/.assistente/worktrees/T7");
+        let plan = LaunchPlan::build_finish(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Claude),
+            1,
+            &LaunchOptions::default(),
+            "termine a T7",
+            &worktree,
+        )
+        .unwrap();
+        assert_eq!(plan.cwd, worktree);
+        assert_eq!(plan.argv[plan.argv.len() - 2], "claude");
+        let prompt = plan.prompt.clone().unwrap();
+        assert_eq!(prompt.text, "termine a T7");
+        assert!(prompt.path.starts_with(&worktree), "{prompt:?}");
+        // Um prompt enorme (QA geral com muitos cards) não aumenta o comando.
+        let long = "x".repeat(100_000);
+        let big = LaunchPlan::build_finish(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Claude),
+            1,
+            &LaunchOptions::default(),
+            &long,
+            &worktree,
+        )
+        .unwrap();
+        assert_eq!(big.argv, plan.argv);
+        let git = "/home/rafa/Documentos/pessoal/projetos/x/.git".to_owned();
+        assert!(
+            plan.argv
+                .windows(2)
+                .any(|pair| pair[0] == "--rw-map" && pair[1] == git),
+            "{:?}",
+            plan.argv
+        );
+        assert!(plan.argv.contains(&"--claude-dir".to_owned()));
     }
 
     #[test]

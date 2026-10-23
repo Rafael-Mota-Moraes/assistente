@@ -53,7 +53,9 @@ export function memoryTitle(memory: MemoryStatus): string {
 export function StatusBar() {
   const { vm, health, hubError, notebook, memory } = useAppStore();
   const [vmBusy, setVmBusy] = useState(false);
-  const [memoryStatusOpen, setMemoryStatusOpen] = useState(false);
+  // O estado do ai-memory é uma sobreposição: fica no store para as webviews filhas
+  // saberem que precisam sumir (F12.6).
+  const memoryStatusOpen = useAppStore((s) => s.memoryStatusOpen);
 
   async function toggleVm(action: "start" | "stop") {
     setVmBusy(true);
@@ -113,7 +115,7 @@ export function StatusBar() {
       {memory && (
         <button
           type="button"
-          onClick={() => setMemoryStatusOpen(true)}
+          onClick={() => useAppStore.setState({ memoryStatusOpen: true })}
           className="flex items-center"
           title={memoryTitle(memory)}
           data-tone={memory.up ? "ok" : "off"}
@@ -122,7 +124,10 @@ export function StatusBar() {
         </button>
       )}
       {memory && memoryStatusOpen && (
-        <MemoryStatusPanel memory={memory} onClose={() => setMemoryStatusOpen(false)} />
+        <MemoryStatusPanel
+          memory={memory}
+          onClose={() => useAppStore.setState({ memoryStatusOpen: false })}
+        />
       )}
       {notebook?.services
         .filter((service) => service.name !== "ai_memory")

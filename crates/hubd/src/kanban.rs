@@ -16,11 +16,12 @@ pub fn read(dir: &Path) -> Result<Board, String> {
 
 /// Quantas tarefas ainda não estão feitas (backlog + fazendo), para o contador da lista.
 pub fn read_pending(dir: &Path) -> usize {
+    use hub_core::kanban::Column;
     read(dir).map_or(0, |board| {
         board
             .cards
             .iter()
-            .filter(|card| card.column != hub_core::kanban::Column::Feito)
+            .filter(|card| matches!(card.column, Column::Backlog | Column::Fazendo))
             .count()
     })
 }

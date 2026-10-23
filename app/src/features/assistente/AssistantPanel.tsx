@@ -520,9 +520,10 @@ export function AssistantPanel({ onClose }: { onClose?: () => void }) {
 }
 
 /** Botão fixo da lateral (F8.6). O modal vai para o body para não ficar preso à largura da
- * lateral (backdrop-filter da sidebar cria containing block para `position: fixed`). */
+ * lateral (backdrop-filter da sidebar cria containing block para `position: fixed`). O estado
+ * fica no store: o modal é uma sobreposição, e as webviews filhas precisam saber dela (F12.6). */
 export function AssistantButton() {
-  const [open, setOpen] = useState(false);
+  const open = useAppStore((s) => s.assistantPanelOpen);
   const modal =
     open && typeof document !== "undefined"
       ? createPortal(
@@ -530,11 +531,11 @@ export function AssistantButton() {
             <button
               type="button"
               aria-label="Fechar"
-              onClick={() => setOpen(false)}
+              onClick={() => useAppStore.setState({ assistantPanelOpen: false })}
               className="absolute inset-0 cursor-default"
             />
             <div className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-2xl">
-              <AssistantPanel onClose={() => setOpen(false)} />
+              <AssistantPanel onClose={() => useAppStore.setState({ assistantPanelOpen: false })} />
             </div>
           </div>,
           document.body,
@@ -544,7 +545,7 @@ export function AssistantButton() {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => useAppStore.setState({ assistantPanelOpen: true })}
         title="Abrir a aba Assistente: atualizar o app e abrir o agente neste projeto"
         className="flex w-full items-center justify-center gap-2 rounded-xl border border-line bg-white/5 px-3 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-white/10"
       >

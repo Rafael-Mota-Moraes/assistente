@@ -12,6 +12,8 @@ const pick: PickDetail = {
   html: '<button class="salvar">Salvar</button>',
   tag: "button",
   source: "src/features/x/Botao.tsx:42",
+  component: "Botao",
+  components: ["Botao", "Card", "App"],
 };
 
 const sessions = [
@@ -44,7 +46,7 @@ const sessions = [
   },
 ];
 
-function open() {
+function open(detail: PickDetail = pick) {
   const hub = {
     previewPick: vi.fn().mockResolvedValue({
       prompt:
@@ -60,7 +62,7 @@ function open() {
   };
   useAppStore.setState({
     hub: hub as unknown as HubClient,
-    pick: { profile: "pessoal", project: "game", pick },
+    pick: { profile: "pessoal", project: "game", pick: detail },
     sessions,
     activeSession: "pessoal--game--claude-1",
   });
@@ -162,5 +164,24 @@ describe("PickDialog", () => {
     });
     expect(screen.getByRole("button", { name: "Enviar" })).toBeDisabled();
     expect(hub.sendPick).not.toHaveBeenCalled();
+  });
+
+  it("em dev mostra o arquivo:linha do componente (F12.3)", () => {
+    open();
+
+    const onde = screen.getByRole("region", { name: "Onde está o elemento" });
+    expect(onde).toHaveTextContent("src/features/x/Botao.tsx:42");
+    expect(onde).toHaveTextContent("componente Botao");
+    expect(onde).not.toHaveTextContent("Sem arquivo de origem");
+  });
+
+  it("sem fonte (build de produção) mostra o componente e avisa que o agente procura", () => {
+    open({ ...pick, source: null });
+
+    const onde = screen.getByRole("region", { name: "Onde está o elemento" });
+    expect(onde).toHaveTextContent("Sem arquivo de origem");
+    expect(onde).toHaveTextContent("componente Botao");
+    expect(onde).toHaveTextContent('seletor button.salvar · texto "Salvar"');
+    expect(onde).toHaveTextContent(/procurar o arquivo/);
   });
 });

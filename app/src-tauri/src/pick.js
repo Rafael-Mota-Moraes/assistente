@@ -104,6 +104,11 @@
   /** O pick: o que o agente precisa saber do elemento escolhido. */
   function describe(element) {
     const rect = element.getBoundingClientRect();
+    // Contexto de código (F12.3): sobe pelo fiber do React se houver.
+    let code = null;
+    if (window.__assistenteCodeContext && typeof window.__assistenteCodeContext.extract === "function") {
+      code = window.__assistenteCodeContext.extract(element);
+    }
     return {
       tag: tagOf(element),
       id: element.id || null,
@@ -123,6 +128,7 @@
       viewport: { width: round(window.innerWidth), height: round(window.innerHeight) },
       scroll: { x: round(window.scrollX), y: round(window.scrollY) },
       url: location.href,
+      code,
     };
   }
 

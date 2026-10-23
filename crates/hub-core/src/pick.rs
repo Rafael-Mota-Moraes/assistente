@@ -124,10 +124,8 @@ impl PickRequest {
         ));
         if self.pick.source.is_none() {
             // Build de produção: o fonte não aparece (F12.3). O agente procura antes de editar.
-            out.push_str(
-                " Sem a origem do componente: procure o arquivo pelo texto, pela classe ou pelo \
-                 componente antes de editar.",
-            );
+            out.push(' ');
+            out.push_str(&self.pick.search_hint());
         }
         out
     }
@@ -170,10 +168,7 @@ impl PickRequest {
             out.push_str(&format!("- HTML: {}\n", one_line(html, MAX_TEXT)));
         }
         if self.pick.source.is_none() {
-            out.push_str(
-                "- O build não expõe a origem do componente: procure o arquivo pelo texto, pela \
-                 classe ou pelo componente antes de editar.\n",
-            );
+            out.push_str(&format!("- {}\n", self.pick.search_hint()));
         }
         out.push_str(&format!("\nPedido: {}", self.request.trim()));
         out
@@ -233,6 +228,36 @@ impl PickDetail {
             parts.push("apontado".to_owned());
         }
         parts.join(" ")
+    }
+
+    /// Sem `arquivo:linha` (build de produção, F12.3): o agente procura o arquivo antes de
+    /// editar, com as pistas que o pick tem (texto, classe, componente), em vez de chutar.
+    pub fn search_hint(&self) -> String {
+        let mut hints: Vec<String> = Vec::new();
+        if let Some(text) = clean(&self.text) {
+            hints.push(format!("pelo texto \"{}\"", one_line(text, MAX_TEXT)));
+        }
+        // A classe que o próprio apontar põe no elemento não ajuda a achar o arquivo.
+        if let Some(class) = self
+            .classes
+            .iter()
+            .map(|c| c.trim())
+            .find(|c| !c.is_empty() && !c.starts_with("assistente-"))
+        {
+            hints.push(format!("pela classe \"{class}\""));
+        }
+        if let Some(component) = clean_opt(self.component.as_deref()) {
+            hints.push(format!("pelo componente {component}"));
+        }
+        let how = if hints.is_empty() {
+            "pelo seletor".to_owned()
+        } else {
+            hints.join(", ")
+        };
+        format!(
+            "Sem a origem do componente: antes de editar, procure o arquivo no projeto \
+             (grep {how}) e confirme o caminho; não chute o arquivo."
+        )
     }
 
     /// Onde o elemento está: o `arquivo:linha` (F12.3), o componente ou o caminho no DOM.
@@ -316,6 +341,28 @@ mod tests {
         body.pick.source = None;
         let prompt = body.prompt();
         assert!(prompt.contains("procure o arquivo"), "{prompt}");
+        assert!(prompt.contains("não chute"), "{prompt}");
+        assert!(!prompt.contains('\n'), "{prompt}");
+    }
+
+    #[test]
+    fn search_hint_uses_text_class_and_component() {
+        let mut pick = detail();
+        pick.classes = vec!["assistente-pick-hover".into(), "salvar".into()];
+        let hint = pick.search_hint();
+        assert!(hint.contains("grep pelo texto \"Salvar\""), "{hint}");
+        assert!(hint.contains("pela classe \"salvar\""), "{hint}");
+        assert!(!hint.contains("assistente-"), "{hint}");
+        assert!(hint.contains("pelo componente Botao"), "{hint}");
+    }
+
+    #[test]
+    fn search_hint_without_clues_falls_back_to_the_selector() {
+        let pick = PickDetail {
+            selector: "div > span".into(),
+            ..Default::default()
+        };
+        assert!(pick.search_hint().contains("grep pelo seletor"));
     }
 
     #[test]

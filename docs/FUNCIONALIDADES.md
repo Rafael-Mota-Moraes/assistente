@@ -29,6 +29,17 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `systemctl restart hubd` não derruba as sessões tmux. Como testar: abrir sessão, reiniciar, reconectar.
 - [x] **F1.5 Estado da VM no app.** Botões Ligar/Desligar na barra de status (`vm_start` / `vm_stop` no Tauri). Teste: `StatusBar.test.tsx`.
   Pronto quando: com a VM parada, o app mostra "VM parada" e liga com um clique. Como testar: `incus stop` e usar o app.
+- [ ] **F1.6 Executar arquivos das pastas montadas na VM** *(humano)*. Visto em 2026-10-22: na VM,
+  nenhum executável de uma pasta de perfil (virtiofs `incus_perfil0`, opções
+  `rw,nosuid,nodev,relatime`, sem `noexec`) roda. `./dev`, `notebook/dorme` e
+  `app/node_modules/.bin/*` falham com `bad interpreter: Bad address` (EFAULT), dentro e fora do
+  ai-jail, e também dentro do container do `./dev`. O mesmo arquivo copiado para o disco local da
+  VM roda. Por isso o `./dev just check` não roda na VM, e a validação vai para o PC (F9.13, F11.17).
+  Investigar no host: versão e opções do `virtiofsd` do Incus 6.0 (cache, DAX), kernel da VM,
+  e se o `exec` falha também num binário ELF ou só com interpretador (`#!`).
+  Pronto quando: `./dev just check` roda na VM pela pasta do projeto (`fora-do-jail './dev just
+  check'` sai 0), ou a causa e o porquê de não haver correção ficam na spec 01. Como testar: na VM
+  real, `/home/…/projetos/assistente/dev imagem` sai 0.
 
 ## F2 — Sessões
 
@@ -173,6 +184,18 @@ nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" 
   mesmo pedido aprovado não rodar o comando de novo (hoje só o `busy` do `ExecApprovals` segura).
 - [ ] **F9.12 Validação no PC real** *(humano)*. Do jail, `fora-do-jail --pc 'git push'` empurra com a chave do PC após aprovar; negar devolve 126; com o app fechado o pedido expira.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
+- [ ] **F9.13 Verificação do projeto vai para o PC.** Enquanto a F1.6 não sai, o `./dev` não roda
+  na VM: nem no jail, nem fora dele (`Bad address` do virtiofs), e com Docker ligado ou não. Um
+  agente que precisava do check pediu `sudo systemctl start docker` e parou. As instruções passam a
+  dizer o caminho certo. No bloco "Fora do jail" do `vm/configurar-agentes.sh`: "`./dev` (e o check
+  do projeto) roda no PC: `"$ASSISTENTE_FORA_DO_JAIL" --pc --timeout 1500 './dev just check'`; não
+  peça `sudo` nem Docker; sem check verde, não diga que está pronto". Nos prompts de QA e de QA
+  geral (`crates/hub-core/src/worker.rs`), "rode as verificações" vira esse pedido, e `validar` só
+  com o check verde. No prompt do trabalhador (opencode, sem ninguém para aprovar), ele não roda
+  `./dev` e escreve na nota do `done` que o check fica para o QA.
+  Pronto quando: as três instruções trazem o `--pc` e a regra "sem check verde, não valida". Como
+  testar: `worker::tests` (os prompts de QA têm `--pc` e `./dev just check`; o do trabalhador não
+  pede `./dev`) e `bash vm/configurar-agentes.sh` num home falso, se o teste dele existir.
 
 ## F10 — Editor com diff
 
@@ -301,7 +324,7 @@ hubd); F11.2 antes de F11.4.
   apaga os worktrees, sem conversa à mão. Como testar: `api::kanban::tests` com repo git real
   (`init_repo`): sessão do revisor aberta com o prompt, `reabrir` com nota, `merged`, `main` movida =
   nada muda; `KanbanBoard.test.tsx` (botão, selo, resumo).
-- [ ] **F11.13 Cards com dependência e progresso de verdade.** O card ganha `depends_on` (ids). O
+- [x] **F11.13 Cards com dependência e progresso de verdade.** O card ganha `depends_on` (ids). O
   "Popular pelo backlog" (F11.9) preenche pela "Ordem:" das seções e pelos "Depende de" dos itens, e
   a engrenagem do card deixa editar. O orquestrador e o "Mandar" não abrem trabalhador para card
   cuja dependência ainda não está na `main` (F11.12): o worktree nasce do `HEAD`, então já sai com o
@@ -311,7 +334,83 @@ hubd); F11.2 antes de F11.4.
   Pronto quando: um quadro com A → B abre só A, e B abre depois que A entra na `main`, num worktree
   com o código de A; um trabalhador que só faz merge volta ao backlog. Como testar:
   `kanban::tests` (a fila respeita `depends_on`), `api::kanban::tests::orchestrator_…` e
-  `vm/teste-trabalhador.sh` (merge sem diff não é progresso).
+  `vm/teste-trabalhador.sh` (merge sem diff não é progresso). Feito: "na `main`" = validado pelo
+  QA (F11.15) com o commit juntado no `HEAD` do projeto (`git merge-base --is-ancestor`); "feito"
+  não basta, o commit só está na branch da tarefa. Testes: `kanban::tests::queue_waits_…`,
+  `api::kanban::tests::orchestrator_opens_a_dependent_card_…` e o caso 9 do
+  `teste-trabalhador.sh`. `fora-do-jail kanban criar --depende-de T1,T3`.
+- [x] **F11.14 Cota esgotada pausa tudo e deixa escolher outro harness.** Antes, a cota grátis do
+  opencode acabar parecia "modelo recusado" (F11.10): o `trabalhador` passava por todos os grátis
+  (que dividem a mesma cota), devolvia o card com `failures` + 1, e o orquestrador puxava o próximo a
+  cada 20 s, queimando o quadro inteiro. Agora o `trabalhador` separa **cota esgotada** (`ERRO_COTA`:
+  "Free usage limit reached" / "Subscribe to OpenCode Go", mensagem vista na VM em 2026-10-22) de
+  erro passageiro: não troca de modelo, não culpa o modelo no histórico, roda `fora-do-jail kanban
+  bloquear <id> --motivo …` e sai com 3. O hubd (`POST /v1/kanban/block`) devolve o card ao backlog
+  sem contar falha, com `blocked`, e pausa o orquestrador do projeto (`orchestrator.paused`, motivo
+  e hora): nenhum trabalhador novo abre sozinho; os que já rodam seguem e bloqueiam do mesmo jeito.
+  O quadro mostra uma faixa ("Cota do provedor esgotada às 15:34: orquestrador pausado") e um toast
+  quando a pausa aparece com ele aberto; o card ganha o selo "cota" e dois botões (que também aparecem no card que voltou sem concluir): **Terminar com
+  Claude** (`POST …/kanban/{id}/claude`: Claude Code no mesmo worktree e branch, que continua de onde
+  o trabalhador parou e marca o card ele mesmo) e **Outro modelo…** (o "Mandar" com um modelo, padrão
+  `9router/free`). "Retomar" na faixa (`POST …/kanban/orquestrador/retomar`) despausa e já dá uma
+  volta. Notificação do sistema fora do app fica para o ntfy ("Depois").
+  Pronto quando: com o orquestrador ligado e 3 cards `agente`, a cota acabando no primeiro deixa os
+  outros dois intocados no backlog (sem `failures`), o quadro avisa, e "Terminar com Claude" abre o
+  Claude no worktree segurando o card.
+  Como testar: feito em `vm/teste-trabalhador.sh` (casos 7 e 8: cota na saída e no meio da
+  tentativa), `api::kanban::tests::quota_pauses_the_orchestrator_until_resumed_and_claude_finishes_the_card`,
+  `…fora_do_jail_kanban_talks_to_the_board` (`bloquear`), `kanban::tests::quota_blocks…`,
+  `worker::tests::finish_prompt…`, `session::tests::finish_starts_claude…` e `KanbanBoard.test.tsx`
+  (faixa, selo, "Terminar com Claude", "Outro modelo…", "Retomar", toast). Na VM real, junto com a
+  F11.8: o Claude do "Terminar com" commitando no worktree de dentro do jail.
+- [x] **F11.15 QA de um card feito e coluna "Validado".** Um card "feito" só tem commit na branch
+  `agente/<id>`, e ninguém conferia se ele atende o pedido. Agora o quadro tem a quarta coluna
+  **Validado**, e o card "feito" ganha o botão **QA** (`POST …/kanban/{id}/qa`): abre um Claude
+  numa aba, no worktree da tarefa, segurando o card (um QA por vez). Ele pergunta onde juntar (na
+  `main` ou em outra branch), confere o diff com o pedido do card e roda as verificações. Não
+  atende: `fora-do-jail kanban reabrir <id> --nota "…"` devolve o card ao backlog com "Revisão
+  (data): o que falta" na descrição, sem contar falha, e o próximo trabalhador continua da mesma
+  branch. Atende: `fora-do-jail kanban validar <id> --branch B` faz o hubd juntar a branch em `B`
+  (só para a frente, sem push; merge numa worktree descartável; conflito não muda nada e o QA
+  resolve no worktree; branch nova nasce na ponta da tarefa; a `main` em checkout anda com
+  `--ff-only`) e o card vai para "Validado" com `merged` ("na main · abc1234"). Quando a sessão do
+  QA acaba, o worktree e a branch da tarefa validada saem. É o pedaço por card da F11.12: a revisão
+  em lote, a chamada automática pelo orquestrador e a ordem de dependência continuam lá.
+  Pronto quando: QA num card feito pergunta a branch, valida na `main` (o código aparece na pasta do
+  projeto) ou devolve ao backlog com o que falta. Como testar: feito em
+  `api::kanban::tests::qa_merges_into_the_chosen_branch_or_reopens_with_what_is_missing`,
+  `…fora_do_jail_kanban_talks_to_the_board` (`validar`/`reabrir`), `kanban::tests::qa_validates…`,
+  `worker::tests::qa_prompt…` e `KanbanBoard.test.tsx` (coluna, botão, selo). Na VM real, junto com
+  a F11.8: um QA de ponta a ponta com o Claude de verdade.
+- [x] **F11.16 QA geral, para limpar o quadro.** O QA da F11.15 é um card por vez. Agora a coluna
+  Feito tem também "QA geral (N)" (`POST …/kanban/qa`): um Claude só, na raiz do projeto, segura
+  todos os cards feitos livres, pergunta **uma vez** onde juntar (`main` ou outra branch) e passa
+  por eles em ordem, validando ou devolvendo ao backlog com o que falta, pelos mesmos `validar` e
+  `reabrir`. Conflito com o que ele já juntou, ele resolve no worktree da tarefa. No fim, um resumo
+  do que entrou e do que voltou. Card feito sem branch (modo dormir) é validado pelo commit dele.
+  Card que ele não tocar fica livre quando a sessão acaba.
+  Pronto quando: com vários cards em Feito, um clique leva todos para Validado ou de volta ao
+  backlog, com uma só pergunta. Como testar: feito em
+  `api::kanban::tests::qa_all_holds_every_free_done_card_in_one_session`,
+  `worker::tests::qa_all_prompt…` e `KanbanBoard.test.tsx` (botão com a contagem, sem botão quando
+  nada está livre). Na VM real, junto com a F11.8.
+- [ ] **F11.17 `validar` só com o check verde.** Hoje o `kanban validar` junta a branch confiando
+  na palavra do QA de que o check passou. Agora quem roda o check é o hubd, no commit que a
+  `target` vai receber: na worktree descartável do merge (`.assistente/qa-juntar-*`, já dentro da
+  pasta do projeto) ou, no fast-forward, numa worktree do commit da tarefa. Enquanto a F1.6 não
+  sai, o check roda no PC: o hubd abre um pedido `host` (F9.9) com o comando e essa pasta, e você
+  aprova no app como qualquer outro, sem "sempre permitir". O card fica "validando" até o resultado.
+  Verde: a `target` anda (regra da F8.8) e o card vai para Validado. Vermelho, negado ou expirado:
+  nada muda, e o fim da saída volta ao QA na resposta do `validar` (o `fora-do-jail kanban validar`
+  espera, com timeout longo). O comando vem da engrenagem do projeto (`check` novo em
+  `ProjectSettings`, `~/.assistente/projetos.toml`, padrão `./dev just check`), **nunca** do
+  `.assistente.toml`: esse arquivo o agente edita, e o comando roda fora do jail. Tipos novos em
+  `api.rs` e `app/src/bridge/types.ts` juntos. Depois da F1.6, o mesmo check pode rodar na VM.
+  Pronto quando: `validar` com check vermelho não muda a `target` e devolve a saída; com verde,
+  junta como hoje; um `check` no `.assistente.toml` é ignorado. Como testar:
+  `api::kanban::tests` com repo git real e o app fingido (resultado do pedido `host` via
+  `POST /api/exec/{id}/result`: código 0 junta, 1 não muda nada, negado = nada muda),
+  `ProjectSettingsDialog` com o campo e `KanbanBoard.test.tsx` (estado "validando").
 
 ## F12 — Apontar e pedir na tela
 
@@ -342,26 +441,22 @@ comandos do app.
   `PreviewPanel` escuta o evento e abre a caixa do F12.4 (`features/pick/detail.ts` converte o pick),
   esconde a webview enquanto ela está aberta, e o botão de apontar da barra liga o script por
   `setEnabled`. Testes: `pick::tests`, `pickScript.test.ts`, `detail.test.ts` e `PreviewPanel.test.tsx`.
-- [ ] **F12.3 Contexto de código.** No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.
+- [x] **F12.3 Contexto de código.** No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.
   Pronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.
   Como testar: vitest com DOM fake + um build de produção.
-  Revisão (2026-10-22): o código existe e tem testes, mas não está ligado. `codeContext.js` (sobe
-  pelo fiber; `_debugSource` até o React 18, `_debugStack` no 19), `context.ts` (`toProjectPath`,
-  aviso de busca), `prompt.ts` e `PickCodeContext.tsx`, todos em `app/src/features/pick/`. Falta:
-  injetar `codeContext.js` antes do `pick.js` (no `SCRIPT` do `pick.rs`); o `pick.js` mandar
-  `code: window.__assistenteCodeContext.extract(element)`; `PickedElement` (TS e `pick.rs`) ganhar
-  `code`; o `toPickDetail` preencher `source` (`toProjectPath`, com a raiz do projeto),
-  `component` e `components`; a caixa do F12.4 mostrar o `PickCodeContext`. E arrumar o que sobrou
-  da T6: um tipo de pick só (hoje `PickedElement`, `PickElement` de `pick/types.ts` e `PickDetail`)
-  e um prompt só (o do hubd, `hub_core::pick`; `prompt.ts` sai, e o aviso de busca do hubd usa o
-  texto/classe/componente como o `searchInstruction`).
+  Feito: `codeContext.js` (sobe pelo fiber; `_debugSource` até o React 18, `_debugStack` no 19)
+  em `app/src/features/pick/` é injetado antes do `pick.js` (`pick::SCRIPT`, `concat!` dos dois);
+  o pick leva `code`, o `toPickDetail` vira `source` (`arquivo:linha` relativo à raiz do
+  projeto), `component` e `components`, e a caixa da F12.4 mostra o `PickCodeContext`. Um tipo de
+  pick (`PickedElement` → `PickDetail`) e um prompt só (`hub_core::pick`): sem fonte, o aviso do
+  hubd manda procurar pelo texto, pela classe e pelo componente (`PickDetail::search_hint`).
 - [x] **F12.4 Enviar ao agente.** `POST /api/projects/{perfil}/{projeto}/picks`: escreve `.assistente/picks/<data-hora>.md` com o detalhe do pick (fora do git via `.git/info/exclude`, como o `.ai-jail` da F0.5), monta o prompt curto (URL, onde, seletor, texto, pedido) e entrega no alvo escolhido no modal: **sessão** (só de agente, nunca a aba Terminal; confere que é do projeto e está viva, cola no prompt com `set-buffer` + `paste-buffer` **sem Enter** — Enter é seu, para não aprovar pergunta pendente nem executar texto no shell) ou **quadro** (card no backlog da F11.1, autossuficiente: o clone do notebook não tem o arquivo local). O modal mostra o prompt que será enviado, deixa editar o texto e escolher a sessão (padrão: a aba ativa do projeto); ao colar, a UI leva para a aba e avisa "confirme no terminal". Testes: rota com tmux real (colar e ler de volta, sem o pedido rodar sozinho), card fake, guards (texto vazio, sessão de outro projeto ou tipo shell, sessão/projeto inexistente), `PickDialog.test.tsx` (envio, erro, troca de alvo).
   Pronto quando: apontar um botão, escrever "deixa verde" e enviar faz o texto aparecer no prompt da sessão; depois do seu Enter, o agente edita o arquivo certo.
   Como testar: rota com tmux real + manual.
   Feito: `crates/hubd/src/api/picks.rs` + `hub_core::pick` (prompt, card e arquivo) e a caixa em
   `features/pick/PickDialog.tsx`, aberta pelo pick da F12.2 (ligada no merge da revisão de
   2026-10-22: a T7 tinha a caixa, mas nada a abria). Sessão com painel morto (F14.3) responde 409.
-- [ ] **F12.6 O preview não cobre o app.** A webview do preview é um widget nativo por cima de toda a
+- [x] **F12.6 O preview não cobre o app.** A webview do preview é um widget nativo por cima de toda a
   UI: hoje ela só some com a engrenagem e com a caixa do apontar. Ficam por baixo dela o painel de
   pedidos (`ExecApprovals`, no canto inferior direito, inclusive os pedidos para o PC da F9.10), o
   `Toast`, o "Bom dia" (F6.6) e o painel do Assistente (F8). Esconder a webview enquanto qualquer
@@ -452,6 +547,22 @@ comandos do app.
   `releasing_a_task_keeps_the_panel_of_the_session`, `worker_session_dies_with_its_process`,
   `keep_panel_leaves_the_dead_pane_on_screen`,
   `only_interactive_agents_keep_the_panel_after_the_process_dies` e `SessionArea.test.tsx`.
+- [ ] **F14.5 O orquestrador recolhe o trabalhador que falhou.** Depende da F14.4, que deixa a sessão
+  do trabalhador que falha aberta e morta. Com o orquestrador ligado (F11.11), cada volta
+  (`orchestrate` em `api/kanban.rs`) também procura as sessões mortas dos trabalhadores do projeto.
+  Para cada uma, o orquestrador guarda no card que ela segurava (ou que acabou de soltar) o status de
+  saída e o fim da saída (`capture-pane`, as últimas ~50 linhas, cortadas em 4 KiB) num campo novo,
+  `last_error`, e encerra a sessão. A aba some e o erro fica no card, que já volta ao backlog com
+  `failures` + 1 e não é repuxado. O card mostra o erro ("Último erro"), com o caminho do log
+  completo do trabalhador (`worker::files(...).log`). "Tentar de novo" e "Mandar" limpam o
+  `last_error`. Trabalhador aberto à mão ("Mandar") num projeto com o orquestrador desligado continua
+  como na F14.4: a aba morta fica até você encerrar. Sessão do Claude ou do OpenCode interativo
+  nunca é recolhida. Tipos novos em `api.rs` e `app/src/bridge/types.ts` juntos.
+  Pronto quando: com o orquestrador ligado, um trabalhador que sai com erro não deixa aba, e o card
+  dele no backlog mostra o status e as últimas linhas da saída.
+  Como testar: rota com tmux real (trabalhador falso que imprime algo e sai 1; depois de uma volta do
+  orquestrador a sessão sumiu e o card tem `last_error` com o status e o texto); com o orquestrador
+  desligado, a sessão continua lá; `KanbanBoard.test.tsx` com o "Último erro".
 
 ## Depois
 

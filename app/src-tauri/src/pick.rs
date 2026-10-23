@@ -26,7 +26,13 @@ const MAIN_WINDOW: &str = "main";
 pub const MAX_PAYLOAD: usize = 64 * 1024;
 
 /// Script injetado na webview do preview (fora do bundle do projeto).
-pub const SCRIPT: &str = include_str!("pick.js");
+/// O extrator do contexto de código (F12.3, o mesmo arquivo que a UI testa) vem antes do
+/// `pick.js`, que chama `window.__assistenteCodeContext.extract`.
+pub const SCRIPT: &str = concat!(
+    include_str!("../../src/features/pick/codeContext.js"),
+    "\n",
+    include_str!("pick.js")
+);
 
 /// Retângulo do elemento na viewport (px de CSS).
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -49,6 +55,32 @@ pub struct Viewport {
 pub struct Scroll {
     pub x: f64,
     pub y: f64,
+}
+
+/// Contexto de código do elemento apontado (F12.3).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct PickCodeContext {
+    /// A página usa React?
+    pub react: bool,
+    /// Componente mais próximo do elemento.
+    pub component: Option<String>,
+    /// Pilha de componentes, do mais interno ao mais externo.
+    pub stack: Vec<String>,
+    /// Arquivo e linha do JSX (null em build de produção).
+    pub source: Option<PickSource>,
+}
+
+/// Arquivo e linha do JSX (F12.3).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct PickSource {
+    /// Caminho do arquivo (como vem da página: `/src/...` ou URL do dev server).
+    pub file: String,
+    /// Linha do JSX.
+    pub line: Option<i64>,
+    /// Coluna do JSX.
+    pub column: Option<i64>,
 }
 
 /// Elemento apontado na página do preview.
@@ -81,6 +113,8 @@ pub struct PickedElement {
     pub scroll: Scroll,
     /// URL real da webview: o Rust troca pela URL carregada, a do payload não vale.
     pub url: String,
+    /// Contexto de código (F12.3).
+    pub code: Option<PickCodeContext>,
 }
 
 /// O que o Rust faz com uma navegação.
@@ -227,7 +261,7 @@ mod tests {
     }
 
     fn payload() -> String {
-        r##"{"tag":"button","id":"save","classes":["btn","primary"],"role":null,"aria":{"label":"Salvar"},"text":"Salvar","html":"<button id=\"save\">Salvar</button>","selector":"#save","dom_path":"body > main > button#save","rect":{"x":10,"y":20,"width":120,"height":32},"viewport":{"width":1280,"height":720},"scroll":{"x":0,"y":140},"url":"http://mentira.local/"}"##
+        r##"{"tag":"button","id":"save","classes":["btn","primary"],"role":null,"aria":{"label":"Salvar"},"text":"Salvar","html":"<button id=\"save\">Salvar</button>","selector":"#save","dom_path":"body > main > button#save","rect":{"x":10,"y":20,"width":120,"height":32},"viewport":{"width":1280,"height":720},"scroll":{"x":0,"y":140},"url":"http://mentira.local/","code":{"react":true,"component":"Botao","stack":["Botao","App"],"source":{"file":"/src/features/x/Botao.tsx","line":42,"column":7}}}"##
             .to_owned()
     }
 
@@ -253,6 +287,22 @@ mod tests {
         assert_eq!(pick.scroll.y, 140.0);
         // A URL do payload não vale: a real da webview entra no lugar.
         assert_eq!(pick.url, "http://localhost:5173/");
+        // O contexto de código (F12.3) passa adiante como veio da página.
+        let code = pick.code.expect("contexto de código");
+        assert_eq!(code.component.as_deref(), Some("Botao"));
+        assert_eq!(code.stack, vec!["Botao", "App"]);
+        let source = code.source.expect("fonte");
+        assert_eq!(source.file, "/src/features/x/Botao.tsx");
+        assert_eq!(source.line, Some(42));
+    }
+
+    #[test]
+    fn o_script_injeta_o_extrator_antes_do_apontar() {
+        let extractor = SCRIPT
+            .find("__assistenteCodeContext =")
+            .expect("extrator no script");
+        let pick = SCRIPT.find("__assistentePick").expect("apontar no script");
+        assert!(extractor < pick, "o extrator tem que vir antes do pick.js");
     }
 
     #[test]

@@ -162,6 +162,8 @@ export type ExecView = {
   state: ExecState;
   auto_approved: boolean;
   result: ExecResult | null;
+  /** Pedido `host` já foi pego pelo app para execução no PC (F9.11). */
+  picked_up?: boolean;
 };
 
 /** GET/PUT /api/projects/{profile}/{project}/settings. */

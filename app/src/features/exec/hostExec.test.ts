@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { hostExec } from "../../bridge/host";
+import { hostAutoExec, hostExec } from "../../bridge/host";
 import type { HubClient } from "../../bridge/hub";
 import type { ExecView } from "../../bridge/types";
-import { approveOnHost } from "./hostExec";
+import { approveOnHost, autoRunOnHost } from "./hostExec";
 
 vi.mock("../../bridge/host", () => ({
   hostExec: vi.fn(),
+  hostAutoExec: vi.fn(),
 }));
 
 const request = (id: string): ExecView => ({
@@ -55,5 +56,29 @@ describe("approveOnHost", () => {
       "não consegui iniciar o bash",
     );
     expect(hub.execResult).toHaveBeenCalledWith("p2", { error: "não consegui iniciar o bash" });
+  });
+
+  it("lista do PC (F9.11): fora da lista não roda nem responde ao hubd", async () => {
+    vi.mocked(hostAutoExec).mockResolvedValue(null);
+    const hub = fakeHub();
+    expect(await autoRunOnHost(request("p3"), hub as unknown as HubClient)).toBe(false);
+    expect(hub.approveExec).not.toHaveBeenCalled();
+    expect(hub.execResult).not.toHaveBeenCalled();
+  });
+
+  it("lista do PC (F9.11): na lista, o app roda e o resultado volta ao hubd", async () => {
+    const result = {
+      exit_code: 0,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      timed_out: false,
+      duration_ms: 3,
+    };
+    vi.mocked(hostAutoExec).mockResolvedValue(result);
+    const hub = fakeHub();
+    expect(await autoRunOnHost(request("p4"), hub as unknown as HubClient)).toBe(true);
+    expect(hub.approveExec).not.toHaveBeenCalled();
+    expect(hub.execResult).toHaveBeenCalledWith("p4", result);
   });
 });

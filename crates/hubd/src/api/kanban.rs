@@ -1694,6 +1694,10 @@ mod tests {
         let uri = format!("/api/exec/{id}/approve");
         let (status, _) = send(app.clone(), "POST", &uri, Some("{}"), None).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
+        // O app pega o pedido antes de rodar (F9.11): só pedido pego aceita resultado.
+        let uri = format!("/api/exec/{id}/claim");
+        let (status, _) = send(app.clone(), "POST", &uri, None, None).await;
+        assert_eq!(status, StatusCode::OK);
         let result = json!({
             "exit_code": code,
             "stdout": "linha 1\nteste quebrado: falta o botão\n",

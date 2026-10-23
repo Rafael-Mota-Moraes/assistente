@@ -94,6 +94,14 @@ function holderLabel(holder: string, sessions: SessionInfo[]): string {
   return session ? tabLabel(session) : holder;
 }
 
+/** Dependências que ainda não passaram no QA (`validado`): sem elas na `main`, o hubd não abre
+ * trabalhador (F11.13). Ele também confere no git; aqui é só o aviso. */
+function waitingOn(card: KanbanCard, cards: KanbanCard[]): string[] {
+  return (card.depends_on ?? []).filter(
+    (id) => cards.find((other) => other.id === id)?.column !== "validado",
+  );
+}
+
 /** Quadro do projeto ativo (F11.3): backlog · fazendo · feito · validado, no lugar da área de
  * sessões. */
 export function KanbanBoard() {
@@ -493,6 +501,15 @@ export function KanbanBoard() {
                           </span>
                         )}
                       </div>
+                      {card.depends_on && card.depends_on.length > 0 && (
+                        <div
+                          className="flex items-center gap-1 text-[10px] text-slate-400"
+                          title="Depende destas tarefas: o trabalhador só abre depois que elas entram na main"
+                        >
+                          <span className="text-slate-500">←</span>
+                          <span className="font-mono">{card.depends_on.join(", ")}</span>
+                        </div>
+                      )}
                       <button
                         type="button"
                         onClick={() => setEditing(card)}
@@ -540,8 +557,13 @@ export function KanbanBoard() {
                             onClick={() =>
                               void act(() => client.mandarCard(profile, project, card.id))
                             }
-                            title="Manda esta tarefa para um trabalhador agora"
-                            className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                            disabled={waitingOn(card, cards).length > 0}
+                            title={
+                              waitingOn(card, cards).length > 0
+                                ? `Espera ${waitingOn(card, cards).join(", ")} entrar na main (QA)`
+                                : "Manda esta tarefa para um trabalhador agora"
+                            }
+                            className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30 disabled:opacity-50"
                           >
                             <Play className="size-3.5" /> Mandar
                           </button>

@@ -165,6 +165,7 @@ describe("KanbanBoard", () => {
         description: "",
         priority: "normal",
         kind: "agente",
+        depends_on: [],
       }),
     );
   });
@@ -387,5 +388,25 @@ describe("KanbanBoard", () => {
     });
     expect(await screen.findByRole("alert", {}, { timeout: 4000 })).toBeInTheDocument();
     expect(useAppStore.getState().toast).toMatch(/Cota do provedor esgotada/);
+  });
+
+  it("mostra as dependências e só manda depois que elas entram na main", async () => {
+    connect({
+      next: 5,
+      cards: [
+        card("T1", { column: "validado", merged: { branch: "main", commit: "abc" } }),
+        card("T2"),
+        card("T3", { depends_on: ["T1", "T2"] }),
+        card("T4", { depends_on: ["T1"] }),
+      ],
+    });
+    const backlog = await column("Backlog");
+    expect(within(backlog).getByText("T1, T2")).toBeInTheDocument();
+    const t3 = within(backlog).getByRole("article", { name: /^T3 / });
+    const mandar = within(t3).getByRole("button", { name: /Mandar/ });
+    expect(mandar).toBeDisabled();
+    expect(mandar).toHaveAttribute("title", "Espera T2 entrar na main (QA)");
+    const t4 = within(backlog).getByRole("article", { name: /^T4 / });
+    expect(within(t4).getByRole("button", { name: /Mandar/ })).toBeEnabled();
   });
 });

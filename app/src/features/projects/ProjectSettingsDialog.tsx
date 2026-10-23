@@ -1,5 +1,6 @@
 import { Plus, Settings, TriangleAlert, X } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { pcAllowedCommands, setPcAllowedCommands } from "../../bridge/host";
 import type { ProjectSettings } from "../../bridge/types";
 import { useAppStore } from "../../store";
 
@@ -17,14 +18,28 @@ export function ProjectSettingsDialog() {
   const hub = useAppStore((s) => s.hub);
   const [settings, setSettings] = useState<ProjectSettings | null>(null);
   const [dockerFromFile, setDockerFromFile] = useState(false);
+  // Lista do PC (F9.11): fica no host, não na VM. `null` = fora do app desktop.
+  const [pcCommands, setPcCommands] = useState<string[] | null>(null);
+  const [pcLoaded, setPcLoaded] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setSettings(null);
     setError(null);
+    setPcCommands(null);
+    setPcLoaded(null);
     if (!hub || !target) return;
     let cancelled = false;
+    pcAllowedCommands(target.profile, target.project)
+      .then((commands) => {
+        if (cancelled) return;
+        setPcCommands(commands);
+        setPcLoaded(commands);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(message(e));
+      });
     hub
       .projectSettings(target.profile, target.project)
       .then((view) => {
@@ -54,6 +69,9 @@ export function ProjectSettingsDialog() {
         // Campo vazio = sem preview (o hubd guarda `null`).
         preview_url: settings.preview_url?.trim() || null,
       });
+      if (pcCommands && pcCommands.join("\n") !== pcLoaded?.join("\n")) {
+        await setPcAllowedCommands(target.profile, target.project, pcCommands);
+      }
       useAppStore.setState({
         projectSettings: null,
         toast: `Configurações de ${target.project} salvas: valem para as próximas sessões.`,
@@ -159,6 +177,18 @@ export function ProjectSettingsDialog() {
               onChange={(allowed_commands) => patch({ allowed_commands })}
             />
 
+            {pcCommands && (
+              <ListEditor
+                label="Comandos sem clique no PC"
+                hint="Pedidos para o seu PC (fora-do-jail --pc) que rodam sem aprovar: só o texto exato (git push não libera git push --force), no máximo 10. Fica no PC, não na VM. Todo o resto pede clique, e tudo fica no registro ~/.local/state/assistente/pc-exec.log."
+                placeholder="git push"
+                mono
+                danger
+                items={pcCommands}
+                onChange={setPcCommands}
+              />
+            )}
+
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-slate-200">URL do preview</span>
               <input
@@ -236,6 +266,7 @@ function ListEditor({
   placeholder,
   items,
   mono,
+  danger,
   disabled,
   onChange,
 }: {
@@ -244,6 +275,8 @@ function ListEditor({
   placeholder: string;
   items: string[];
   mono?: boolean;
+  /** Vale no PC (F9.11): título em vermelho, como o card do pedido. */
+  danger?: boolean;
   disabled?: boolean;
   onChange: (items: string[]) => void;
 }) {
@@ -260,7 +293,7 @@ function ListEditor({
 
   return (
     <section aria-label={label} className={`text-sm ${disabled ? "opacity-50" : ""}`}>
-      <h3 className="font-medium text-slate-200">{label}</h3>
+      <h3 className={`font-medium ${danger ? "text-red-300" : "text-slate-200"}`}>{label}</h3>
       <p className="text-xs text-slate-400">{hint}</p>
       <ul className="mt-2 flex flex-col gap-1">
         {items.map((item) => (

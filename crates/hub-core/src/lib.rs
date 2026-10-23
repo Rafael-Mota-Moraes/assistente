@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod kanban;
+pub mod pc_allow;
 pub mod pick;
 pub mod project;
 pub mod project_settings;
@@ -13,6 +14,10 @@ pub mod sleep;
 pub mod worker;
 
 pub use config::{Config, ConfigError, Profile, expand_home};
+pub use pc_allow::{
+    MAX_PC_COMMANDS, PcAllowList, load_pc_allow, pc_allow_path, save_pc_commands,
+    validate_pc_commands,
+};
 pub use pick::{PickDetail, PickRequest, PickResult, PickTarget};
 pub use project::{Project, discover_projects};
 pub use project_settings::{

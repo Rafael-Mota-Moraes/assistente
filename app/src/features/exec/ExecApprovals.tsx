@@ -128,7 +128,7 @@ export function ExecApprovals() {
                   {isHost ? "Vai rodar no seu PC" : "Rodar fora do jail?"}
                 </span>
               </span>
-              <span className="ml-auto truncate text-xs text-slate-400">{origin(request)}</span>
+              <span className="ml-auto text-xs text-slate-400">{origin(request)}</span>
             </header>
             {/* No PC, comando e pasta aparecem por inteiro (F9.11): nada escondido atrás de rolagem. */}
             <pre

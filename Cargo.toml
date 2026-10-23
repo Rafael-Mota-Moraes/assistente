@@ -21,7 +21,7 @@ toml = "=1.1.6"
 tower-http = { version = "=0.6.11", features = ["cors", "fs"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
-chrono = "=0.4.40"
+chrono = "0.4.45"
 tauri = "=2.12.1"
 tauri-build = "=2.7.1"
 tauri-plugin-clipboard-manager = "=2.4.1"

@@ -1,9 +1,16 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { pcAllowedCommands, setPcAllowedCommands } from "../../bridge/host";
 import type { HubClient } from "../../bridge/hub";
 import type { ProjectSettingsView } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
+
+// Lista do PC (F9.11): fora do app desktop não aparece.
+vi.mock("../../bridge/host", () => ({
+  pcAllowedCommands: vi.fn().mockResolvedValue(null),
+  setPcAllowedCommands: vi.fn().mockResolvedValue(undefined),
+}));
 
 const closed = (): ProjectSettingsView => ({
   settings: {
@@ -114,5 +121,39 @@ describe("ProjectSettingsDialog", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Salvar" }));
     expect(await screen.findByText("host inválido")).toBeInTheDocument();
     expect(useAppStore.getState().projectSettings).not.toBeNull();
+  });
+
+  it("lista do PC (F9.11): fica no host, só texto exato, e salva à parte do hubd", async () => {
+    vi.mocked(pcAllowedCommands).mockResolvedValueOnce(["git push"]);
+    const hub = open(closed());
+    const lista = await screen.findByRole("region", { name: "Comandos sem clique no PC" });
+    expect(pcAllowedCommands).toHaveBeenCalledWith("pessoal", "game");
+    expect(within(lista).getByText("git push")).toBeInTheDocument();
+    expect(within(lista).getByText(/texto exato/)).toBeInTheDocument();
+    expect(within(lista).getByText(/Fica no PC, não na VM/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Novo em Comandos sem clique no PC"), {
+      target: { value: "git pull" },
+    });
+    fireEvent.click(screen.getByTitle("Adicionar em Comandos sem clique no PC"));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await vi.waitFor(() => expect(useAppStore.getState().projectSettings).toBeNull());
+    expect(setPcAllowedCommands).toHaveBeenCalledWith("pessoal", "game", ["git push", "git pull"]);
+    // Nada da lista do PC vai para o hubd (VM).
+    expect(hub.saveProjectSettings).toHaveBeenCalledWith(
+      "pessoal",
+      "game",
+      expect.not.objectContaining({ pc_commands: expect.anything() }),
+    );
+  });
+
+  it("lista do PC sem mudança não regrava; fora do app desktop nem aparece", async () => {
+    vi.mocked(setPcAllowedCommands).mockClear();
+    open(closed());
+    await screen.findByRole("checkbox", { name: /Docker/ });
+    expect(screen.queryByRole("region", { name: "Comandos sem clique no PC" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await vi.waitFor(() => expect(useAppStore.getState().projectSettings).toBeNull());
+    expect(setPcAllowedCommands).not.toHaveBeenCalled();
   });
 });

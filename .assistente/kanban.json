@@ -196,8 +196,8 @@
       "description": "Enquanto a F1.6 não sai, o `./dev` não roda na VM: nem no jail, nem fora dele (`Bad address` do virtiofs), com Docker ligado ou não. Um agente que precisava do check pediu `sudo systemctl start docker` e parou. As instruções passam a dizer o caminho certo. No bloco \"Fora do jail\" do `vm/configurar-agentes.sh`: \"`./dev` (e o check do projeto) roda no PC: `\"$ASSISTENTE_FORA_DO_JAIL\" --pc --timeout 1500 './dev just check'`; não peça `sudo` nem Docker; sem check verde, não diga que está pronto\". Nos prompts de QA e de QA geral (`crates/hub-core/src/worker.rs`), \"rode as verificações\" vira esse pedido, e `validar` só com o check verde. No prompt do trabalhador (opencode, sem ninguém para aprovar), ele não roda `./dev` e escreve na nota do `done` que o check fica para o QA.\nPronto quando: as três instruções trazem o `--pc` e a regra \"sem check verde, não valida\".\nComo testar: `worker::tests` (os prompts de QA têm `--pc` e `./dev just check`; o do trabalhador não pede `./dev`) e `bash vm/configurar-agentes.sh` num home falso, se o teste dele existir.",
       "priority": "alta",
       "kind": "agente",
-      "column": "fazendo",
-      "holder": "pessoal--assistente--opencode-1",
+      "column": "feito",
+      "commit": "c97e177cce10b5cb8597951b383281ad1972fe94",
       "created_at": 1792754930
     },
     {

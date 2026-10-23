@@ -2102,6 +2102,14 @@ fn exec_error(e: ExecError) -> Response {
             StatusCode::CONFLICT,
             "este pedido não é para o PC (o hubd roda o da VM)",
         ),
+        ExecError::AlreadyClaimed => error(
+            StatusCode::CONFLICT,
+            "o app já pegou este pedido para rodar no PC (não roda de novo)",
+        ),
+        ExecError::NotClaimed => error(
+            StatusCode::CONFLICT,
+            "o app não pegou este pedido: sem saída para guardar",
+        ),
         ExecError::TooMany => error(
             StatusCode::TOO_MANY_REQUESTS,
             "pedidos demais esperando aprovação; espere uma resposta no app",
@@ -2329,30 +2337,26 @@ async fn exec_result(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// POST /api/exec/{id}/claim: o app no PC marca o pedido `host` como pego para execução
-/// (F9.11). Evita que um segundo `host_exec` rode o comando de novo. Devolve o job
-/// (comando, pasta, env, timeout) para o app executar.
+/// POST /api/exec/{id}/claim: o app no PC pega o pedido `host` aprovado (F9.11). Devolve o
+/// comando, a pasta e o timeout uma vez só: um segundo `host_exec` do mesmo id dá 409.
 async fn claim_exec(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<ClaimResponse>, Response> {
+) -> Result<Json<ClaimedJob>, Response> {
     let job = state.0.exec.claim_host(&id).map_err(exec_error)?;
     tracing::info!("pedido {id} pego pelo app no PC: {}", job.command);
-    Ok(Json(ClaimResponse {
-        id: job.id,
+    Ok(Json(ClaimedJob {
         command: job.command,
-        cwd: job.cwd.to_string_lossy().to_string(),
-        env: job.env.into_iter().map(|(k, v)| (k, v)).collect(),
+        cwd: job.cwd.to_string_lossy().into_owned(),
         timeout_secs: job.timeout.as_secs(),
     }))
 }
 
+/// O que o app roda no PC (o env da sessão é da VM e não vai junto).
 #[derive(Serialize)]
-struct ClaimResponse {
-    id: String,
+struct ClaimedJob {
     command: String,
     cwd: String,
-    env: Vec<(String, String)>,
     timeout_secs: u64,
 }
 
@@ -4143,6 +4147,23 @@ mod tests {
             204
         );
         let result = r#"{"exit_code":0,"stdout":"push ok\n","stderr":"","truncated":false,"timed_out":false,"duration_ms":12}"#;
+        // Saída de pedido que o app não pegou: recusada (F9.11).
+        assert_eq!(
+            http("POST", &format!("{hub}/api/exec/{id}/result"), Some(result))
+                .await
+                .0,
+            409
+        );
+        // O app pega o pedido: comando, pasta e timeout, uma vez só (F9.11).
+        let (status, body) = http("POST", &format!("{hub}/api/exec/{id}/claim"), None).await;
+        assert_eq!(status, 200, "{body}");
+        let job = json(&body);
+        assert_eq!(job["command"], "git push");
+        assert!(job["cwd"].as_str().is_some_and(|c| !c.is_empty()), "{job}");
+        assert!(job.get("env").is_none(), "o env da sessão é da VM: {job}");
+        let (status, body) = http("POST", &format!("{hub}/api/exec/{id}/claim"), None).await;
+        assert_eq!(status, 409, "segundo host_exec não roda de novo: {body}");
+        assert!(body.contains("já pegou"), "{body}");
         assert_eq!(
             http("POST", &format!("{hub}/api/exec/{id}/result"), Some(result))
                 .await

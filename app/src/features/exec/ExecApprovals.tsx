@@ -1,9 +1,9 @@
-import { AlertTriangle, Check, ChevronDown, ChevronUp, ShieldAlert, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, ChevronDown, ChevronUp, ShieldAlert, TriangleAlert, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { ExecView } from "../../bridge/types";
 import { useAppStore } from "../../store";
 import { tabLabel } from "../sessions/SessionArea";
-import { approveOnHost } from "./hostExec";
+import { approveOnHost, autoRunOnHost } from "./hostExec";
 
 const EVERY_MS = 2000;
 
@@ -60,8 +60,33 @@ export function ExecApprovals() {
   // Pedido em andamento (rodando no PC, F9.10): não aprova de novo.
   const [busy, setBusy] = useState<string[]>([]);
 
+  // Pedido para o PC já passado pela lista do projeto (F9.11): uma vez por id.
+  const checked = useRef(new Set<string>());
+
   const pending = requests.filter((r) => r.state === "pending");
   const recent = requests.filter((r) => r.state !== "pending").slice(0, 8);
+
+  // O app confere no host se o comando está, texto exato, na lista do PC do projeto; se
+  // estiver, aprova e roda sem clique. Fora da lista o card espera você.
+  useEffect(() => {
+    const { hub } = useAppStore.getState();
+    if (!hub) return;
+    for (const request of requests) {
+      if (request.target !== "host" || request.state !== "pending") continue;
+      if (checked.current.has(request.id)) continue;
+      checked.current.add(request.id);
+      setBusy((ids) => [...ids, request.id]);
+      autoRunOnHost(request, hub)
+        .then(async (ran) => {
+          if (ran) useAppStore.setState({ execRequests: await hub.execRequests() });
+        })
+        .catch((error: unknown) => {
+          useAppStore.setState({ toast: error instanceof Error ? error.message : String(error) });
+        })
+        .finally(() => setBusy((ids) => ids.filter((id) => id !== request.id)));
+    }
+  }, [requests]);
+
   if (pending.length === 0 && recent.length === 0) return null;
 
   const origin = (request: ExecView) => {
@@ -88,30 +113,41 @@ export function ExecApprovals() {
           <section
             key={request.id}
             aria-label={`Pedido de ${origin(request)}`}
-            className={`flex flex-col gap-2 rounded-xl p-3 shadow-2xl backdrop-blur ${
-              isHost
-                ? "border-red-500/60 bg-red-900/40"
-                : "border-amber-500/40 bg-surface-strong"
+            className={`flex flex-col gap-2 rounded-xl border p-3 shadow-2xl backdrop-blur ${
+              isHost ? "border-red-500/70 bg-red-950/90" : "border-amber-500/40 bg-surface-strong"
             }`}
           >
             <header className="flex items-center gap-2 text-sm">
               {isHost ? (
-                <AlertTriangle className="size-4 shrink-0 text-red-300" />
+                <TriangleAlert className="size-4 shrink-0 text-red-300" />
               ) : (
                 <ShieldAlert className="size-4 shrink-0 text-amber-300" />
               )}
-              <span className="font-medium">{isHost ? "text-red-100" : "text-amber-100"}>
-                {isHost ? "⚠️ Vai rodar no seu PC" : "Rodar fora do jail?"}
+              <span className={`font-medium`}>
+                <span className={isHost ? "text-red-100" : "text-amber-100"}>
+                  {isHost ? "Vai rodar no seu PC" : "Rodar fora do jail?"}
+                </span>
               </span>
               <span className="ml-auto truncate text-xs text-slate-400">{origin(request)}</span>
             </header>
-            <pre className="max-h-40 overflow-auto rounded-lg bg-black/40 px-2 py-1.5 font-mono text-xs whitespace-pre-wrap break-all text-slate-100">
+            {/* No PC, comando e pasta aparecem por inteiro (F9.11): nada escondido atrás de rolagem. */}
+            <pre
+              className={`overflow-auto rounded-lg bg-black/40 px-2 py-1.5 font-mono text-xs whitespace-pre-wrap break-all text-slate-100 ${
+                isHost ? "" : "max-h-40"
+              }`}
+            >
               {request.command}
             </pre>
-            <p className="truncate font-mono text-[11px] text-slate-500" title={request.cwd}>
-              em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min ·{" "}
-              {isHost ? "no PC" : "na VM"}
-            </p>
+            {isHost ? (
+              <p className="font-mono text-[11px] break-all text-red-200">
+                em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min · no PC, com as
+                suas chaves e logins
+              </p>
+            ) : (
+              <p className="truncate font-mono text-[11px] text-slate-500" title={request.cwd}>
+                em {request.cwd} · até {Math.round(request.timeout_secs / 60)} min · na VM
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -133,8 +169,8 @@ export function ExecApprovals() {
               >
                 <X className="size-3.5" /> Negar
               </button>
-              {/* "Sempre permitir" é só da VM: pedido para o PC nunca roda sem clique (F9.9/F9.11). */}
-              {request.target === "vm" && (
+              {/* "Sempre permitir" é só da VM: no PC, sem clique só a lista exata da engrenagem (F9.11). */}
+              {!isHost && (
                 <button
                   type="button"
                   title={ALWAYS_WARNING}

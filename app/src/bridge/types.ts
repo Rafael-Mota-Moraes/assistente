@@ -273,6 +273,18 @@ export type GitStatus = { files: GitFileStatus[] };
 /** F10.1: diff de um arquivo (HEAD × árvore de trabalho). */
 export type GitDiff = { path: string; head: string | null; working: string | null };
 
+/** Contexto de código do elemento apontado (F12.3). */
+export type PickCodeContext = {
+  /** A página usa React? */
+  react: boolean;
+  /** Componente mais próximo do elemento (null se a página não usa React). */
+  component: string | null;
+  /** Pilha de componentes, do mais interno ao mais externo. */
+  stack: string[];
+  /** Arquivo e linha do JSX (null em build de produção). */
+  source: { file: string; line: number | null; column: number | null } | null;
+};
+
 /** Elemento apontado na página do preview (F12.2). Espelha `app/src-tauri/src/pick.rs`. */
 export type PickedElement = {
   /** Tag do elemento (`button`, `div`…). */
@@ -301,6 +313,8 @@ export type PickedElement = {
   scroll: { x: number; y: number };
   /** URL real da webview (o Rust troca pela URL carregada; a do payload não vale). */
   url: string;
+  /** Contexto de código (F12.3). */
+  code?: PickCodeContext | null;
 };
 
 /** Elemento apontado na página (F12.2) e contexto de código (F12.3). */

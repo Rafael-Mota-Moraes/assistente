@@ -3,17 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { PickDetail, PickTarget } from "../../bridge/types";
 import { openView, useAppStore, viewKey } from "../../store";
 import { reopenTab } from "../sessions/shortcuts";
+import { PickCodeContext } from "./PickCodeContext";
 
 /** Espera antes de pedir o prompt: cada tecla não vira uma ida ao hubd. */
 const PREVIEW_MS = 300;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/** Onde o elemento apontado está: o `arquivo:linha` (F12.3), o componente ou o caminho no DOM. */
-function place(pick: PickDetail): string | null {
-  return pick.source ?? pick.component ?? pick.dom_path ?? null;
 }
 
 /** Uma linha que descreve o elemento: seletor e texto. */
@@ -170,13 +166,10 @@ export function PickDialog() {
             <dt className="w-20 shrink-0 text-slate-500">Elemento</dt>
             <dd className="truncate font-mono">{describe(pick)}</dd>
           </div>
-          {place(pick) && (
-            <div className="flex gap-2">
-              <dt className="w-20 shrink-0 text-slate-500">Onde</dt>
-              <dd className="truncate font-mono">{place(pick)}</dd>
-            </div>
-          )}
         </dl>
+
+        {/* Onde está: o `arquivo:linha` em dev, ou o aviso de procurar (F12.3). */}
+        <PickCodeContext pick={pick} />
 
         <label className="flex flex-col gap-1 text-sm text-slate-300">
           O que quer mudar

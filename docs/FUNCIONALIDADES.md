@@ -437,19 +437,15 @@ comandos do app.
   `PreviewPanel` escuta o evento e abre a caixa do F12.4 (`features/pick/detail.ts` converte o pick),
   esconde a webview enquanto ela está aberta, e o botão de apontar da barra liga o script por
   `setEnabled`. Testes: `pick::tests`, `pickScript.test.ts`, `detail.test.ts` e `PreviewPanel.test.tsx`.
-- [ ] **F12.3 Contexto de código.** No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.
+- [x] **F12.3 Contexto de código.** No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.
   Pronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.
   Como testar: vitest com DOM fake + um build de produção.
-  Revisão (2026-10-22): o código existe e tem testes, mas não está ligado. `codeContext.js` (sobe
-  pelo fiber; `_debugSource` até o React 18, `_debugStack` no 19), `context.ts` (`toProjectPath`,
-  aviso de busca), `prompt.ts` e `PickCodeContext.tsx`, todos em `app/src/features/pick/`. Falta:
-  injetar `codeContext.js` antes do `pick.js` (no `SCRIPT` do `pick.rs`); o `pick.js` mandar
-  `code: window.__assistenteCodeContext.extract(element)`; `PickedElement` (TS e `pick.rs`) ganhar
-  `code`; o `toPickDetail` preencher `source` (`toProjectPath`, com a raiz do projeto),
-  `component` e `components`; a caixa do F12.4 mostrar o `PickCodeContext`. E arrumar o que sobrou
-  da T6: um tipo de pick só (hoje `PickedElement`, `PickElement` de `pick/types.ts` e `PickDetail`)
-  e um prompt só (o do hubd, `hub_core::pick`; `prompt.ts` sai, e o aviso de busca do hubd usa o
-  texto/classe/componente como o `searchInstruction`).
+  Feito: `codeContext.js` (sobe pelo fiber; `_debugSource` até o React 18, `_debugStack` no 19)
+  em `app/src/features/pick/` é injetado antes do `pick.js` (`pick::SCRIPT`, `concat!` dos dois);
+  o pick leva `code`, o `toPickDetail` vira `source` (`arquivo:linha` relativo à raiz do
+  projeto), `component` e `components`, e a caixa da F12.4 mostra o `PickCodeContext`. Um tipo de
+  pick (`PickedElement` → `PickDetail`) e um prompt só (`hub_core::pick`): sem fonte, o aviso do
+  hubd manda procurar pelo texto, pela classe e pelo componente (`PickDetail::search_hint`).
 - [x] **F12.4 Enviar ao agente.** `POST /api/projects/{perfil}/{projeto}/picks`: escreve `.assistente/picks/<data-hora>.md` com o detalhe do pick (fora do git via `.git/info/exclude`, como o `.ai-jail` da F0.5), monta o prompt curto (URL, onde, seletor, texto, pedido) e entrega no alvo escolhido no modal: **sessão** (só de agente, nunca a aba Terminal; confere que é do projeto e está viva, cola no prompt com `set-buffer` + `paste-buffer` **sem Enter** — Enter é seu, para não aprovar pergunta pendente nem executar texto no shell) ou **quadro** (card no backlog da F11.1, autossuficiente: o clone do notebook não tem o arquivo local). O modal mostra o prompt que será enviado, deixa editar o texto e escolher a sessão (padrão: a aba ativa do projeto); ao colar, a UI leva para a aba e avisa "confirme no terminal". Testes: rota com tmux real (colar e ler de volta, sem o pedido rodar sozinho), card fake, guards (texto vazio, sessão de outro projeto ou tipo shell, sessão/projeto inexistente), `PickDialog.test.tsx` (envio, erro, troca de alvo).
   Pronto quando: apontar um botão, escrever "deixa verde" e enviar faz o texto aparecer no prompt da sessão; depois do seu Enter, o agente edita o arquivo certo.
   Como testar: rota com tmux real + manual.

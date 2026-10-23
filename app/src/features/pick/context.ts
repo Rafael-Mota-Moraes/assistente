@@ -1,11 +1,10 @@
 /** Contexto de código do pick, do lado do app (F12.3).
  *
  * A página do preview entrega o arquivo e a linha do JSX em dev (Vite + React). Aqui isso
- * vira o caminho do projeto (`/src/features/x/Botao.tsx` → `src/features/x/Botao.tsx`) e vira
- * texto para o pedido: em dev, "onde" é o arquivo:linha; em build de produção não há fonte,
- * então o pick leva componente, seletor e texto, e o pedido manda o agente procurar o arquivo
- * antes de editar em vez de chutar. */
-import type { PickCodeContext, PickElement } from "./types";
+ * vira o caminho do projeto (`/src/features/x/Botao.tsx` → `src/features/x/Botao.tsx`). O
+ * prompt é do hubd (`hub_core::pick`): sem fonte (build de produção), ele manda o agente
+ * procurar o arquivo pelo texto/classe/componente antes de editar. */
+import type { PickCodeContext } from "../../bridge/types";
 
 /** Fonte do elemento apontado, já no caminho do projeto. */
 export type ResolvedSource = {
@@ -19,7 +18,7 @@ export type ResolvedSource = {
   label: string;
 };
 
-/** Contexto resolvido: o que o app mostra e o que vai no pedido. */
+/** Contexto resolvido: o que vai no `PickDetail` do hubd. */
 export type ResolvedCodeContext = {
   /** A página usa React? */
   react: boolean;
@@ -61,7 +60,7 @@ export function toProjectPath(file: string, projectRoot?: string | null): string
   return path.replace(/^\.\//, "");
 }
 
-/** Resolve o contexto que veio da página: caminho do projeto e texto de "onde está". */
+/** Resolve o contexto que veio da página: o arquivo vira caminho do projeto. */
 export function resolveCodeContext(
   code: PickCodeContext | null | undefined,
   projectRoot?: string | null,
@@ -74,52 +73,4 @@ export function resolveCodeContext(
   const path = toProjectPath(raw.file, projectRoot);
   const label = raw.line === null ? path : `${path}:${raw.line}`;
   return { react, component, stack, source: { path, line: raw.line, column: raw.column, label } };
-}
-
-/** Componente e pilha, sem o arquivo (a tela mostra o arquivo separado). */
-export function describeComponents(context: ResolvedCodeContext): string {
-  const parts: string[] = [];
-  if (context.component) parts.push(`componente ${context.component}`);
-  if (context.stack.length > 1) parts.push(`pilha: ${context.stack.join(" > ")}`);
-  return parts.join(" · ");
-}
-
-/** "Onde está" o elemento: arquivo:linha em dev; componente, seletor e texto sem fonte. */
-export function describeWhere(context: ResolvedCodeContext, pick: PickElement): string {
-  const parts: string[] = [];
-  if (context.source) parts.push(context.source.label);
-  const components = describeComponents(context);
-  if (components) parts.push(components);
-  if (!context.source) {
-    parts.push(`seletor ${pick.selector}`);
-    if (pick.text) parts.push(`texto "${pick.text}"`);
-  }
-  return parts.join(" · ");
-}
-
-/** Pistas para o agente achar o arquivo quando a página não expõe a fonte. */
-export function searchHints(pick: PickElement, context: ResolvedCodeContext): string[] {
-  const hints: string[] = [];
-  if (pick.text) hints.push(`o texto "${pick.text}"`);
-  // Classe que o próprio apontar põe no elemento não ajuda a achar o arquivo.
-  const classes = (pick.classes ?? []).filter((c) => c && !c.startsWith("assistente-"));
-  if (classes.length > 0) hints.push(`a classe "${classes[0]}"`);
-  if (context.component) hints.push(`o componente "${context.component}"`);
-  return hints;
-}
-
-/**
- * Aviso que vai no pedido quando não há arquivo de origem (build de produção): o agente
- * procura antes de editar, em vez de chutar o caminho.
- */
-export function searchInstruction(pick: PickElement, context: ResolvedCodeContext): string {
-  const hints = searchHints(pick, context);
-  const how = hints.length > 0 ? `grep por ${hints.join(", por ")}` : "grep pelo seletor";
-  const motivo = context.react
-    ? "Sem arquivo de origem (build de produção)"
-    : "A página não expõe o código do elemento";
-  return (
-    `${motivo}: antes de editar, procure o arquivo no projeto ` +
-    `(${how}) e confirme o caminho; não chute o arquivo.`
-  );
 }

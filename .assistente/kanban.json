@@ -36,6 +36,7 @@
       "priority": "normal",
       "kind": "agente",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-1",
       "commit": "556489795d3f2e5d4747680e5dd3de21e0320b04",
       "created_at": 1792614072
     },
@@ -144,6 +145,7 @@
       "priority": "alta",
       "kind": "agente",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-1",
       "commit": "4e1213611b979b0c17a6ace87105bcc7358c4686",
       "created_at": 1792678986
     },
@@ -197,6 +199,7 @@
       "priority": "alta",
       "kind": "agente",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-1",
       "commit": "c97e177cce10b5cb8597951b383281ad1972fe94",
       "created_at": 1792754930
     },
@@ -207,6 +210,7 @@
       "priority": "alta",
       "kind": "agente",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-1",
       "commit": "ba048591c03144e4e0f3743bfc8920ac57fa138c",
       "created_at": 1792754930
     },
@@ -217,6 +221,7 @@
       "priority": "normal",
       "kind": "agente",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-1",
       "commit": "a8484bed90bf943adc7bedff6bf79ea5308e3b75",
       "created_at": 1792754931
     }

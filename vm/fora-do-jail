@@ -63,7 +63,7 @@ kanban() {
   if [ "$acao" = reabrir ]; then
     [ -n "$nota" ] || die "reabrir: informe --nota (o que falta)"
   fi
-  local path method=POST body
+  local path method=POST body timeout_kanban=60
   case "$acao" in
     pull) path=/v1/kanban/pull ;;
     listar) path=/v1/kanban; method=GET ;;
@@ -71,7 +71,7 @@ kanban() {
     done) path=/v1/kanban/done ;;
     release) path=/v1/kanban/release ;;
     bloquear) path=/v1/kanban/block ;;
-    validar) path=/v1/kanban/validate ;;
+    validar) path=/v1/kanban/validate; timeout_kanban=2700 ;;  # o check no PC: aprovação + 30 min
     reabrir) path=/v1/kanban/reopen ;;
     trabalhador)
       path=/v1/workers
@@ -107,10 +107,10 @@ else:
 print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos" "$titulo" "$descricao" "$tipo" "$prioridade" "$motivo" "$branch" "$nota" "$depende_de")"
   local response status json
   if [ "$method" = GET ]; then
-    response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+    response="$(curl -sS --noproxy '*' -m "$timeout_kanban" -w '\n%{http_code}' \
       -H "Authorization: Bearer $token" "$url$path")" || die "o hubd não respondeu em $url"
   else
-    response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+    response="$(curl -sS --noproxy '*' -m "$timeout_kanban" -w '\n%{http_code}' \
       -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
       --data-binary "$body" "$url$path")" || die "o hubd não respondeu em $url"
   fi
@@ -130,7 +130,7 @@ uso_kanban() {
   echo "uso: fora-do-jail kanban listar | criar --titulo T [--descricao D] [--tipo manual|agente] [--prioridade alta|normal|baixa] [--depende-de T1,T3]" >&2
   echo "     fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> [--modelos m1,m2]" >&2
   echo "     fora-do-jail kanban bloquear <id> --motivo M   (cota esgotada: pausa o orquestrador)" >&2
-  echo "     fora-do-jail kanban validar <id> --branch B | reabrir <id> --nota N   (QA de um card feito)" >&2
+  echo "     fora-do-jail kanban validar <id> --branch B | reabrir <id> --nota N   (QA de um card feito; validar espera o check no PC)" >&2
   exit 2
 }
 

@@ -10,8 +10,10 @@ use std::path::{Path, PathBuf};
 const MAX_COMMANDS: usize = 50;
 const MAX_COMMAND_LEN: usize = 500;
 const MAX_HOSTS: usize = 50;
+const MAX_CHECK_LEN: usize = 500;
+const DEFAULT_CHECK: &str = "./dev just check";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProjectSettings {
     /// `--docker`: socket do Docker no jail (equivale a root na VM).
@@ -26,6 +28,22 @@ pub struct ProjectSettings {
     /// Só `http`/`https` e sem credenciais (valida em [`validate_preview_url`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview_url: Option<String>,
+    /// Check que o `kanban validar` roda antes de juntar (F11.17). Fica aqui, nunca no
+    /// `.assistente.toml`: o agente edita esse arquivo, e o comando roda fora do jail.
+    pub check: String,
+}
+
+impl Default for ProjectSettings {
+    fn default() -> Self {
+        Self {
+            docker: false,
+            allow_hosts: Vec::new(),
+            full_network: false,
+            allowed_commands: Vec::new(),
+            preview_url: None,
+            check: DEFAULT_CHECK.to_owned(),
+        }
+    }
 }
 
 /// O arquivo inteiro: perfil → projeto → configurações.
@@ -115,6 +133,17 @@ impl ProjectSettings {
         if let Some(url) = &self.preview_url {
             validate_preview_url(url)?;
         }
+        if self.check.trim().is_empty() {
+            return Err("comando de verificação vazio".into());
+        }
+        if self.check.contains(['\n', '\r']) {
+            return Err("comando de verificação com quebra de linha".into());
+        }
+        if self.check.len() > MAX_CHECK_LEN {
+            return Err(format!(
+                "comando de verificação com mais de {MAX_CHECK_LEN} caracteres"
+            ));
+        }
         Ok(())
     }
 }
@@ -171,6 +200,7 @@ mod tests {
             full_network: false,
             allowed_commands: vec!["./dev just check".into()],
             preview_url: None,
+            check: "./dev just check".into(),
         };
         file.set("pessoal", "Meu.App", loose.clone());
         file.set("trabalho", "erp", ProjectSettings::default());
@@ -213,6 +243,40 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(ok.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validate_check_command() {
+        // Vazio
+        let empty = ProjectSettings {
+            check: "".into(),
+            ..Default::default()
+        };
+        assert!(empty.validate().is_err());
+        // Com quebra de linha
+        let multiline = ProjectSettings {
+            check: "echo a\necho b".into(),
+            ..Default::default()
+        };
+        assert!(multiline.validate().is_err());
+        // Muito longo
+        let long = ProjectSettings {
+            check: "x".repeat(MAX_CHECK_LEN + 1),
+            ..Default::default()
+        };
+        assert!(long.validate().is_err());
+        // OK
+        let ok = ProjectSettings {
+            check: "cargo test".into(),
+            ..Default::default()
+        };
+        assert_eq!(ok.validate(), Ok(()));
+        // Default é OK
+        let def = ProjectSettings::default();
+        assert_eq!(def.validate(), Ok(()));
+        // Arquivo de antes da F11.17, sem `check`: o padrão.
+        let old = SettingsFile::parse("[pessoal.game]\ndocker = true\n").unwrap();
+        assert_eq!(old.get("pessoal", "game").check, "./dev just check");
     }
 
     #[test]

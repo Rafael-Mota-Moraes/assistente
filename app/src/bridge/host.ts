@@ -58,7 +58,7 @@ export function hostAutoExec(id: string): Promise<ExecResult | null> {
 /** Lista do PC do projeto (F9.11), guardada no host. `null` fora do app desktop. */
 export function pcAllowedCommands(profile: string, project: string): Promise<string[] | null> {
   if (!isTauri()) return Promise.resolve(null);
-  return invoke<string[]>("pc_allowed_commands", { profile, project });
+  return invoke<string[]>("pc_allowed_commands", { profile, project }).catch(() => null);
 }
 
 export function setPcAllowedCommands(

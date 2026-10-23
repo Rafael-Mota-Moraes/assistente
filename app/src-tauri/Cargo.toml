@@ -24,4 +24,3 @@ tauri = { workspace = true, features = ["unstable"] }
 tauri-plugin-clipboard-manager.workspace = true
 tauri-plugin-http.workspace = true
 tauri-plugin-websocket.workspace = true
-chrono.workspace = true

@@ -94,9 +94,13 @@ fn clean_validated(dir: &Path, board: &Board, released: &[String]) {
         let merged = card.merged.as_ref().map(|m| m.commit.as_str());
         if let Some(merged) = merged
             && git_out(dir, &["merge-base", "--is-ancestor", &branch, merged]).is_ok()
-            && let Err(e) = git_out(dir, &["branch", "-D", &branch])
         {
-            tracing::warn!("branch {branch} ficou: {e}");
+            // Tenta deletar com -d (seguro, só se já mesclado); cai para -D se falhar.
+            if git_out(dir, &["branch", "-d", &branch]).is_err()
+                && let Err(e) = git_out(dir, &["branch", "-D", &branch])
+            {
+                tracing::warn!("branch {branch} ficou: {e}");
+            }
         }
     }
 }
@@ -476,23 +480,19 @@ async fn hold_done_cards(
         agent: AgentKind::Claude,
     };
     let info = super::launch_session_with(state, &spec, Some(&prompt), review).await?;
-    // Na revisão (F11.12) não se começa QA aqui: o Claude faz o trabalho de revisão
-    // dentro da sessão e depois chama os comandos kanban juntar/reabrir/resumo.
-    // Para QA (F11.15/QA geral), start_qa seria chamado após o término da sessão.
     let ids: Vec<&str> = cards.iter().map(|card| card.id.as_str()).collect();
     let what = if review { "revisão" } else { "QA geral" };
     let message = format!("kanban: {what} de {} com {}", ids.join(", "), info.id);
-    // Apenas para QA: segurar os cards enquanto o Claude confere.
-    if !review {
-        let saved = ids
-            .iter()
-            .try_for_each(|id| board.start_qa(id, &info.id).map(|_| ()))
-            .map_err(kanban_error)
-            .and_then(|_| persist(&dir, &board, &message));
-        if let Err(response) = saved {
-            let _ = state.0.tmux.kill(&info.id).await;
-            return Err(response);
-        }
+    // Segura os cards (QA ou revisão): o Claude precisa ser o holder para chamar
+    // validate/reopen (QA) ou juntar/reabrir/resumo (revisão).
+    let saved = ids
+        .iter()
+        .try_for_each(|id| board.start_qa(id, &info.id).map(|_| ()))
+        .map_err(kanban_error)
+        .and_then(|_| persist(&dir, &board, &message));
+    if let Err(response) = saved {
+        let _ = state.0.tmux.kill(&info.id).await;
+        return Err(response);
     }
     tracing::info!("Claude {} na {what} de {}", info.id, ids.join(", "));
     Ok(info)

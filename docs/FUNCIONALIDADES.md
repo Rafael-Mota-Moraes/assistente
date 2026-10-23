@@ -302,7 +302,7 @@ hubd); F11.2 antes de F11.4.
   preenchida pela próxima, e o card que falhou fica no backlog. Como testar:
   `api::kanban::tests::orchestrator_fills_up_to_the_limit…`, `…orchestrator_error_shows_on_the_board`,
   `kanban::tests::auto_skips…` e `KanbanBoard.test.tsx`. Na VM real, junto com F11.8.
-- [ ] **F11.12 Revisar e juntar o que os trabalhadores fizeram.** Hoje um card "feito" só tem commit
+- [x] **F11.12 Revisar e juntar o que os trabalhadores fizeram.** Hoje um card "feito" só tem commit
   na branch `agente/<id>`: nada chega à `main` sem uma conversa à mão (revisar cada branch, juntar,
   resolver conflito, rodar o check, devolver o que ficou ruim). Botão "Revisar" no quadro abre um
   Claude (como o "Popular pelo backlog", F11.9) com um prompt de revisão; o orquestrador (F11.11)

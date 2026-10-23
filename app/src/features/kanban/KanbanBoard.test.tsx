@@ -65,7 +65,7 @@ describe("KanbanBoard", () => {
     vi.restoreAllMocks();
   });
 
-  it("mostra as quatro colunas; só o card manual do backlog tem Mandar", async () => {
+  it("mostra as cinco colunas; só o card manual do backlog tem Mandar", async () => {
     connect({
       next: 3,
       cards: [
@@ -73,6 +73,7 @@ describe("KanbanBoard", () => {
         card("T2", { kind: "agente" }),
         card("T3", { column: "fazendo", holder: claude.id }),
         card("T4", { column: "feito", commit: "abc1234def" }),
+        card("T5", { column: "validando" }),
       ],
     });
     const backlog = await column("Backlog");
@@ -83,6 +84,12 @@ describe("KanbanBoard", () => {
     expect(within(fazendo).getByRole("button", { name: /Reiniciar/ })).toBeInTheDocument();
     const feito = await column("Feito");
     expect(within(feito).getByText("abc1234")).toBeInTheDocument();
+    // O check do QA rodando no PC (F11.17): sem QA nem arrasto.
+    const validando = await column("Validando");
+    const checking = within(validando).getByRole("article", { name: /^T5/ });
+    expect(within(checking).getByRole("img", { name: "Check rodando no PC" })).toBeInTheDocument();
+    expect(within(checking).queryByRole("button", { name: /QA/ })).not.toBeInTheDocument();
+    expect(checking).toHaveAttribute("draggable", "false");
     expect(await column("Validado")).toBeInTheDocument();
   });
 

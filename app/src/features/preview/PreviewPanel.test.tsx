@@ -60,6 +60,7 @@ function fakeHub(previewUrl: string | null) {
         full_network: false,
         allowed_commands: [],
         preview_url: previewUrl,
+        check: "./dev just check",
       },
       docker_from_project_file: false,
     }),

@@ -9,9 +9,9 @@ Cobre o quadro por projeto (F11). Funcionalidades F11.1–F11.16. O que e por qu
 comita **só ele** a cada escrita (`git commit -- .assistente/kanban.json`): o que você já tinha no
 index fica como estava, e a árvore não amanhece suja (o modo dormir exige árvore limpa, F6.3).
 
-Colunas: `backlog` · `fazendo` · `feito` · `validado` (F11.15). Campos de um card: `id` (`T1`, nunca
+Colunas: `backlog` · `fazendo` · `feito` · `validando` (F11.17) · `validado` (F11.15). Campos de um card: `id` (`T1`, nunca
 reaproveitado), `title`, `description`, `priority` (`alta` · `normal` · `baixa`), `kind`, `column`,
-`holder` (a sessão que segura: o trabalhador em "fazendo", o QA em "feito"/"validado"), `commit` (o
+`holder` (a sessão que segura: o trabalhador em "fazendo", o QA em "feito"/"validando"/"validado"), `commit` (o
 que fechou a tarefa, em "feito"), `merged` `{branch, commit}` (onde o QA juntou, em "validado"), `failures` (vezes que voltou do
 "fazendo" sem concluir: `release` ou sessão morta; omitido quando zero), `blocked` (a linha de erro
 de quando parou por cota, F11.14; some quando a tarefa começa de novo), `depends_on` (ids `T<n>`
@@ -165,20 +165,36 @@ Claude"), com `worker::render_qa_prompt`. A sessão segura o card (`Board::start
 O Claude:
 
 1. Pergunta a você onde juntar: `main` ou outra branch. Espera a resposta.
-2. Lê o diff da branch `agente/<id>` contra a escolhida, confere com o pedido do card e roda as
-   verificações do projeto. Não implementa o que falta.
+2. Lê o diff da branch `agente/<id>` contra a escolhida e confere com o pedido do card. Não
+   implementa o que falta. O check do projeto quem roda é o hubd, no passo 4.
 3. Não atende: `fora-do-jail kanban reabrir <id> --nota "…"` (`POST /v1/kanban/reopen`). O card volta
    ao backlog com "Revisão (AAAA-MM-DD): nota" no fim da descrição, `failures` zerado e sem
    `commit`: o automático puxa de novo e o próximo trabalhador continua da mesma branch, que o
    worktree mantém.
 4. Atende: `fora-do-jail kanban validar <id> --branch B` (`POST /v1/kanban/validate`). O hubd junta
-   (`merge_task`), só para a frente e sem push: a branch já contém a tarefa = nada muda; é
-   ancestral = fast-forward; senão, `merge --no-ff` numa worktree descartável, e conflito = 409 sem
-   mexer em nada (o QA roda `git merge B` no worktree, resolve, commita e valida de novo). Branch
-   que não existe nasce na ponta da tarefa. Quem tem `B` em checkout (a pasta do projeto, em geral
-   a `main`) anda com `merge --ff-only`, que recusa se encostar em mudança sua; senão a ref troca
-   conferindo o valor antigo (como a F8.8). Árvore suja no worktree = 409: o que não está commitado
-   não entraria. O card vai para "validado" com `merged`.
+   só para a frente e sem push: a branch já contém a tarefa = só muda de coluna, sem check. Senão o
+   card vai para "validando" (commit do quadro) e `prepare_merge` monta, numa worktree descartável
+   (`.assistente/worktrees/qa-juntar-<id>-<ts>`, dentro do projeto e fora do git), o commit que `B`
+   vai receber: a ponta da tarefa (fast-forward, ou `B` que ainda não existe) ou um `merge --no-ff`.
+   Conflito = 409 sem mexer em nada (o QA roda `git merge B` no worktree, resolve, commita e valida
+   de novo). Árvore suja no worktree = 409: o que não está commitado não entraria.
+5. **Check (F11.17).** Nessa worktree o hubd abre um pedido `host` (F9.9) com o `check` da
+   engrenagem do projeto (`ProjectSettings.check` em `~/.assistente/projetos.toml`, padrão
+   `./dev just check`; **nunca** o `.assistente.toml`, que o agente edita). Você aprova no app como
+   qualquer pedido para o PC (sem "sempre permitir"), o app roda no PC pelo mesmo caminho
+   (virtiofs) e devolve o resultado; o `validar` espera (até 30 min de check, mais o prazo de
+   aprovação; o cliente espera 45). A worktree descartável sai em qualquer caso.
+   - Verde (código 0 no tempo): `land` anda `B` pela regra da F8.8. Quem tem `B` em checkout (a
+     pasta do projeto, em geral a `main`) anda com `merge --ff-only`, que recusa se encostar em
+     mudança sua; senão a ref troca conferindo o valor antigo. Se `B` andou durante o check só com
+     commits do quadro (o kanban commita no checkout), a tarefa é juntada de novo por cima: o código
+     é o que o check viu. Outra mudança em `B` = 409, nada muda. O card vai para "validado" com
+     `merged`.
+   - Vermelho, negado, expirado ou a sessão do QA acabou: `B` não anda, o card volta a "feito" com
+     o mesmo QA e o 409 traz o motivo e o fim da saída (40 linhas). O QA reabre com o que quebrou.
+
+   "Validando" não se arrasta (o hubd recusa mover para lá ou de lá). Se a sessão do QA acaba no
+   meio, `release_dead` devolve o card a "feito". Depois da F1.6, o mesmo check pode rodar na VM.
 
 Só quem segura valida ou reabre. Quando a sessão do QA acaba, o card perde o `holder` sem `failures`
 (fora de "fazendo", `release_dead` só solta) e, se está validado, o worktree sai (`git worktree

@@ -394,7 +394,7 @@ hubd); F11.2 antes de F11.4.
   `api::kanban::tests::qa_all_holds_every_free_done_card_in_one_session`,
   `worker::tests::qa_all_prompt…` e `KanbanBoard.test.tsx` (botão com a contagem, sem botão quando
   nada está livre). Na VM real, junto com a F11.8.
-- [ ] **F11.17 `validar` só com o check verde.** Hoje o `kanban validar` junta a branch confiando
+- [x] **F11.17 `validar` só com o check verde.** Hoje o `kanban validar` junta a branch confiando
   na palavra do QA de que o check passou. Agora quem roda o check é o hubd, no commit que a
   `target` vai receber: na worktree descartável do merge (`.assistente/qa-juntar-*`, já dentro da
   pasta do projeto) ou, no fast-forward, numa worktree do commit da tarefa. Enquanto a F1.6 não

@@ -12,6 +12,7 @@ const closed = (): ProjectSettingsView => ({
     full_network: false,
     allowed_commands: [],
     preview_url: null,
+    check: "./dev just check",
   },
   docker_from_project_file: false,
 });
@@ -56,6 +57,7 @@ describe("ProjectSettingsDialog", () => {
       full_network: false,
       allowed_commands: ["cargo build"],
       preview_url: null,
+      check: "./dev just check",
     });
     expect(useAppStore.getState().toast).toMatch(/próximas sessões/);
   });
@@ -90,6 +92,32 @@ describe("ProjectSettingsDialog", () => {
       "pessoal",
       "game",
       expect.objectContaining({ preview_url: null }),
+    );
+  });
+
+  it("guarda o check do QA", async () => {
+    const hub = open(closed());
+    const field = await screen.findByLabelText("Check do QA");
+    expect(field).toHaveValue("./dev just check");
+    fireEvent.change(field, { target: { value: "cargo test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await vi.waitFor(() => expect(useAppStore.getState().projectSettings).toBeNull());
+    expect(hub.saveProjectSettings).toHaveBeenCalledWith(
+      "pessoal",
+      "game",
+      expect.objectContaining({ check: "cargo test" }),
+    );
+  });
+
+  it("check do QA vazio volta ao padrão", async () => {
+    const hub = open(closed());
+    fireEvent.change(await screen.findByLabelText("Check do QA"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await vi.waitFor(() => expect(useAppStore.getState().projectSettings).toBeNull());
+    expect(hub.saveProjectSettings).toHaveBeenCalledWith(
+      "pessoal",
+      "game",
+      expect.objectContaining({ check: "./dev just check" }),
     );
   });
 

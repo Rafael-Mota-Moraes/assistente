@@ -53,6 +53,8 @@ export function ProjectSettingsDialog() {
         ...settings,
         // Campo vazio = sem preview (o hubd guarda `null`).
         preview_url: settings.preview_url?.trim() || null,
+        // Campo vazio = o padrão (o hubd recusa check vazio).
+        check: settings.check.trim() || "./dev just check",
       });
       useAppStore.setState({
         projectSettings: null,
@@ -173,6 +175,22 @@ export function ProjectSettingsDialog() {
                 IP dela (o hubd responde no mesmo IP) e escute o dev server em 0.0.0.0. Só{" "}
                 <code className="font-mono">http</code>/<code className="font-mono">https</code> e
                 sem senha. Fica na VM, fora do repo.
+              </span>
+            </label>
+
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-slate-200">Check do QA</span>
+              <input
+                aria-label="Check do QA"
+                value={settings.check}
+                onChange={(event) => patch({ check: event.target.value })}
+                placeholder="./dev just check"
+                className="rounded-lg border border-line bg-black/30 px-2 py-1 font-mono text-slate-200 placeholder:text-slate-600"
+              />
+              <span className="text-xs text-slate-400">
+                O <code className="font-mono">kanban validar</code> só junta a tarefa com este
+                comando verde. Roda <strong>no PC</strong>, no commit que a branch vai receber,
+                depois que você aprova o pedido. Fica aqui, fora do repo: o agente não troca.
               </span>
             </label>
 

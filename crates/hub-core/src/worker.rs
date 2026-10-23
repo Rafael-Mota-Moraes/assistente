@@ -298,12 +298,13 @@ pub fn render_qa_prompt(card: &Card, branch: &str, instructions: &str) -> String
             Espere a resposta. Chame a escolhida de ALVO.\n\
          2. Veja o que foi feito: `git log --oneline ALVO..HEAD` e `git diff ALVO...HEAD`. Confira\n   \
             item por item com o pedido (e o \"Pronto quando\", se houver). Rode as verificações do\n   \
-            projeto (ex.: `./dev just check`).\n\
+            projeto no PC: `\"$ASSISTENTE_FORA_DO_JAIL\" --pc --timeout 1500 './dev just check'`.\n\
          3. Não atende (falta algo, quebra as verificações, faz outra coisa): não junte. Rode\n   \
             `\"$ASSISTENTE_FORA_DO_JAIL\" kanban reabrir {id} --nota \"<o que já existe e o que falta>\"`.\n   \
             O card volta ao backlog com a nota na descrição, e o próximo trabalhador continua\n   \
             desta branch. Não implemente o que falta: isso é dele.\n\
-         4. Atende: rode `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar {id} --branch ALVO`. O hubd\n   \
+         4. Atende: **sem check verde, não valida**. Rode\n   \
+            `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar {id} --branch ALVO`. O hubd\n   \
             junta `{branch}` na ALVO (merge local, nunca push) e move o card para \"validado\". Se\n   \
             ele responder conflito, rode `git merge ALVO` aqui, resolva, rode as verificações de\n   \
             novo, commite e chame `validar` outra vez.\n\
@@ -362,10 +363,11 @@ pub fn render_qa_all_prompt(cards: &[Card], instructions: &str) -> String {
          2. Uma tarefa por vez, na ordem da lista (a que depende de outra vem depois dela):\n   \
             - Veja o que foi feito: `git log --oneline ALVO..agente/<id>` e\n     \
               `git diff ALVO...agente/<id>`. Confira com o pedido (e o \"Pronto quando\", se houver).\n   \
-            - Rode as verificações do projeto no worktree dela (ex.: `./dev just check`).\n   \
+            - Rode as verificações do projeto no PC: `\"$ASSISTENTE_FORA_DO_JAIL\" --pc --timeout 1500 './dev just check'`.\n   \
             - Não atende: `\"$ASSISTENTE_FORA_DO_JAIL\" kanban reabrir <id> --nota \"<o que já existe\n     \
               e o que falta>\"`. Volta ao backlog com a nota; não implemente o que falta.\n   \
-            - Atende: `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar <id> --branch ALVO`. O hubd junta\n     \
+            - Atende: **sem check verde, não valida**. Rode\n     \
+              `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar <id> --branch ALVO`. O hubd junta\n     \
               (merge local, nunca push) e o card vai para \"validado\". Se ele responder conflito\n     \
               (a ALVO andou com as anteriores), no worktree da tarefa rode `git merge ALVO`,\n     \
               resolva, rode as verificações, commite e chame `validar` de novo.\n\
@@ -398,7 +400,8 @@ fn prompt(card: &Card, branch: &str, instructions: &str, marking: &str) -> Strin
          - Você está num worktree próprio (branch `{branch}`), separado do que o usuário edita.\n\
          - Trabalhe só aqui. Faça commits pequenos, com mensagem clara.\n\
          - Não faça push, não troque de branch e não mexa em outros branches.\n\
-         - Antes de terminar, rode as verificações do projeto (ex.: `./dev just check`).\n\
+         - **Não rode `./dev`** (o check fica para o QA). Ao terminar, na nota do `done` escreva\n   \
+           que a verificação do projeto (`./dev just check`) será feita pelo QA no PC.\n\
          - Ao terminar, deixe a árvore limpa: tudo commitado. Se não der para concluir, deixe\n  \
            o que avançou commitado e explique no fim da resposta o que falta.\n\
          {marking}{extra}",
@@ -555,6 +558,9 @@ mod tests {
         assert!(text.contains("Pedir e-mail e senha."));
         assert!(text.contains("branch `agente/T7`"));
         assert!(text.contains("Não faça push"));
+        // Trabalhador não roda ./dev; o check fica para o QA no PC
+        assert!(text.contains("Não rode `./dev`"));
+        assert!(text.contains("check fica para o QA"));
         assert!(!text.contains("Instruções do projeto"));
         let empty = render_prompt(&card(""), "agente/T7", "");
         assert!(empty.contains("sem descrição"));
@@ -591,6 +597,9 @@ mod tests {
         assert!(text.contains("commit `abc1234`"));
         assert!(text.contains("kanban reabrir T7 --nota"));
         assert!(text.contains("kanban validar T7 --branch ALVO"));
+        // QA roda o check no PC com --pc
+        assert!(text.contains("--pc --timeout 1500 './dev just check'"));
+        assert!(text.contains("sem check verde, não valida"));
         assert!(!text.contains("Instruções do projeto"));
         let extra = render_qa_prompt(&card("x"), "agente/T7", "Use pnpm.");
         assert!(
@@ -614,6 +623,9 @@ mod tests {
         assert!(text.contains("sem descrição"));
         assert!(text.contains("Uma resposta vale para todas"));
         assert!(text.contains("kanban validar <id> --branch ALVO"));
+        // QA geral roda o check no PC com --pc
+        assert!(text.contains("--pc --timeout 1500 './dev just check'"));
+        assert!(text.contains("sem check verde, não valida"));
         assert!(!text.contains("Instruções do projeto"));
     }
 

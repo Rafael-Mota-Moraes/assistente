@@ -36,7 +36,6 @@
       "priority": "normal",
       "kind": "agente",
       "column": "backlog",
-      "failures": 1,
       "created_at": 1792614072
     },
     {

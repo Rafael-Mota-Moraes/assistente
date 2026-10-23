@@ -206,7 +206,8 @@
       "description": "Hoje o `kanban validar` junta a branch confiando na palavra do QA de que o check passou. Agora quem roda o check é o hubd, no commit que a `target` vai receber: na worktree descartável do merge (`.assistente/qa-juntar-*`, já dentro da pasta do projeto) ou, no fast-forward, numa worktree do commit da tarefa. Enquanto a F1.6 não sai, o check roda no PC: o hubd abre um pedido `host` (F9.9) com o comando e essa pasta, e você aprova no app como qualquer outro, sem \"sempre permitir\". O card fica \"validando\" até o resultado. Verde: a `target` anda (regra da F8.8) e o card vai para Validado. Vermelho, negado ou expirado: nada muda, e o fim da saída volta ao QA na resposta do `validar` (o `fora-do-jail kanban validar` espera, com timeout longo). O comando vem da engrenagem do projeto (`check` novo em `ProjectSettings`, `~/.assistente/projetos.toml`, padrão `./dev just check`), nunca do `.assistente.toml` (o agente edita esse arquivo, e o comando roda fora do jail). Tipos novos em `api.rs` e `app/src/bridge/types.ts` juntos. Depois da F1.6, o mesmo check pode rodar na VM.\nPronto quando: `validar` com check vermelho não muda a `target` e devolve a saída; com verde, junta como hoje; um `check` no `.assistente.toml` é ignorado.\nComo testar: `api::kanban::tests` com repo git real e o app fingido (resultado do pedido `host` via `POST /api/exec/{id}/result`: código 0 junta, 1 não muda nada, negado = nada muda), `ProjectSettingsDialog` com o campo e `KanbanBoard.test.tsx` (estado \"validando\").",
       "priority": "alta",
       "kind": "agente",
-      "column": "backlog",
+      "column": "fazendo",
+      "holder": "pessoal--assistente--opencode-1",
       "created_at": 1792754930
     },
     {

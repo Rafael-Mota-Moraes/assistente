@@ -190,6 +190,9 @@ export type KanbanCard = {
   failures?: number;
   /** Parou sem culpa da tarefa (cota esgotada, F11.14): a linha de erro do provedor. */
   blocked?: string;
+  /** Último erro de um trabalhador recolhido pelo orquestrador (F14.5): status de saída e
+   * últimas ~50 linhas da saída (cortadas em 4 KiB). Limpo ao "Tentar de novo" ou "Mandar". */
+  last_error?: string;
   /** Onde o QA juntou a tarefa (`validado`, F11.15). */
   merged?: KanbanMerged;
   /** IDs das tarefas das quais esta depende (F11.13). */

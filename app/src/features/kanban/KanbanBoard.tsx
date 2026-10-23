@@ -102,6 +102,11 @@ function waitingOn(card: KanbanCard, cards: KanbanCard[]): string[] {
   );
 }
 
+/** Caminho do log do trabalhador no perfil (F14.5). */
+function workerLogPath(sessionId: string, profile: string): string {
+  return `~/.assistente/perfis/${profile}/trabalhadores/${sessionId}.log`;
+}
+
 /** Quadro do projeto ativo (F11.3): backlog · fazendo · feito · validado, no lugar da área de
  * sessões. */
 export function KanbanBoard() {
@@ -538,6 +543,21 @@ export function KanbanBoard() {
                           Parou por cota: <span className="font-mono">{card.blocked}</span>
                         </p>
                       )}
+                      {column.id === "backlog" && card.last_error && (
+                        <details className="group">
+                          <summary className="text-xs text-rose-300 cursor-pointer select-none">
+                            Último erro
+                          </summary>
+                          <pre className="mt-1 text-[10px] text-rose-200 whitespace-pre-wrap font-mono bg-rose-950/30 rounded p-2 max-h-40 overflow-auto">
+                            {card.last_error}
+                          </pre>
+                          {card.holder && (
+                            <p className="text-[10px] text-slate-400 mt-1">
+                              Log completo: <span className="font-mono">{workerLogPath(card.holder, activeProfile)}</span>
+                            </p>
+                          )}
+                        </details>
+                      )}
                       {card.merged ? (
                         <p className="text-xs text-emerald-300">
                           na <span className="font-mono">{card.merged.branch}</span> ·{" "}
@@ -575,10 +595,13 @@ export function KanbanBoard() {
                               type="button"
                               onClick={() =>
                                 void act(() =>
-                                  client.updateCard(profile, project, card.id, { failures: 0 }),
+                                  client.updateCard(profile, project, card.id, {
+                                    failures: 0,
+                                    last_error: undefined,
+                                  }),
                                 )
                               }
-                              title="Zera as voltas: o orquestrador automático pode puxar de novo"
+                              title="Zera as voltas e limpa o último erro: o orquestrador automático pode puxar de novo"
                               className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
                             >
                               <RotateCcw className="size-3.5" /> Tentar de novo

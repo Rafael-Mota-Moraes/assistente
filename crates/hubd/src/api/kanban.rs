@@ -16,10 +16,11 @@
 
 use super::*;
 use crate::kanban as store;
+use crate::sessions::PaneState;
 use axum::extract::Path as Params;
 use hub_core::kanban::{Board, Card, Column, Draft, KanbanError, Merged};
 use hub_core::worker::{self, WorkerRun};
-use hub_core::{profile_data_dir, workers_config_at};
+use hub_core::{AgentKind, profile_data_dir, workers_config_at};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1266,6 +1267,97 @@ async fn orchestrate_project(state: &AppState, profile: &str, project: &str) -> 
     }
 }
 
+/// Recolhe trabalhadores mortos do projeto (F14.5): para cada sessão de trabalhador (opencode)
+/// que está morta, guarda no card o status de saída e as últimas ~50 linhas da saída (cortadas
+/// em 4 KiB) no campo `last_error`, incrementa `failures` e encerra a sessão.
+/// Sessões do Claude ou OpenCode interativo nunca são recolhidas.
+async fn collect_failed_workers(
+    state: &AppState,
+    profile: &str,
+    project: &str,
+    dir: &Path,
+) -> Result<(), String> {
+    // Lista todas as sessões do projeto (incluindo mortas)
+    let all_sessions = state.0.tmux.list().await.map_err(|e| e.to_string())?;
+    let project_sessions: Vec<_> = all_sessions
+        .into_iter()
+        .filter(|s| s.profile == profile && s.project == project && s.agent == AgentKind::Opencode)
+        .collect();
+
+    if project_sessions.is_empty() {
+        return Ok(());
+    }
+
+    let mut board = load(state, dir).await?;
+
+    for session in project_sessions {
+        if !session.dead {
+            continue; // Só recolhe sessões mortas
+        }
+
+        // Verifica se esta sessão segura algum card em "fazendo"
+        let card_id = board
+            .cards
+            .iter()
+            .find(|c| c.column == Column::Fazendo && c.holder.as_deref() == Some(session.id.as_str()))
+            .map(|c| c.id.clone());
+
+        let Some(card_id) = card_id else {
+            // Sessão morta mas não segura nenhuma tarefa: só encerra
+            let _ = state.0.tmux.kill(&session.id).await;
+            continue;
+        }
+
+        // Captura o estado do painel (status de saída)
+        let pane_state = state.0.tmux.pane_state(&session.id).await;
+        let exit_status = match pane_state {
+            PaneState::Dead(Some(code)) => format!("exit {}", code),
+            PaneState::Dead(None) => "sinal (sem código de saída)".to_owned(),
+            PaneState::Alive => continue, // Não deveria acontecer, mas por segurança
+        };
+
+        // Captura as últimas ~50 linhas da saída (cortadas em 4 KiB)
+        let output = match state.0.tmux.capture_pane(&session.id, -50).await {
+            Ok(text) => {
+                // Limita a 4 KiB
+                const MAX_BYTES: usize = 4096;
+                let bytes = text.as_bytes();
+                if bytes.len() > MAX_BYTES {
+                    let truncated = String::from_utf8_lossy(&bytes[..MAX_BYTES]);
+                    format!("{}… (cortado em 4 KiB)", truncated)
+                } else {
+                    text
+                }
+            }
+            Err(e) => format!("erro ao capturar saída: {e}"),
+        };
+
+        // Monta a mensagem de erro
+        let error_msg = format!("{exit_status}\n\n{output}");
+
+        // Atualiza o card
+        if let Some(card) = board.get_mut(&card_id) {
+            card.last_error = Some(error_msg);
+            card.failures += 1;
+            card.column = Column::Backlog;
+            card.holder = None;
+        }
+
+        // Encerra a sessão
+        let _ = state.0.tmux.kill(&session.id).await;
+
+        tracing::info!("orquestrador: recolheu trabalhador {} da tarefa {}", session.id, card_id);
+    }
+
+    // Salva o quadro se houve mudanças
+    let has_changes = board.cards.iter().any(|c| c.last_error.is_some());
+    if has_changes {
+        store::save(dir, &board, "kanban: recolhe trabalhadores mortos").map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 /// Abre trabalhadores para as próximas tarefas `agente` enquanto houver vaga em "fazendo".
 /// Devolve as tarefas que começaram. Tarefa que já voltou do "fazendo" fica (`next_auto`).
 async fn orchestrate(
@@ -1278,6 +1370,8 @@ async fn orchestrate(
         Ok(dir) => dir,
         Err(response) => return Err(reply_text(response).await),
     };
+    // Recolhe trabalhadores mortos antes de abrir novos (F14.5)
+    collect_failed_workers(state, profile, project, &dir).await?;
     let mut started = Vec::new();
     // Cada volta abre no máximo o limite; trabalhador que morre na hora volta com `failures`
     // e não é repuxado, então o laço sempre termina.

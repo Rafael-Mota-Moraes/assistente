@@ -87,6 +87,10 @@ pub struct Card {
     /// a tarefa começa de novo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked: Option<String>,
+    /// Último erro de um trabalhador recolhido pelo orquestrador (F14.5): status de saída e
+    /// últimas ~50 linhas da saída (cortadas em 4 KiB). Limpo ao "Tentar de novo" ou "Mandar".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
     /// Onde o QA juntou a tarefa (`validado`, F11.15).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merged: Option<Merged>,
@@ -314,6 +318,7 @@ impl Board {
         card.column = Column::Fazendo;
         card.holder = Some(holder.to_owned());
         card.blocked = None;
+        card.last_error = None;
         Ok(card)
     }
 

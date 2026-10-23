@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hostExec } from "../../bridge/host";
+import { hostAutoExec, hostExec } from "../../bridge/host";
 import type { HubClient } from "../../bridge/hub";
 import type { ExecResult, ExecView, Health } from "../../bridge/types";
 import { useAppStore } from "../../store";
@@ -8,7 +8,17 @@ import { ExecApprovals } from "./ExecApprovals";
 
 vi.mock("../../bridge/host", () => ({
   hostExec: vi.fn(),
+  hostAutoExec: vi.fn(),
 }));
+
+const ok = (stdout = ""): ExecResult => ({
+  exit_code: 0,
+  stdout,
+  stderr: "",
+  truncated: false,
+  timed_out: false,
+  duration_ms: 5,
+});
 
 const request = (id: string, extra: Partial<ExecView> = {}): ExecView => ({
   id,
@@ -26,7 +36,12 @@ const request = (id: string, extra: Partial<ExecView> = {}): ExecView => ({
   ...extra,
 });
 
-function connect(requests: ExecView[]) {
+function connect(requests: ExecView[], { pcList = false } = {}) {
+  // Fora da lista do PC (F9.11), por padrão: o card espera o clique.
+  vi.mocked(hostAutoExec).mockImplementation(async (id) => {
+    const request = requests.find((r) => r.id === id);
+    return pcList && request ? ok(`auto ${request.command}`) : null;
+  });
   const hub = {
     execRequests: vi.fn().mockResolvedValue(requests),
     approveExec: vi.fn().mockResolvedValue(undefined),
@@ -99,7 +114,9 @@ describe("ExecApprovals", () => {
     const card = await screen.findByRole("region", { name: /Pedido de game · Claude 1/ });
     expect(within(card).getByText(/no PC/)).toBeInTheDocument();
     expect(within(card).queryByRole("button", { name: /sempre permitir/ })).not.toBeInTheDocument();
-    fireEvent.click(within(card).getByRole("button", { name: "Aprovar" }));
+    const approve = within(card).getByRole("button", { name: "Aprovar" });
+    await vi.waitFor(() => expect(approve).toBeEnabled());
+    fireEvent.click(approve);
     // O hubd só marca como rodando; quem executa no PC é o app, e o resultado volta.
     await vi.waitFor(() => expect(hostExec).toHaveBeenCalledWith("h1"));
     await vi.waitFor(() =>
@@ -120,6 +137,7 @@ describe("ExecApprovals", () => {
     connect([request("h2", { target: "host", command: "git push" })]);
     const card = await screen.findByRole("region", { name: /Pedido de game · Claude 1/ });
     const approve = within(card).getByRole("button", { name: "Aprovar" });
+    await vi.waitFor(() => expect(approve).toBeEnabled());
     fireEvent.click(approve);
     await vi.waitFor(() => expect(hostExec).toHaveBeenCalledTimes(1));
     fireEvent.click(approve);
@@ -132,6 +150,72 @@ describe("ExecApprovals", () => {
       timed_out: false,
       duration_ms: 1,
     });
+  });
+
+  it("card do PC (F9.11): em vermelho, 'vai rodar no seu PC', comando e pasta por inteiro", async () => {
+    const cwd = "/home/pcdorafa/Documentos/pessoal/projetos/um-projeto-com-nome-bem-comprido/sub";
+    const command = "git push origin agente/T3 && git push --tags origin";
+    connect([request("h3", { target: "host", command, cwd })]);
+    const card = await screen.findByRole("region", { name: /Pedido de game · Claude 1/ });
+    expect(card.className).toMatch(/border-red-/);
+    const title = within(card).getByText("Vai rodar no seu PC");
+    expect(title.className).toMatch(/text-red-100/);
+    expect(within(card).queryByText(/text-red-100/)).not.toBeInTheDocument();
+    const shown = within(card).getByText(command);
+    expect(shown.className).not.toMatch(/max-h/);
+    const folder = within(card).getByText(new RegExp(`em ${cwd}`));
+    expect(folder.className).not.toMatch(/truncate/);
+    expect(folder.className).toMatch(/break-all/);
+  });
+
+  it("pedido da VM continua âmbar e não passa pela lista do PC", async () => {
+    connect([request("v1")]);
+    const card = await screen.findByRole("region", { name: /Pedido de game · Claude 1/ });
+    expect(card.className).toMatch(/border-amber-/);
+    expect(within(card).getByText("Rodar fora do jail?")).toBeInTheDocument();
+    expect(hostAutoExec).not.toHaveBeenCalled();
+  });
+
+  it("lista do PC (F9.11): comando na lista roda sem clique, uma vez só", async () => {
+    vi.mocked(hostAutoExec).mockClear();
+    const hub = connect([request("h4", { target: "host", command: "git push" })], {
+      pcList: true,
+    });
+    await vi.waitFor(() =>
+      expect(hub.execResult).toHaveBeenCalledWith(
+        "h4",
+        expect.objectContaining({ stdout: "auto git push" }),
+      ),
+    );
+    // Quem confere a lista e aprova é o app no host; a UI não aprova nem roda à parte.
+    expect(hostAutoExec).toHaveBeenCalledTimes(1);
+    expect(hub.approveExec).not.toHaveBeenCalled();
+    expect(hostExec).not.toHaveBeenCalled();
+  });
+
+  it("lista do PC (F9.11): fora da lista, nada roda até o clique", async () => {
+    vi.mocked(hostExec).mockClear();
+    vi.mocked(hostExec).mockResolvedValue(ok("push ok\n"));
+    const hub = connect([request("h5", { target: "host", command: "git push --force" })]);
+    const card = await screen.findByRole("region", { name: /Pedido de game · Claude 1/ });
+    await vi.waitFor(() => expect(hostAutoExec).toHaveBeenCalledWith("h5"));
+    const approve = within(card).getByRole("button", { name: "Aprovar" });
+    await vi.waitFor(() => expect(approve).toBeEnabled());
+    expect(hub.approveExec).not.toHaveBeenCalled();
+    expect(hostExec).not.toHaveBeenCalled();
+    expect(hub.execResult).not.toHaveBeenCalled();
+    fireEvent.click(approve);
+    await vi.waitFor(() => expect(hostExec).toHaveBeenCalledWith("h5"));
+    expect(hub.approveExec).toHaveBeenCalledWith("h5");
+  });
+
+  it("lista do PC: falha depois de aprovar volta ao hubd como erro e avisa", async () => {
+    const hub = connect([request("h6", { target: "host", command: "git push" })]);
+    vi.mocked(hostAutoExec).mockRejectedValue(new Error("o comando mudou"));
+    await vi.waitFor(() =>
+      expect(hub.execResult).toHaveBeenCalledWith("h6", { error: "o comando mudou" }),
+    );
+    await vi.waitFor(() => expect(useAppStore.getState().toast).toBe("o comando mudou"));
   });
 
   it("recentes ficam recolhidos e mostram o resultado", async () => {

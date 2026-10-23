@@ -184,7 +184,7 @@ nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" 
   mesmo pedido aprovado não rodar o comando de novo (hoje só o `busy` do `ExecApprovals` segura).
 - [ ] **F9.12 Validação no PC real** *(humano)*. Do jail, `fora-do-jail --pc 'git push'` empurra com a chave do PC após aprovar; negar devolve 126; com o app fechado o pedido expira.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
-- [ ] **F9.13 Verificação do projeto vai para o PC.** Enquanto a F1.6 não sai, o `./dev` não roda
+- [x] **F9.13 Verificação do projeto vai para o PC.** Enquanto a F1.6 não sai, o `./dev` não roda
   na VM: nem no jail, nem fora dele (`Bad address` do virtiofs), e com Docker ligado ou não. Um
   agente que precisava do check pediu `sudo systemctl start docker` e parou. As instruções passam a
   dizer o caminho certo. No bloco "Fora do jail" do `vm/configurar-agentes.sh`: "`./dev` (e o check
@@ -196,6 +196,7 @@ nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" 
   Pronto quando: as três instruções trazem o `--pc` e a regra "sem check verde, não valida". Como
   testar: `worker::tests` (os prompts de QA têm `--pc` e `./dev just check`; o do trabalhador não
   pede `./dev`) e `bash vm/configurar-agentes.sh` num home falso, se o teste dele existir.
+  Feito: `worker::tests` cobre os três prompts (QA, QA geral, trabalhador); `vm/configurar-agentes.sh` ganhou a seção "Verificação do projeto" com `--pc` e a regra "sem check verde, não diga que está pronto"; `./dev just check` passa.
 
 ## F10 — Editor com diff
 

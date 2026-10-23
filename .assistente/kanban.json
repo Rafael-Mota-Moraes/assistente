@@ -213,7 +213,7 @@
       "title": "F14.5 O orquestrador recolhe o trabalhador que falhou",
       "description": "Depende da F14.4 (T14, já na main), que deixa a sessão do trabalhador que falha aberta e morta. Com o orquestrador ligado (F11.11), cada volta (`orchestrate` em `api/kanban.rs`) também procura as sessões mortas dos trabalhadores do projeto. Para cada uma, o orquestrador guarda no card que ela segurava (ou que acabou de soltar) o status de saída e o fim da saída (`capture-pane`, últimas ~50 linhas, cortadas em 4 KiB) num campo novo, `last_error`, e encerra a sessão. A aba some e o erro fica no card, que volta ao backlog com `failures` + 1 e não é repuxado. O card mostra o erro (\"Último erro\"), com o caminho do log completo do trabalhador (`worker::files(...).log`). \"Tentar de novo\" e \"Mandar\" limpam o `last_error`. Trabalhador aberto à mão (\"Mandar\") com o orquestrador desligado continua como na F14.4: a aba morta fica até você encerrar. Sessão do Claude ou do OpenCode interativo nunca é recolhida. Tipos novos em `api.rs` e `app/src/bridge/types.ts` juntos.\nPronto quando: com o orquestrador ligado, um trabalhador que sai com erro não deixa aba, e o card dele no backlog mostra o status e as últimas linhas da saída.\nComo testar: rota com tmux real (trabalhador falso que imprime algo e sai 1; depois de uma volta do orquestrador a sessão sumiu e o card tem `last_error` com o status e o texto); com o orquestrador desligado, a sessão continua lá; `KanbanBoard.test.tsx` com o \"Último erro\".",
       "priority": "normal",
-      "kind": "manual",
+      "kind": "agente",
       "column": "backlog",
       "created_at": 1792754931
     }

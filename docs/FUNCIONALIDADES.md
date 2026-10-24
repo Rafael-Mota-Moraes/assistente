@@ -415,6 +415,27 @@ hubd); F11.2 antes de F11.4.
   `api::kanban::tests` com repo git real e o app fingido (resultado do pedido `host` via
   `POST /api/exec/{id}/result`: código 0 junta, 1 não muda nada, negado = nada muda),
   `ProjectSettingsDialog` com o campo e `KanbanBoard.test.tsx` (estado "validando").
+- [ ] **F11.18 Escolher os modelos que o orquestrador prioriza.** Hoje o trabalhador usa o modelo
+  do pedido ("Outro modelo…"), senão o `[workers] models` do `.assistente.toml` (que precisa ser
+  editado à mão e com o nome exato do opencode), senão os grátis em ordem de histórico (F11.10).
+  Não dá para dizer pelo app "use estes primeiro". O `Orchestrator` do quadro ganha `models` (ids
+  do opencode, em ordem, até `MAX_MODELS`), editado no mesmo diálogo das instruções (F11.11): uma
+  lista com os modelos do catálogo (`~/.cache/opencode/models.json`, todos os provedores do perfil,
+  com o selo "grátis" e a taxa de sucesso do histórico), em que você marca os que quer e arrasta
+  para mudar a ordem. Os marcados vão na frente; as vagas que sobram até `MAX_MODELS` são
+  preenchidas pela escolha automática (sem repetir), a não ser que "Só estes" esteja marcado. Vale
+  para o orquestrador automático, o "Mandar" e o reinício; o pedido com modelo explícito ("Outro
+  modelo…", `--modelos`) continua na frente. Ordem: pedido > seleção do quadro > `[workers] models`
+  > automático. Modelo marcado que sumiu do catálogo aparece riscado e é pulado, com aviso no
+  quadro. Rota nova para o catálogo (`GET …/kanban/modelos`: id, provedor, grátis, taxa) e o
+  `PUT …/kanban/orquestrador` aceita `models` e `only_selected`. Tipos novos em `api.rs` e
+  `app/src/bridge/types.ts` juntos.
+  Pronto quando: marcar dois modelos no diálogo faz o próximo trabalhador do orquestrador tentar
+  esses dois primeiro, na ordem escolhida, e depois os grátis; com "Só estes", só os dois.
+  Como testar: `kanban::tests` (serde de `models`/`only_selected`, limite), `worker::tests` (juntar
+  seleção + automático sem repetir, pular o que sumiu do catálogo), `api::kanban::tests` (o
+  `WorkerRun` do orquestrador sai com os modelos na ordem; catálogo listado) e
+  `KanbanBoard.test.tsx` (marcar, reordenar, salvar, modelo sumido riscado).
 
 ## F12 — Apontar e pedir na tela
 

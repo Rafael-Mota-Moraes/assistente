@@ -249,6 +249,7 @@
       "priority": "normal",
       "kind": "agente",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-2",
       "commit": "da896f2e4ec98fee142a7b1a695dd2b5242c08c4",
       "created_at": 1792847367
     }

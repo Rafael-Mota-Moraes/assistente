@@ -3640,6 +3640,10 @@ mod tests {
         let (_, board) = orchestrate().await;
         assert!(board.get("started").is_none(), "{board}");
         assert_eq!(mandar_b().await.0, StatusCode::CONFLICT);
+        // Nada em fazendo: a volta abre a revisão (F11.12) com A. Ela acaba sem juntar; o QA junta.
+        let reviewer = board["cards"][0]["holder"].as_str().unwrap().to_owned();
+        assert_ne!(reviewer, holder, "{board}");
+        t.tmux.kill(&reviewer).await.unwrap();
 
         // O QA junta A na main: B abre, num worktree que já tem o código de A.
         let (status, info) = send(

@@ -504,6 +504,7 @@ mod tests {
             commit: None,
             failures: 0,
             blocked: None,
+            last_error: None,
             merged: None,
             depends_on: Vec::new(),
             created_at: 1,

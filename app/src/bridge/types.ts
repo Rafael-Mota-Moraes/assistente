@@ -195,6 +195,9 @@ export type KanbanCard = {
   failures?: number;
   /** Parou sem culpa da tarefa (cota esgotada, F11.14): a linha de erro do provedor. */
   blocked?: string;
+  /** Último erro de um trabalhador recolhido pelo orquestrador (F14.5). Some ao "Mandar" e ao
+   * "Tentar de novo" (`failures: 0`). */
+  last_error?: KanbanWorkerError;
   /** Onde o QA juntou a tarefa (`validado`, F11.15). */
   merged?: KanbanMerged;
   /** IDs das tarefas das quais esta depende (F11.13). */
@@ -204,6 +207,17 @@ export type KanbanCard = {
 
 /** Branch que recebeu a tarefa e o commit dela depois da junção. */
 export type KanbanMerged = { branch: string; commit: string };
+
+/** O que sobrou do trabalhador que falhou (F14.5); a sessão dele já saiu do tmux. */
+export type KanbanWorkerError = {
+  session: string;
+  /** Código de saída; null quando o tmux não soube (morreu por sinal). */
+  status: number | null;
+  /** O fim da saída do painel (as últimas linhas, no máximo 4 KiB). */
+  output: string;
+  /** Log completo do trabalhador. */
+  log: string;
+};
 
 /** Orquestrador automático do projeto (F11.11); ausente = desligado. */
 export type KanbanOrchestrator = {
@@ -244,6 +258,8 @@ export type KanbanDraft = {
   failures?: number;
   /** IDs das tarefas das quais esta depende (F11.13). Na edição, ausente = não muda; vazio = limpa. */
   depends_on?: string[];
+  /** Limpar o último erro do trabalhador (F14.5): `null` apaga, ausente = não muda. */
+  last_error?: KanbanWorkerError | null;
 };
 
 export type CollectedCommit = { hash: string; subject: string };

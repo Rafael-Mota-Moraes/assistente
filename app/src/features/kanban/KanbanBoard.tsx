@@ -590,6 +590,23 @@ export function KanbanBoard() {
                             Parou por cota: <span className="font-mono">{card.blocked}</span>
                           </p>
                         )}
+                        {column.id === "backlog" && card.last_error && (
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-rose-300">
+                              Último erro ·{" "}
+                              {card.last_error.status === null
+                                ? "sem código de saída"
+                                : `saiu com ${card.last_error.status}`}
+                            </summary>
+                            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-black/40 p-2 font-mono text-[10px] text-rose-100">
+                              {card.last_error.output}
+                            </pre>
+                            <p className="mt-1 text-[10px] text-slate-400">
+                              Log completo:{" "}
+                              <span className="break-all font-mono">{card.last_error.log}</span>
+                            </p>
+                          </details>
+                        )}
                         {card.merged ? (
                           <p className="text-xs text-emerald-300">
                             na <span className="font-mono">{card.merged.branch}</span> ·{" "}
@@ -630,7 +647,7 @@ export function KanbanBoard() {
                                     client.updateCard(profile, project, card.id, { failures: 0 }),
                                   )
                                 }
-                                title="Zera as voltas: o orquestrador automático pode puxar de novo"
+                                title="Zera as voltas e limpa o último erro: o orquestrador automático pode puxar de novo"
                                 className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
                               >
                                 <RotateCcw className="size-3.5" /> Tentar de novo

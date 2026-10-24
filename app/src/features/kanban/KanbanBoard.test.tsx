@@ -370,6 +370,32 @@ describe("KanbanBoard", () => {
     );
   });
 
+  it("trabalhador recolhido deixa o Último erro no card, com a saída e o log", async () => {
+    const log = "/home/u/.assistente/perfis/pessoal/trabalhadores/pessoal--game--opencode-1.log";
+    connect({
+      next: 3,
+      cards: [
+        card("T1", {
+          kind: "agente",
+          failures: 1,
+          last_error: {
+            session: "pessoal--game--opencode-1",
+            status: 1,
+            output: "passo 1 ok\ndeu ruim: teste quebrado",
+            log,
+          },
+        }),
+        card("T2", { column: "fazendo", holder: "s9" }),
+      ],
+    });
+    const backlog = await column("Backlog");
+    const t1 = within(backlog).getByRole("article", { name: /^T1 / });
+    expect(within(t1).getByText(/Último erro · saiu com 1/)).toBeInTheDocument();
+    expect(within(t1).getByText(/deu ruim: teste quebrado/)).toBeInTheDocument();
+    expect(within(t1).getByText(log)).toBeInTheDocument();
+    expect(within(await column("Fazendo")).queryByText(/Último erro/)).toBeNull();
+  });
+
   it("cota esgotada: faixa com Retomar e o card parado termina com outro harness", async () => {
     const reason = "Error: Free usage limit reached.";
     const board: Board = {

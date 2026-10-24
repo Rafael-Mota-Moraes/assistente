@@ -16,10 +16,11 @@
 
 use super::*;
 use crate::kanban as store;
+use crate::sessions::PaneState;
 use axum::extract::Path as Params;
-use hub_core::kanban::{Board, Card, Column, Draft, KanbanError, Merged};
+use hub_core::kanban::{Board, Card, Column, Draft, KanbanError, Merged, WorkerError};
 use hub_core::worker::{self, WorkerRun};
-use hub_core::{profile_data_dir, workers_config_at};
+use hub_core::{AgentKind, profile_data_dir, workers_config_at};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -1219,11 +1220,16 @@ fn check_verdict(view: &ExecView) -> Result<(), String> {
 
 /// As últimas linhas de `text`, no máximo `CHECK_TAIL_BYTES`.
 fn tail(text: &str) -> String {
+    tail_of(text, CHECK_TAIL_LINES, CHECK_TAIL_BYTES)
+}
+
+/// As últimas `lines` linhas de `text`, no máximo `bytes` (cortadas no começo).
+fn tail_of(text: &str, lines: usize, bytes: usize) -> String {
     let text = text.trim_end();
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out = lines[lines.len().saturating_sub(CHECK_TAIL_LINES)..].join("\n");
-    if out.len() > CHECK_TAIL_BYTES {
-        let mut start = out.len() - CHECK_TAIL_BYTES;
+    let all: Vec<&str> = text.lines().collect();
+    let mut out = all[all.len().saturating_sub(lines)..].join("\n");
+    if out.len() > bytes {
+        let mut start = out.len() - bytes;
         while !out.is_char_boundary(start) {
             start += 1;
         }
@@ -1767,6 +1773,85 @@ async fn orchestrate_project(state: &AppState, profile: &str, project: &str) -> 
     }
 }
 
+/// O fim da saída que o card guarda do trabalhador que falhou (F14.5).
+const WORKER_TAIL_LINES: usize = 50;
+const WORKER_TAIL_BYTES: usize = 4096;
+
+/// Recolhe os trabalhadores que falharam (F14.5), com o orquestrador ligado. A sessão morta de
+/// um trabalhador (a que tem o registro de `start_worker`; Claude e OpenCode interativo nunca
+/// entram) deixa no card que segurava, ou que acabou de soltar, o status de saída, o fim da
+/// saída e o caminho do log, e sai do tmux. O card já está no backlog com a falha contada
+/// (`release` ou `load`), então não é repuxado.
+async fn collect_failed_workers(
+    state: &AppState,
+    profile: &str,
+    project: &str,
+    dir: &Path,
+) -> Result<(), String> {
+    let inner = &state.0;
+    let _guard = inner.kanban_lock.lock().await;
+    let mut board = match load(state, dir).await {
+        Ok(board) => board,
+        Err(response) => return Err(reply_text(response).await),
+    };
+    if !board.orchestrator.enabled {
+        return Ok(());
+    }
+    let data = profile_data_dir(&inner.home, profile);
+    let sessions = inner.tmux.list().await?;
+    let mut collected = Vec::new();
+    let mut changed = Vec::new();
+    for session in sessions {
+        if !session.dead
+            || session.profile != profile
+            || session.project != project
+            || session.agent != AgentKind::Opencode
+        {
+            continue;
+        }
+        let files = worker::files(&data, &session.id);
+        let Some(run) = std::fs::read_to_string(&files.run)
+            .ok()
+            .and_then(|text| serde_json::from_str::<WorkerRun>(&text).ok())
+        else {
+            continue;
+        };
+        let status = match inner.tmux.pane_state(&session.id).await {
+            PaneState::Dead(status) => status,
+            PaneState::Alive => continue,
+        };
+        let lines = -(WORKER_TAIL_LINES as i32);
+        let output = match inner.tmux.capture_pane(&session.id, lines).await {
+            Ok(text) => tail_of(&text, WORKER_TAIL_LINES, WORKER_TAIL_BYTES),
+            Err(e) => format!("(não li a saída do painel: {e})"),
+        };
+        let error = WorkerError {
+            session: session.id.clone(),
+            status,
+            output,
+            log: files.log.display().to_string(),
+        };
+        if board.record_worker_error(&run.task, error) {
+            changed.push(run.task.clone());
+        }
+        collected.push((session.id, run.task));
+    }
+    if !changed.is_empty() {
+        let message = format!("kanban: erro do trabalhador em {}", changed.join(", "));
+        if let Err(response) = persist(dir, &board, &message) {
+            return Err(reply_text(response).await);
+        }
+    }
+    // A sessão só sai depois que o erro está salvo no card.
+    for (session, task) in collected {
+        match inner.tmux.kill(&session).await {
+            Ok(()) => tracing::info!("orquestrador: recolheu {session} ({task})"),
+            Err(e) => tracing::warn!("orquestrador: trabalhador {session} ficou: {e}"),
+        }
+    }
+    Ok(())
+}
+
 /// Abre trabalhadores para as próximas tarefas `agente` enquanto houver vaga em "fazendo".
 /// Devolve as tarefas que começaram. Tarefa que já voltou do "fazendo" fica (`next_auto`).
 async fn orchestrate(
@@ -1779,6 +1864,8 @@ async fn orchestrate(
         Ok(dir) => dir,
         Err(response) => return Err(reply_text(response).await),
     };
+    // O trabalhador que falhou sai antes: a vaga dele em "fazendo" fica livre (F14.5).
+    collect_failed_workers(state, profile, project, &dir).await?;
     let mut started = Vec::new();
     // Cada volta abre no máximo o limite; trabalhador que morre na hora volta com `failures`
     // e não é repuxado, então o laço sempre termina.
@@ -3754,6 +3841,136 @@ mod tests {
             .await
             .unwrap();
         assert!(pane.contains("claude: not found"), "{pane}");
+    }
+
+    /// F14.5: com o orquestrador ligado, a volta recolhe o trabalhador que falhou: a sessão
+    /// sai e o card fica com o status e o fim da saída. Desligado, a aba morta fica (F14.4); o
+    /// Claude que falhou nunca é recolhido.
+    #[tokio::test]
+    async fn orchestrator_collects_the_failed_worker_and_keeps_its_error_on_the_card() {
+        let t = TestTmux::new("kanban-recolhe");
+        let hub = hub_com(
+            &t,
+            true,
+            vec![
+                "bash".into(),
+                "-c".into(),
+                "if [ -z \"${AGENTE_TAREFA:-}\" ]; then echo 'claude: not found'; exit 127; fi; \
+                 echo 'passo 1 ok'; echo 'deu ruim: teste quebrado'; \
+                 while [ ! -e sair ]; do sleep 0.05; done; exit 1"
+                    .into(),
+            ],
+        );
+        std::fs::write(
+            hub.proj.join(".assistente.toml"),
+            "[workers]\nmodels = [\"x/a\"]\n",
+        )
+        .unwrap();
+        git_sync(&hub.proj, &["add", ".assistente.toml"]);
+        git_sync(&hub.proj, &["commit", "-q", "-m", "config do projeto"]);
+        send(
+            hub.app.clone(),
+            "POST",
+            CARDS,
+            Some(r#"{"title":"um"}"#),
+            None,
+        )
+        .await;
+        // Um Claude que sai com erro: fica morto, com o painel.
+        let spec = r#"{"profile":"pessoal","project":"proj","agent":"claude"}"#;
+        let (status, body) = send(hub.app.clone(), "POST", "/api/sessions", Some(spec), None).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let claude = "pessoal--proj--claude-1";
+
+        // O trabalhador imprime, desiste (`release`, que guarda o painel) e sai com 1.
+        let (status, info) = send(
+            hub.app.clone(),
+            "POST",
+            &format!("{CARDS}/T1/mandar"),
+            Some("{}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{info}");
+        let worker = info["id"].as_str().unwrap().to_owned();
+        let token = exec_token(&t, &worker).await;
+        let (status, _) = send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/release",
+            Some(r#"{"id":"T1"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        std::fs::write(worker::worktree_dir(&hub.proj, "T1").join("sair"), "").unwrap();
+        let mut dead = false;
+        for _ in 0..50 {
+            dead = t
+                .tmux
+                .find(&worker)
+                .await
+                .unwrap()
+                .is_some_and(|session| session.dead);
+            if dead {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(dead, "o trabalhador que desistiu fica morto, com o painel");
+        let card = |board: &serde_json::Value| board["cards"][0].clone();
+
+        // Desligado: a volta não recolhe nada e a aba morta fica até você encerrar.
+        let uri = format!("{CARDS}/orquestrador");
+        let off = Some(r#"{"enabled":false}"#);
+        let (_, board) = send(hub.app.clone(), "PUT", &uri, off, None).await;
+        assert!(t.tmux.find(&worker).await.unwrap().is_some());
+        assert!(card(&board).get("last_error").is_none(), "{board}");
+
+        // Ligado: a primeira volta encerra a sessão e o erro fica no card, sem outra falha.
+        let (_, board) = send(
+            hub.app.clone(),
+            "PUT",
+            &uri,
+            Some(r#"{"enabled":true,"max_workers":1}"#),
+            None,
+        )
+        .await;
+        assert!(
+            t.tmux.find(&worker).await.unwrap().is_none(),
+            "a sessão do trabalhador que falhou tem de sair"
+        );
+        assert!(
+            t.tmux.find(claude).await.unwrap().is_some(),
+            "o Claude nunca é recolhido"
+        );
+        let t1 = card(&board);
+        assert_eq!(t1["column"], "backlog", "{board}");
+        assert_eq!(t1["failures"], 1, "{board}");
+        assert!(board.get("started").is_none(), "não repuxa: {board}");
+        let error = &t1["last_error"];
+        assert_eq!(error["session"], worker.as_str(), "{board}");
+        assert_eq!(error["status"], 1, "{board}");
+        let output = error["output"].as_str().unwrap();
+        assert!(output.contains("deu ruim: teste quebrado"), "{output}");
+        let files = worker::files(&hub.home.join(".assistente/perfis/pessoal"), &worker);
+        assert_eq!(error["log"], files.log.display().to_string());
+        assert!(
+            git_sync(&hub.proj, &["log", "--format=%s"])
+                .contains("kanban: erro do trabalhador em T1")
+        );
+
+        // "Tentar de novo" (failures: 0) limpa o erro.
+        let (status, retried) = send(
+            hub.app.clone(),
+            "PATCH",
+            &format!("{CARDS}/T1"),
+            Some(r#"{"failures":0}"#),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{retried}");
+        assert!(retried.get("last_error").is_none(), "{retried}");
     }
 
     /// F14.4: a sessão que desiste da tarefa fica com o painel na tela, para o erro ficar

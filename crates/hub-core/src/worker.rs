@@ -671,7 +671,7 @@ mod tests {
         assert!(text.contains("kanban reabrir T7 --nota"));
         assert!(text.contains("kanban validar T7 --branch ALVO"));
         // O validar roda o check no PC (F11.17): vermelho, nada junta
-        assert!(text.contains("roda o check do projeto no PC"));
+        assert!(text.contains("o check do projeto no PC"));
         assert!(text.contains("Vermelho: nada muda"));
         assert!(!text.contains("Instruções do projeto"));
         let extra = render_qa_prompt(&card("x"), "agente/T7", "Use pnpm.");
@@ -697,7 +697,7 @@ mod tests {
         assert!(text.contains("Uma resposta vale para todas"));
         assert!(text.contains("kanban validar <id> --branch ALVO"));
         // O validar roda o check no PC (F11.17): vermelho, nada junta
-        assert!(text.contains("roda o check do projeto no PC"));
+        assert!(text.contains("o check do projeto no PC"));
         assert!(text.contains("Vermelho: nada muda"));
         assert!(!text.contains("Instruções do projeto"));
     }

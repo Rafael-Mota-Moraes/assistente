@@ -79,6 +79,9 @@ struct Inner {
     orchestrator_lock: tokio::sync::Mutex<()>,
     /// Último erro do orquestrador automático por `perfil/projeto`, mostrado no quadro.
     orchestrator_errors: std::sync::Mutex<HashMap<String, String>>,
+    /// Cards (`id@commit`) que o orquestrador já mandou para a revisão automática (F11.12), por
+    /// `perfil/projeto`: o que a revisão deixou como estava não abre outra revisão sozinho.
+    auto_reviews: std::sync::Mutex<HashMap<String, String>>,
     /// Só nos testes: troca o comando do atualizador (F8.5).
     update_command_override: Option<String>,
     /// Só nos testes: env extra do atualizador.
@@ -116,6 +119,7 @@ impl AppState {
             kanban_lock: tokio::sync::Mutex::new(()),
             orchestrator_lock: tokio::sync::Mutex::new(()),
             orchestrator_errors: std::sync::Mutex::new(HashMap::new()),
+            auto_reviews: std::sync::Mutex::new(HashMap::new()),
         }))
     }
 
@@ -241,6 +245,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/exec/{id}/approve", post(approve_exec))
         .route("/api/exec/{id}/deny", post(deny_exec))
         .route("/api/exec/{id}/result", post(exec_result))
+        .route("/api/exec/{id}/claim", post(claim_exec))
         .route(
             "/api/projects/{profile}/{project}/kanban",
             get(kanban::list_cards).post(kanban::create_card),
@@ -268,6 +273,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/projects/{profile}/{project}/kanban/qa",
             post(kanban::qa_all),
+        )
+        .route(
+            "/api/projects/{profile}/{project}/kanban/revisar",
+            post(kanban::review_board),
         )
         .route(
             "/api/projects/{profile}/{project}/kanban/{id}/qa",
@@ -319,6 +328,8 @@ pub fn agent_router(state: AppState) -> Router {
         .route("/v1/kanban/block", post(kanban::agent_block))
         .route("/v1/kanban/validate", post(kanban::agent_validate))
         .route("/v1/kanban/reopen", post(kanban::agent_reopen))
+        .route("/v1/kanban/juntar", post(kanban::agent_merge_main))
+        .route("/v1/kanban/resumo", post(kanban::agent_review_summary))
         .route("/v1/workers", post(kanban::agent_worker))
         // Diagnóstico da VM: leitura só, sem aprovação (F14.1).
         .route("/v1/diagnostico", post(diagnostico::agent_diagnostico))
@@ -2101,6 +2112,14 @@ fn exec_error(e: ExecError) -> Response {
             StatusCode::CONFLICT,
             "este pedido não é para o PC (o hubd roda o da VM)",
         ),
+        ExecError::AlreadyClaimed => error(
+            StatusCode::CONFLICT,
+            "o app já pegou este pedido para rodar no PC (não roda de novo)",
+        ),
+        ExecError::NotClaimed => error(
+            StatusCode::CONFLICT,
+            "o app não pegou este pedido: sem saída para guardar",
+        ),
         ExecError::TooMany => error(
             StatusCode::TOO_MANY_REQUESTS,
             "pedidos demais esperando aprovação; espere uma resposta no app",
@@ -2328,6 +2347,29 @@ async fn exec_result(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// POST /api/exec/{id}/claim: o app no PC pega o pedido `host` aprovado (F9.11). Devolve o
+/// comando, a pasta e o timeout uma vez só: um segundo `host_exec` do mesmo id dá 409.
+async fn claim_exec(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<ClaimedJob>, Response> {
+    let job = state.0.exec.claim_host(&id).map_err(exec_error)?;
+    tracing::info!("pedido {id} pego pelo app no PC: {}", job.command);
+    Ok(Json(ClaimedJob {
+        command: job.command,
+        cwd: job.cwd.to_string_lossy().into_owned(),
+        timeout_secs: job.timeout.as_secs(),
+    }))
+}
+
+/// O que o app roda no PC (o env da sessão é da VM e não vai junto).
+#[derive(Serialize)]
+struct ClaimedJob {
+    command: String,
+    cwd: String,
+    timeout_secs: u64,
+}
+
 #[derive(Deserialize, Default)]
 struct ApproveRequest {
     /// Grava o comando em `allowed_commands` do projeto antes de rodar.
@@ -2427,6 +2469,16 @@ pub(super) async fn launch_session(
     spec: &SessionSpec,
     prompt: Option<&str>,
 ) -> Result<SessionInfo, Response> {
+    launch_session_with(state, spec, prompt, false).await
+}
+
+/// `launch_session` com `docker` ligado à força (a revisão, F11.12, roda o check do projeto).
+pub(super) async fn launch_session_with(
+    state: &AppState,
+    spec: &SessionSpec,
+    prompt: Option<&str>,
+    docker: bool,
+) -> Result<SessionInfo, Response> {
     let inner = &state.0;
     let Some(profile) = inner.config.profile(&spec.profile) else {
         return Err(error(StatusCode::NOT_FOUND, "perfil desconhecido"));
@@ -2441,10 +2493,9 @@ pub(super) async fn launch_session(
     let seq = next_seq(&existing, spec);
     let exec = exec_access_for(inner, spec.agent);
     let exec_token = exec.as_ref().map(|e| e.token.clone());
-    let options = LaunchOptions {
-        settings: project_settings_for(inner, &spec.profile, &spec.project),
-        exec,
-    };
+    let mut settings = project_settings_for(inner, &spec.profile, &spec.project);
+    settings.docker |= docker;
+    let options = LaunchOptions { settings, exec };
     let mut plan = match prompt {
         Some(prompt) => {
             LaunchPlan::build_explore(&inner.config, &inner.home, spec, seq, &options, prompt)
@@ -4115,6 +4166,23 @@ mod tests {
             204
         );
         let result = r#"{"exit_code":0,"stdout":"push ok\n","stderr":"","truncated":false,"timed_out":false,"duration_ms":12}"#;
+        // Saída de pedido que o app não pegou: recusada (F9.11).
+        assert_eq!(
+            http("POST", &format!("{hub}/api/exec/{id}/result"), Some(result))
+                .await
+                .0,
+            409
+        );
+        // O app pega o pedido: comando, pasta e timeout, uma vez só (F9.11).
+        let (status, body) = http("POST", &format!("{hub}/api/exec/{id}/claim"), None).await;
+        assert_eq!(status, 200, "{body}");
+        let job = json(&body);
+        assert_eq!(job["command"], "git push");
+        assert!(job["cwd"].as_str().is_some_and(|c| !c.is_empty()), "{job}");
+        assert!(job.get("env").is_none(), "o env da sessão é da VM: {job}");
+        let (status, body) = http("POST", &format!("{hub}/api/exec/{id}/claim"), None).await;
+        assert_eq!(status, 409, "segundo host_exec não roda de novo: {body}");
+        assert!(body.contains("já pegou"), "{body}");
         assert_eq!(
             http("POST", &format!("{hub}/api/exec/{id}/result"), Some(result))
                 .await

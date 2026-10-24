@@ -123,6 +123,8 @@ export type ProjectSettings = {
   allowed_commands: string[];
   /** F12.1: endereço do dev server, visto do PC. Ausente = sem preview. */
   preview_url?: string | null;
+  /** F11.17: comando de verificação do projeto. Padrão `./dev just check`. */
+  check: string;
 };
 
 /** Pedido de um agente para rodar um comando fora do jail (F9.5). */
@@ -160,6 +162,8 @@ export type ExecView = {
   state: ExecState;
   auto_approved: boolean;
   result: ExecResult | null;
+  /** Pedido `host` já foi pego pelo app para execução no PC (F9.11). */
+  picked_up?: boolean;
 };
 
 /** GET/PUT /api/projects/{profile}/{project}/settings. */
@@ -171,7 +175,8 @@ export type ProjectSettingsView = {
 
 /** Quadro do projeto (F11): `.assistente/kanban.json` no repo, espelho de hubd `kanban`. */
 /** `validado` = passou no QA e foi juntado numa branch (F11.15). */
-export type KanbanColumn = "backlog" | "fazendo" | "feito" | "validado";
+/** `validando` = check rodando via host exec (F11.17). */
+export type KanbanColumn = "backlog" | "fazendo" | "feito" | "validando" | "validado";
 /** `manual` só roda quando você manda; `agente` é puxado pelo orquestrador (F11.2). */
 export type KanbanKind = "manual" | "agente";
 export type KanbanPriority = "alta" | "normal" | "baixa";
@@ -221,7 +226,12 @@ export type KanbanBoard = {
   orchestrator_error?: string;
   /** Só na resposta de `setOrchestrator`: tarefas que a volta abriu agora. */
   started?: string[];
+  /** Último resumo de revisão (F11.12), de `.assistente/revisoes/`. */
+  review?: KanbanReview;
 };
+
+/** Resumo de uma revisão: o que entrou na `main`, o que voltou e por quê (F11.12). */
+export type KanbanReview = { file: string; text: string };
 
 /** Campos de criar/editar; todos opcionais na edição. */
 export type KanbanDraft = {

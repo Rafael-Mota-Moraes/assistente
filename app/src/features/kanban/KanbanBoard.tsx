@@ -2,7 +2,9 @@ import {
   Bot,
   ChevronDown,
   CirclePause,
+  GitMerge,
   LayoutGrid,
+  Loader2,
   Pencil,
   Play,
   Plus,
@@ -40,6 +42,7 @@ const columns: { id: KanbanColumn; label: string }[] = [
   { id: "backlog", label: "Backlog" },
   { id: "fazendo", label: "Fazendo" },
   { id: "feito", label: "Feito" },
+  { id: "validando", label: "Validando" },
   { id: "validado", label: "Validado" },
 ];
 
@@ -233,6 +236,18 @@ export function KanbanBoard() {
     });
   }
 
+  /** Revisão (F11.12): um Claude sozinho junta na `main` o que passa e devolve o resto ao backlog. */
+  function review(count: number) {
+    void act(async () => {
+      requireClaudeLogin("Revisar");
+      const info = await client.reviewBoard(profile, project);
+      useAppStore.setState((s) => ({
+        sessions: [...s.sessions.filter((x) => x.id !== info.id), info],
+        toast: `Revisão de ${count} ${count === 1 ? "card" : "cards"} aberta: o que passar vai para a main, e o resumo aparece no quadro.`,
+      }));
+    });
+  }
+
   /** "Retomar" (F11.14): a cota voltou; o orquestrador volta a puxar e avisa o que abriu. */
   function resume() {
     void act(async () => {
@@ -419,11 +434,25 @@ export function KanbanBoard() {
           Orquestrador: {board.orchestrator_error}
         </p>
       )}
+      {board?.review && (
+        <details className="border-b border-line bg-black/20 px-5 py-2 text-sm text-slate-200">
+          <summary className="flex cursor-pointer items-center gap-2">
+            <GitMerge className="size-4 shrink-0 text-emerald-300" />
+            Última revisão
+            <span className="truncate font-mono text-xs text-slate-400">{board.review.file}</span>
+          </summary>
+          <section aria-label="Resumo da revisão" className="mt-2 max-h-60 overflow-y-auto">
+            <pre className="whitespace-pre-wrap font-sans text-xs text-slate-300">
+              {board.review.text}
+            </pre>
+          </section>
+        </details>
+      )}
       <div className="flex min-h-0 flex-1 flex-col">
         {board === null ? (
           <p className="p-6 text-sm text-slate-400">Lendo o quadro…</p>
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-[minmax(0,1fr)] gap-3 p-4">
+          <div className="grid min-h-0 flex-1 grid-cols-5 grid-rows-[minmax(0,1fr)] gap-3 p-4">
             {columns.map((column) => {
               const inColumn = cards.filter((card) => card.column === column.id);
               const freeDone = column.id === "feito" ? inColumn.filter((c) => !c.holder) : [];
@@ -433,7 +462,8 @@ export function KanbanBoard() {
                   key={column.id}
                   aria-label={`Coluna ${column.label}`}
                   onDragOver={(event: DragEvent) => {
-                    if (!dragging) return;
+                    // "Validando" é só do check do QA (F11.17).
+                    if (!dragging || column.id === "validando") return;
                     event.preventDefault();
                     setOverColumn(column.id);
                   }}
@@ -441,7 +471,7 @@ export function KanbanBoard() {
                   onDrop={(event: DragEvent) => {
                     event.preventDefault();
                     setOverColumn(null);
-                    if (dragging) moveTo(dragging, column.id);
+                    if (dragging && column.id !== "validando") moveTo(dragging, column.id);
                     setDragging(null);
                   }}
                   className={`flex min-h-0 flex-col gap-2 overflow-y-auto rounded-xl border p-3 transition-colors ${
@@ -456,247 +486,271 @@ export function KanbanBoard() {
                     {freeDone.length > 0 && (
                       <button
                         type="button"
+                        onClick={() => review(freeDone.length)}
+                        title="Abre um Claude que revisa sozinho os cards feitos: junta na main os que passam (com o check verde) e devolve os outros ao backlog com o que falta"
+                        className="ml-auto flex items-center gap-1 rounded-md border border-emerald-400/50 bg-emerald-500/20 px-2 py-0.5 text-xs font-normal text-white hover:bg-emerald-500/30"
+                      >
+                        <GitMerge className="size-3.5" /> Revisar
+                      </button>
+                    )}
+                    {freeDone.length > 0 && (
+                      <button
+                        type="button"
                         onClick={() => qaAll(freeDone.length)}
                         title="Abre um Claude que passa por todos os cards feitos: pergunta uma vez onde juntar e valida ou devolve cada um"
-                        className="ml-auto flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-0.5 text-xs font-normal text-white hover:bg-accent/30"
+                        className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-0.5 text-xs font-normal text-white hover:bg-accent/30"
                       >
                         <ShieldCheck className="size-3.5" /> QA geral ({freeDone.length})
                       </button>
                     )}
                   </h3>
-                  {inColumn.map((card) => (
-                    <article
-                      key={card.id}
-                      aria-label={`${card.id} ${card.title}`}
-                      draggable
-                      onDragStart={(event: DragEvent) => {
-                        event.dataTransfer.setData("text/plain", card.id);
-                        setDragging(card);
-                      }}
-                      onDragEnd={() => {
-                        setDragging(null);
-                        setOverColumn(null);
-                      }}
-                      className="flex cursor-grab flex-col gap-2 rounded-lg border border-line bg-surface-strong p-3 text-sm active:cursor-grabbing"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs text-slate-400">{card.id}</span>
-                        <span
-                          className={`rounded border px-1.5 text-[10px] uppercase ${priorityStyle[card.priority]}`}
-                        >
-                          {card.priority}
-                        </span>
-                        <span
-                          className={`rounded px-1.5 text-[10px] uppercase ${
-                            card.kind === "agente"
-                              ? "bg-violet-500/20 text-violet-200"
-                              : "bg-white/10 text-slate-300"
-                          }`}
-                        >
-                          {card.kind === "agente" ? "agente" : "manual"}
-                        </span>
-                        {card.blocked && (
-                          <span className="rounded bg-amber-500/20 px-1.5 text-[10px] text-amber-200 uppercase">
-                            cota
-                          </span>
-                        )}
-                      </div>
-                      {card.depends_on && card.depends_on.length > 0 && (
-                        <div
-                          className="flex items-center gap-1 text-[10px] text-slate-400"
-                          title="Depende destas tarefas: o trabalhador só abre depois que elas entram na main"
-                        >
-                          <span className="text-slate-500">←</span>
-                          <span className="font-mono">{card.depends_on.join(", ")}</span>
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setEditing(card)}
-                        className="text-left font-medium text-white hover:underline"
+                  {inColumn.map((card) => {
+                    // O check do QA está rodando no PC (F11.17): o card não sai daqui na mão.
+                    const checking = card.column === "validando";
+                    return (
+                      <article
+                        key={card.id}
+                        aria-label={`${card.id} ${card.title}`}
+                        draggable={!checking}
+                        onDragStart={(event: DragEvent) => {
+                          event.dataTransfer.setData("text/plain", card.id);
+                          setDragging(card);
+                        }}
+                        onDragEnd={() => {
+                          setDragging(null);
+                          setOverColumn(null);
+                        }}
+                        className={`flex flex-col gap-2 rounded-lg border border-line bg-surface-strong p-3 text-sm ${
+                          checking ? "cursor-wait" : "cursor-grab active:cursor-grabbing"
+                        }`}
                       >
-                        {card.title}
-                      </button>
-                      {card.description && (
-                        <p className="line-clamp-3 whitespace-pre-line text-xs text-slate-400">
-                          {card.description}
-                        </p>
-                      )}
-                      {card.holder && (
-                        <p className="text-xs text-slate-300">
-                          em {holderLabel(card.holder, sessions)}
-                        </p>
-                      )}
-                      {column.id === "backlog" && (card.failures ?? 0) > 0 && (
-                        <p className="text-xs text-amber-300">
-                          Voltou {card.failures}× sem concluir: o orquestrador não puxa de novo
-                          sozinho.
-                        </p>
-                      )}
-                      {column.id === "backlog" && card.blocked && (
-                        <p className="text-xs text-amber-300">
-                          Parou por cota: <span className="font-mono">{card.blocked}</span>
-                        </p>
-                      )}
-                      {card.merged ? (
-                        <p className="text-xs text-emerald-300">
-                          na <span className="font-mono">{card.merged.branch}</span> ·{" "}
-                          <span className="font-mono">{card.merged.commit.slice(0, 7)}</span>
-                        </p>
-                      ) : (
-                        card.commit && (
-                          <p className="font-mono text-xs text-emerald-300">
-                            {card.commit.slice(0, 7)}
-                          </p>
-                        )
-                      )}
-                      <div className="flex flex-wrap gap-1.5 pt-1">
-                        {column.id === "backlog" && card.kind === "manual" && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void act(() => client.mandarCard(profile, project, card.id))
-                            }
-                            disabled={waitingOn(card, cards).length > 0}
-                            title={
-                              waitingOn(card, cards).length > 0
-                                ? `Espera ${waitingOn(card, cards).join(", ")} entrar na main (QA)`
-                                : "Manda esta tarefa para um trabalhador agora"
-                            }
-                            className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30 disabled:opacity-50"
-                          >
-                            <Play className="size-3.5" /> Mandar
-                          </button>
-                        )}
-                        {column.id === "backlog" &&
-                          card.kind === "agente" &&
-                          (card.failures ?? 0) > 0 && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void act(() =>
-                                  client.updateCard(profile, project, card.id, { failures: 0 }),
-                                )
-                              }
-                              title="Zera as voltas: o orquestrador automático pode puxar de novo"
-                              className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
-                            >
-                              <RotateCcw className="size-3.5" /> Tentar de novo
-                            </button>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-slate-400">{card.id}</span>
+                          {checking && (
+                            <Loader2
+                              role="img"
+                              aria-label="Check rodando no PC"
+                              className="size-3.5 animate-spin text-violet-300"
+                            />
                           )}
-                        {/* Parou por cota ou voltou sem concluir: dá para terminar com outro harness. */}
-                        {column.id === "backlog" && (card.blocked || (card.failures ?? 0) > 0) && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => finishWithClaude(card)}
-                              title="Abre um Claude Code no worktree da tarefa, que continua de onde o trabalhador parou"
-                              className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
-                            >
-                              <Sparkles className="size-3.5" /> Terminar com Claude
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setOtherModel(
-                                  otherModel?.id === card.id
-                                    ? null
-                                    : { id: card.id, model: OTHER_MODEL },
-                                )
-                              }
-                              title="Manda para um trabalhador do opencode com outro modelo (ex.: pelo 9router)"
-                              className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
-                            >
-                              <Play className="size-3.5" /> Outro modelo…
-                            </button>
-                          </>
-                        )}
-                        {column.id === "feito" && !card.holder && (
-                          <button
-                            type="button"
-                            onClick={() => qa(card)}
-                            title="Abre um Claude que pergunta onde juntar, confere se atende o pedido e valida ou devolve ao backlog com o que falta"
-                            className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                          <span
+                            className={`rounded border px-1.5 text-[10px] uppercase ${priorityStyle[card.priority]}`}
                           >
-                            <ShieldCheck className="size-3.5" /> QA
-                          </button>
-                        )}
-                        {column.id === "fazendo" && card.holder && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const holder = card.holder ?? "";
-                              void act(() => client.restartWorker(holder));
-                            }}
-                            title="Relança o trabalhador com o mesmo modelo, no mesmo worktree"
-                            className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                            {card.priority}
+                          </span>
+                          <span
+                            className={`rounded px-1.5 text-[10px] uppercase ${
+                              card.kind === "agente"
+                                ? "bg-violet-500/20 text-violet-200"
+                                : "bg-white/10 text-slate-300"
+                            }`}
                           >
-                            <RotateCcw className="size-3.5" /> Reiniciar
-                          </button>
-                        )}
-                        {column.id === "fazendo" && card.holder && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const holder = card.holder ?? "";
-                              void act(() => client.deleteSession(holder));
-                            }}
-                            title="Para o trabalhador e devolve a tarefa ao backlog; o worktree e os commits ficam"
-                            className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                            {card.kind === "agente" ? "agente" : "manual"}
+                          </span>
+                          {card.blocked && (
+                            <span className="rounded bg-amber-500/20 px-1.5 text-[10px] text-amber-200 uppercase">
+                              cota
+                            </span>
+                          )}
+                        </div>
+                        {card.depends_on && card.depends_on.length > 0 && (
+                          <div
+                            className="flex items-center gap-1 text-[10px] text-slate-400"
+                            title="Depende destas tarefas: o trabalhador só abre depois que elas entram na main"
                           >
-                            <Square className="size-3.5" /> Parar
-                          </button>
+                            <span className="text-slate-500">←</span>
+                            <span className="font-mono">{card.depends_on.join(", ")}</span>
+                          </div>
                         )}
                         <button
                           type="button"
                           onClick={() => setEditing(card)}
-                          title="Editar"
-                          className="rounded-md p-1 text-slate-400 hover:text-white"
+                          className="text-left font-medium text-white hover:underline"
                         >
-                          <Pencil className="size-3.5" />
+                          {card.title}
                         </button>
-                        <button
-                          type="button"
-                          title="Apagar o card"
-                          onClick={() => {
-                            if (window.confirm(`Apagar ${card.id} "${card.title}"?`)) {
-                              void act(() => client.deleteCard(profile, project, card.id));
-                            }
-                          }}
-                          className="rounded-md p-1 text-slate-400 hover:text-rose-300"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      </div>
-                      {otherModel?.id === card.id && (
-                        <form
-                          className="flex gap-1.5"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            const model = otherModel.model.trim();
-                            if (!model) return;
-                            setOtherModel(null);
-                            void act(() => client.mandarCard(profile, project, card.id, [model]));
-                          }}
-                        >
-                          <input
-                            aria-label={`Modelo do opencode para ${card.id}`}
-                            value={otherModel.model}
-                            onChange={(event) =>
-                              setOtherModel({ id: card.id, model: event.target.value })
-                            }
-                            className="min-w-0 flex-1 rounded-md border border-line bg-black/30 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-accent/60"
-                          />
+                        {card.description && (
+                          <p className="line-clamp-3 whitespace-pre-line text-xs text-slate-400">
+                            {card.description}
+                          </p>
+                        )}
+                        {card.holder && (
+                          <p className="text-xs text-slate-300">
+                            em {holderLabel(card.holder, sessions)}
+                          </p>
+                        )}
+                        {column.id === "backlog" && (card.failures ?? 0) > 0 && (
+                          <p className="text-xs text-amber-300">
+                            Voltou {card.failures}× sem concluir: o orquestrador não puxa de novo
+                            sozinho.
+                          </p>
+                        )}
+                        {column.id === "backlog" && card.blocked && (
+                          <p className="text-xs text-amber-300">
+                            Parou por cota: <span className="font-mono">{card.blocked}</span>
+                          </p>
+                        )}
+                        {card.merged ? (
+                          <p className="text-xs text-emerald-300">
+                            na <span className="font-mono">{card.merged.branch}</span> ·{" "}
+                            <span className="font-mono">{card.merged.commit.slice(0, 7)}</span>
+                          </p>
+                        ) : (
+                          card.commit && (
+                            <p className="font-mono text-xs text-emerald-300">
+                              {card.commit.slice(0, 7)}
+                            </p>
+                          )
+                        )}
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {column.id === "backlog" && card.kind === "manual" && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void act(() => client.mandarCard(profile, project, card.id))
+                              }
+                              disabled={waitingOn(card, cards).length > 0}
+                              title={
+                                waitingOn(card, cards).length > 0
+                                  ? `Espera ${waitingOn(card, cards).join(", ")} entrar na main (QA)`
+                                  : "Manda esta tarefa para um trabalhador agora"
+                              }
+                              className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30 disabled:opacity-50"
+                            >
+                              <Play className="size-3.5" /> Mandar
+                            </button>
+                          )}
+                          {column.id === "backlog" &&
+                            card.kind === "agente" &&
+                            (card.failures ?? 0) > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void act(() =>
+                                    client.updateCard(profile, project, card.id, { failures: 0 }),
+                                  )
+                                }
+                                title="Zera as voltas: o orquestrador automático pode puxar de novo"
+                                className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                              >
+                                <RotateCcw className="size-3.5" /> Tentar de novo
+                              </button>
+                            )}
+                          {/* Parou por cota ou voltou sem concluir: dá para terminar com outro harness. */}
+                          {column.id === "backlog" &&
+                            (card.blocked || (card.failures ?? 0) > 0) && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => finishWithClaude(card)}
+                                  title="Abre um Claude Code no worktree da tarefa, que continua de onde o trabalhador parou"
+                                  className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                                >
+                                  <Sparkles className="size-3.5" /> Terminar com Claude
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setOtherModel(
+                                      otherModel?.id === card.id
+                                        ? null
+                                        : { id: card.id, model: OTHER_MODEL },
+                                    )
+                                  }
+                                  title="Manda para um trabalhador do opencode com outro modelo (ex.: pelo 9router)"
+                                  className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                                >
+                                  <Play className="size-3.5" /> Outro modelo…
+                                </button>
+                              </>
+                            )}
+                          {column.id === "feito" && !card.holder && (
+                            <button
+                              type="button"
+                              onClick={() => qa(card)}
+                              title="Abre um Claude que pergunta onde juntar, confere se atende o pedido e valida ou devolve ao backlog com o que falta"
+                              className="flex items-center gap-1 rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                            >
+                              <ShieldCheck className="size-3.5" /> QA
+                            </button>
+                          )}
+                          {column.id === "fazendo" && card.holder && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const holder = card.holder ?? "";
+                                void act(() => client.restartWorker(holder));
+                              }}
+                              title="Relança o trabalhador com o mesmo modelo, no mesmo worktree"
+                              className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                            >
+                              <RotateCcw className="size-3.5" /> Reiniciar
+                            </button>
+                          )}
+                          {column.id === "fazendo" && card.holder && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const holder = card.holder ?? "";
+                                void act(() => client.deleteSession(holder));
+                              }}
+                              title="Para o trabalhador e devolve a tarefa ao backlog; o worktree e os commits ficam"
+                              className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-white/10"
+                            >
+                              <Square className="size-3.5" /> Parar
+                            </button>
+                          )}
                           <button
-                            type="submit"
-                            className="rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                            type="button"
+                            onClick={() => setEditing(card)}
+                            title="Editar"
+                            className="rounded-md p-1 text-slate-400 hover:text-white"
                           >
-                            Mandar
+                            <Pencil className="size-3.5" />
                           </button>
-                        </form>
-                      )}
-                    </article>
-                  ))}
+                          <button
+                            type="button"
+                            title="Apagar o card"
+                            onClick={() => {
+                              if (window.confirm(`Apagar ${card.id} "${card.title}"?`)) {
+                                void act(() => client.deleteCard(profile, project, card.id));
+                              }
+                            }}
+                            className="rounded-md p-1 text-slate-400 hover:text-rose-300"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
+                        {otherModel?.id === card.id && (
+                          <form
+                            className="flex gap-1.5"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              const model = otherModel.model.trim();
+                              if (!model) return;
+                              setOtherModel(null);
+                              void act(() => client.mandarCard(profile, project, card.id, [model]));
+                            }}
+                          >
+                            <input
+                              aria-label={`Modelo do opencode para ${card.id}`}
+                              value={otherModel.model}
+                              onChange={(event) =>
+                                setOtherModel({ id: card.id, model: event.target.value })
+                              }
+                              className="min-w-0 flex-1 rounded-md border border-line bg-black/30 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-accent/60"
+                            />
+                            <button
+                              type="submit"
+                              className="rounded-md border border-accent/50 bg-accent/20 px-2 py-1 text-xs text-white hover:bg-accent/30"
+                            >
+                              Mandar
+                            </button>
+                          </form>
+                        )}
+                      </article>
+                    );
+                  })}
                 </section>
               );
             })}

@@ -21,7 +21,7 @@ use hub_core::kanban::{Board, Card, Column, Draft, KanbanError, Merged};
 use hub_core::worker::{self, WorkerRun};
 use hub_core::{profile_data_dir, workers_config_at};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 type Reply<T> = Result<T, Response>;
 
@@ -49,6 +49,7 @@ fn column_name(column: Column) -> &'static str {
         Column::Backlog => "backlog",
         Column::Fazendo => "fazendo",
         Column::Feito => "feito",
+        Column::Validando => "validando",
         Column::Validado => "validado",
     }
 }
@@ -94,9 +95,13 @@ fn clean_validated(dir: &Path, board: &Board, released: &[String]) {
         let merged = card.merged.as_ref().map(|m| m.commit.as_str());
         if let Some(merged) = merged
             && git_out(dir, &["merge-base", "--is-ancestor", &branch, merged]).is_ok()
-            && let Err(e) = git_out(dir, &["branch", "-D", &branch])
         {
-            tracing::warn!("branch {branch} ficou: {e}");
+            // Tenta deletar com -d (seguro, só se já mesclado); cai para -D se falhar.
+            if git_out(dir, &["branch", "-d", &branch]).is_err()
+                && let Err(e) = git_out(dir, &["branch", "-D", &branch])
+            {
+                tracing::warn!("branch {branch} ficou: {e}");
+            }
         }
     }
 }
@@ -139,14 +144,21 @@ pub(super) struct BoardView {
     /// Só na resposta do `PUT …/orquestrador`: tarefas que a volta abriu agora, para o aviso.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     started: Vec<String>,
+    /// Último resumo de revisão (F11.12), lido de `.assistente/revisoes`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review: Option<ReviewSummary>,
 }
 
 fn board_view(state: &AppState, profile: &str, project: &str, board: Board) -> BoardView {
+    let review = project_dir(state, profile, project)
+        .ok()
+        .and_then(|dir| latest_review(&dir));
     let errors = state.0.orchestrator_errors.lock().expect("lock dos erros");
     BoardView {
         orchestrator_error: errors.get(&orchestrator_key(profile, project)).cloned(),
         board,
         started: Vec::new(),
+        review,
     }
 }
 
@@ -415,7 +427,31 @@ pub(super) async fn qa_all(
     State(state): State<AppState>,
     Params((profile, project)): Params<(String, String)>,
 ) -> Reply<(StatusCode, Json<SessionInfo>)> {
-    let dir = project_dir(&state, &profile, &project)?;
+    let info = hold_done_cards(&state, &profile, &project, false).await?;
+    Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// POST /api/projects/{perfil}/{projeto}/kanban/revisar (F11.12): a revisão em lote. Um Claude na
+/// raiz do projeto, com `--docker` para o check, segura os cards "feitos" livres, junta os que
+/// passam na `main` (`/v1/kanban/juntar`), devolve os outros ao backlog e grava o resumo
+/// (`/v1/kanban/resumo`). O orquestrador chama o mesmo sozinho (`auto_review`).
+pub(super) async fn review_board(
+    State(state): State<AppState>,
+    Params((profile, project)): Params<(String, String)>,
+) -> Reply<(StatusCode, Json<SessionInfo>)> {
+    let info = hold_done_cards(&state, &profile, &project, true).await?;
+    Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// Abre o Claude do QA geral (`review` falso) ou da revisão (verdadeiro) segurando todos os
+/// cards "feitos" sem dono, em ordem de número.
+async fn hold_done_cards(
+    state: &AppState,
+    profile: &str,
+    project: &str,
+    review: bool,
+) -> Reply<SessionInfo> {
+    let dir = project_dir(state, profile, project)?;
     // Sem a API dos agentes o Claude não conseguiria validar nem reabrir: não abre.
     if exec_access_for(&state.0, AgentKind::Claude).is_none() {
         return Err(error(
@@ -424,7 +460,7 @@ pub(super) async fn qa_all(
         ));
     }
     let _guard = state.0.kanban_lock.lock().await;
-    let mut board = load(&state, &dir).await?;
+    let mut board = load(state, &dir).await?;
     let mut cards: Vec<Card> = board
         .cards
         .iter()
@@ -432,26 +468,36 @@ pub(super) async fn qa_all(
         .cloned()
         .collect();
     if cards.is_empty() {
+        let what = if review { "a revisão" } else { "o QA" };
         return Err(error(
             StatusCode::CONFLICT,
-            "nenhum card em feito livre para o QA",
+            &format!("nenhum card em feito livre para {what}"),
         ));
     }
-    cards.sort_by_key(|card| {
-        card.id
-            .trim_start_matches('T')
-            .parse::<u32>()
-            .unwrap_or(u32::MAX)
-    });
-    let prompt = worker::render_qa_all_prompt(&cards, &board.orchestrator.instructions);
+    cards.sort_by_key(|card| number(&card.id));
+    // A revisão cria a worktree dela em `.assistente/worktrees/`: fora do commit do quadro.
+    if review {
+        crate::sleep::exclude_line(&dir, worker::WORKTREES_EXCLUDE)
+            .await
+            .map_err(|e| internal(&format!("{e:#}")))?;
+    }
+    let instructions = &board.orchestrator.instructions;
+    let prompt = if review {
+        worker::render_review_prompt(&cards, instructions)
+    } else {
+        worker::render_qa_all_prompt(&cards, instructions)
+    };
     let spec = SessionSpec {
-        profile: profile.clone(),
-        project: project.clone(),
+        profile: profile.to_owned(),
+        project: project.to_owned(),
         agent: AgentKind::Claude,
     };
-    let info = super::launch_session(&state, &spec, Some(&prompt)).await?;
+    let info = super::launch_session_with(state, &spec, Some(&prompt), review).await?;
     let ids: Vec<&str> = cards.iter().map(|card| card.id.as_str()).collect();
-    let message = format!("kanban: QA geral de {} com {}", ids.join(", "), info.id);
+    let what = if review { "revisão" } else { "QA geral" };
+    let message = format!("kanban: {what} de {} com {}", ids.join(", "), info.id);
+    // Segura os cards (QA ou revisão): o Claude precisa ser o holder para chamar
+    // validate/reopen (QA) ou juntar/reabrir/resumo (revisão).
     let saved = ids
         .iter()
         .try_for_each(|id| board.start_qa(id, &info.id).map(|_| ()))
@@ -461,8 +507,12 @@ pub(super) async fn qa_all(
         let _ = state.0.tmux.kill(&info.id).await;
         return Err(response);
     }
-    tracing::info!("Claude {} no QA geral de {}", info.id, ids.join(", "));
-    Ok((StatusCode::CREATED, Json(info)))
+    tracing::info!("Claude {} na {what} de {}", info.id, ids.join(", "));
+    Ok(info)
+}
+
+fn number(id: &str) -> u32 {
+    id.trim_start_matches('T').parse().unwrap_or(u32::MAX)
 }
 
 /// Abre um Claude interativo no worktree da tarefa (criado se faltar), com a API dos agentes,
@@ -948,9 +998,20 @@ pub(super) struct ValidateBody {
     branch: String,
 }
 
-/// POST /v1/kanban/validate `{id, branch}` (F11.15): o QA que segura a tarefa aprovou. O hubd
-/// junta a branch dela na `branch` (merge local, nunca push) e o card vai para "validado".
-/// Conflito = 409, nada muda: o QA junta a `branch` no worktree, resolve e chama de novo.
+/// Tempo do check do projeto no PC (F11.17). O `fora-do-jail kanban validar` espera mais que
+/// isto somado ao prazo de aprovação do pedido.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Fim da saída do check que volta ao QA.
+const CHECK_TAIL_LINES: usize = 40;
+const CHECK_TAIL_BYTES: usize = 4_000;
+
+/// POST /v1/kanban/validate `{id, branch}` (F11.15, F11.17): o QA que segura a tarefa aprovou.
+/// O hubd monta, numa worktree descartável, o commit que a `branch` vai receber (o merge, ou a
+/// ponta da tarefa no fast-forward) e roda nela o check do projeto, num pedido `host` que você
+/// aprova no app. O card fica "validando" até o resultado. Verde: a `branch` anda (merge local,
+/// nunca push) e o card vai para "validado". Vermelho, negado ou expirado: nada muda, o card
+/// volta a "feito" e o fim da saída volta ao QA no 409. Conflito = 409, nada muda: o QA junta
+/// a `branch` no worktree, resolve e chama de novo.
 pub(super) async fn agent_validate(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -969,83 +1030,242 @@ pub(super) async fn agent_validate(
     {
         return Err(error(StatusCode::BAD_REQUEST, "branch de destino inválida"));
     }
+    // A worktree descartável fica com as das tarefas (fora do git): o PC a enxerga no mesmo
+    // caminho, e o check roda nela.
+    let scratch = worker::worktree_dir(&dir, &format!("qa-juntar-{}-{}", body.id, now()));
+    let (card, landing) = {
+        let _guard = state.0.kanban_lock.lock().await;
+        let mut board = load(&state, &dir).await?;
+        // Confere quem segura antes de mexer no git.
+        let card = board
+            .start_check(&body.id, &session.id)
+            .map_err(kanban_error)?
+            .clone();
+        let worktree = worker::worktree_dir(&dir, &card.id);
+        let message = format!("Junta {}: {} (QA)", card.id, card.title);
+        // Sem a branch (tarefa feita fora de um trabalhador, p. ex. no modo dormir), vale o commit
+        // marcado no card.
+        let has_branch = git_out(
+            &dir,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+        .is_ok();
+        let source = match (&card.commit, has_branch) {
+            (Some(commit), false) => commit.clone(),
+            _ => format!("refs/heads/{branch}"),
+        };
+        // Já está na `target`: nada a juntar nem a verificar.
+        if let Some(commit) = already_in(&dir, &source, &target) {
+            return validated(&mut board, &dir, &card.id, &session.id, &target, commit);
+        }
+        // "Validando" antes de montar o merge: o commit do quadro anda com a `target` se ela é o
+        // checkout do projeto, e o check vê o que ela vai ser.
+        persist(&dir, &board, &format!("kanban: {} validando", card.id))?;
+        let prepared = {
+            let (dir, target, scratch) = (dir.clone(), target.clone(), scratch.clone());
+            tokio::task::spawn_blocking(move || {
+                prepare_merge(&dir, &worktree, &source, &target, &scratch, &message)
+            })
+            .await
+            .map_err(|e| internal(&e.to_string()))?
+        };
+        match prepared {
+            Ok(landing) => (card, landing),
+            Err((status, message)) => {
+                board
+                    .check_failed(&card.id, &session.id)
+                    .map_err(kanban_error)?;
+                persist(&dir, &board, &format!("kanban: {} volta a feito", card.id))?;
+                return Err(error(status, &message));
+            }
+        }
+    };
+
+    let checked = run_check(&state, &session, &scratch).await;
+    remove_scratch(&dir, &scratch);
+
     let _guard = state.0.kanban_lock.lock().await;
     let mut board = load(&state, &dir).await?;
-    // Confere quem segura antes de mexer no git.
-    let card = board
-        .get(&body.id)
-        .cloned()
-        .ok_or_else(|| kanban_error(KanbanError::NotFound))?;
-    if card.column != Column::Feito {
-        return Err(kanban_error(KanbanError::NotDone(card.column)));
-    }
-    if card.holder.as_deref() != Some(session.id.as_str()) {
-        return Err(kanban_error(KanbanError::NotHolder));
-    }
-    let worktree = worker::worktree_dir(&dir, &card.id);
-    let scratch = state
-        .0
-        .home
-        .join(format!(".assistente/qa-juntar-{}-{}", card.id, now()));
-    let message = format!("Junta {}: {} (QA)", card.id, card.title);
-    // Sem a branch (tarefa feita fora de um trabalhador, p. ex. no modo dormir), vale o commit
-    // marcado no card.
-    let has_branch = git_out(
-        &dir,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}"),
-        ],
-    )
-    .is_ok();
-    let source = match (&card.commit, has_branch) {
-        (Some(commit), false) => commit.clone(),
-        _ => format!("refs/heads/{branch}"),
+    // A sessão do QA acabou no meio (o `load` soltou o card): a `target` não anda.
+    let held = board.get(&card.id).is_some_and(|c| {
+        c.column == Column::Validando && c.holder.as_deref() == Some(session.id.as_str())
+    });
+    let landed = match checked {
+        Ok(()) if !held => Err((
+            StatusCode::CONFLICT,
+            "a tarefa saiu do QA durante o check. Nada mudou.".to_owned(),
+        )),
+        Ok(()) => {
+            let (dir, target, scratch) = (dir.clone(), target.clone(), scratch.clone());
+            let message = format!("Junta {}: {} (QA)", card.id, card.title);
+            tokio::task::spawn_blocking(move || land(&dir, &target, &landing, &scratch, &message))
+                .await
+                .map_err(|e| internal(&e.to_string()))?
+        }
+        Err(report) => Err((StatusCode::CONFLICT, report)),
     };
-    let commit = {
-        let (dir, target) = (dir.clone(), target.clone());
-        tokio::task::spawn_blocking(move || {
-            merge_task(&dir, &worktree, &source, &target, &scratch, &message)
-        })
-        .await
-        .map_err(|e| internal(&e.to_string()))?
-        .map_err(|(status, message)| error(status, &message))?
+    match landed {
+        Ok(commit) => validated(&mut board, &dir, &card.id, &session.id, &target, commit),
+        Err((status, message)) => {
+            if board.check_failed(&card.id, &session.id).is_ok() {
+                persist(&dir, &board, &format!("kanban: {} volta a feito", card.id))?;
+            }
+            Err(error(status, &message))
+        }
+    }
+}
+
+/// Card juntado em `target` no `commit`: vai para "validado".
+fn validated(
+    board: &mut Board,
+    dir: &Path,
+    id: &str,
+    holder: &str,
+    target: &str,
+    commit: String,
+) -> Reply<Json<Card>> {
+    let merged = Merged {
+        branch: target.to_owned(),
+        commit,
     };
     let card = board
-        .validate(
-            &card.id,
-            &session.id,
-            Merged {
-                branch: target.clone(),
-                commit,
-            },
-        )
+        .validate(id, holder, merged)
         .map_err(kanban_error)?
         .clone();
     persist(
-        &dir,
-        &board,
-        &format!("kanban: {} validada e juntada em {target}", card.id),
+        dir,
+        board,
+        &format!("kanban: {id} validada e juntada em {target}"),
     )?;
     Ok(Json(card))
 }
 
-/// Junta `source` (a branch da tarefa, ou o commit dela) na `target` e devolve o commit da
-/// `target` depois. A `target` só
-/// anda no fim, e só para a frente: já contém a tarefa = nada muda; é ancestral = fast-forward;
-/// senão, merge numa worktree descartável. Branch que não existe nasce na ponta da tarefa. Quem
-/// tem a `target` em checkout (a pasta do projeto, em geral a `main`) anda com `merge --ff-only`,
-/// que recusa se encostar em mudança sua; senão a ref troca conferindo o valor antigo (F8.8).
-fn merge_task(
+/// Roda o check do projeto em `cwd` num pedido `host` (F9.9): você aprova no app, que roda no PC
+/// e devolve o resultado. Nunca "sempre permitido". `Err` = o que dizer ao QA.
+async fn run_check(state: &AppState, session: &SessionInfo, cwd: &Path) -> Result<(), String> {
+    // O comando vem da engrenagem do projeto, nunca do `.assistente.toml` (o agente o edita).
+    let command = project_settings_for(&state.0, &session.profile, &session.project).check;
+    // Env do perfil como na aba Terminal (sem token: o comando roda fora do jail).
+    let spec = SessionSpec {
+        profile: session.profile.clone(),
+        project: session.project.clone(),
+        agent: AgentKind::Shell,
+    };
+    let plan = LaunchPlan::build(&state.0.config, &state.0.home, &spec, 1)
+        .map_err(|e| format!("não consegui montar o check: {e}"))?;
+    let (view, _) = state
+        .0
+        .exec
+        .submit(NewRequest {
+            session: session.id.clone(),
+            profile: session.profile.clone(),
+            project: session.project.clone(),
+            cwd: cwd.to_owned(),
+            command: command.clone(),
+            target: ExecTarget::Host,
+            env: plan.env,
+            timeout_secs: Some(CHECK_TIMEOUT.as_secs()),
+            auto_approved: false,
+        })
+        .map_err(|e| format!("não consegui pedir o check ({e:?}): aprove ou negue os pedidos pendentes e valide de novo"))?;
+    tracing::info!("check {} de {} no PC: {command}", view.id, session.id);
+    // O `wait` acorda nos prazos do pedido (aprovação, timeout no PC): repetir até o fim.
+    let view = loop {
+        match state.0.exec.wait(&view.id, Duration::from_secs(60)).await {
+            Some(view) if view.state.is_final() => break view,
+            Some(_) => continue,
+            None => {
+                return Err(
+                    "o pedido do check sumiu (o hubd reiniciou?): valide de novo".to_owned(),
+                );
+            }
+        }
+    };
+    check_verdict(&view)
+}
+
+/// Verde só com código 0 no tempo. Senão, o motivo e o fim da saída.
+fn check_verdict(view: &ExecView) -> Result<(), String> {
+    let result = view.result.as_ref();
+    let why = match view.state {
+        exec::ExecState::Done => match result {
+            Some(r) if r.timed_out => "passou do tempo".to_owned(),
+            Some(r) if r.exit_code == Some(0) => return Ok(()),
+            Some(r) => match r.exit_code {
+                Some(code) => format!("saiu com {code}"),
+                None => "morreu por sinal".to_owned(),
+            },
+            None => "terminou sem resultado".to_owned(),
+        },
+        exec::ExecState::Denied => "foi negado no app".to_owned(),
+        exec::ExecState::Expired => "expirou sem resposta do app".to_owned(),
+        _ => "não conseguiu rodar".to_owned(),
+    };
+    let output = result
+        .map(|r| tail(&format!("{}{}", r.stdout, r.stderr)))
+        .unwrap_or_default();
+    Err(format!(
+        "o check `{}` {why}. Nada mudou: o card voltou para \"feito\".\n{output}",
+        view.command
+    )
+    .trim_end()
+    .to_owned())
+}
+
+/// As últimas linhas de `text`, no máximo `CHECK_TAIL_BYTES`.
+fn tail(text: &str) -> String {
+    let text = text.trim_end();
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = lines[lines.len().saturating_sub(CHECK_TAIL_LINES)..].join("\n");
+    if out.len() > CHECK_TAIL_BYTES {
+        let mut start = out.len() - CHECK_TAIL_BYTES;
+        while !out.is_char_boundary(start) {
+            start += 1;
+        }
+        out = out[start..].to_owned();
+    }
+    out
+}
+
+/// Ponta da `target` se ela já contém `source`: a tarefa já foi juntada.
+fn already_in(dir: &Path, source: &str, target: &str) -> Option<String> {
+    let commit = |rev: &str| {
+        git_out(
+            dir,
+            &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+        )
+    };
+    let tip = commit(source).ok()?;
+    let old = commit(&format!("refs/heads/{target}")).ok()?;
+    git_out(dir, &["merge-base", "--is-ancestor", &tip, &old])
+        .is_ok()
+        .then_some(old)
+}
+
+/// O que a `target` vai receber (F11.17): `new` (o merge, ou `tip` no fast-forward), em checkout
+/// na worktree descartável para o check. `old` é a `target` de agora; `None` = ela nasce em `new`.
+#[derive(Debug)]
+struct Landing {
+    old: Option<String>,
+    new: String,
+    tip: String,
+}
+
+/// Monta em `scratch` o commit que a `target` vai receber de `source` (a branch da tarefa, ou o
+/// commit dela). Não mexe na `target`. Conflito ou worktree da tarefa suja = 409.
+fn prepare_merge(
     dir: &Path,
     worktree: &Path,
     source: &str,
     target: &str,
     scratch: &Path,
     message: &str,
-) -> Result<String, (StatusCode, String)> {
+) -> Result<Landing, (StatusCode, String)> {
     let conflict = |message: String| (StatusCode::CONFLICT, message);
     if worktree.exists()
         && !git_out(worktree, &["status", "--porcelain"])
@@ -1061,37 +1281,79 @@ fn merge_task(
         &["rev-parse", "--verify", &format!("{source}^{{commit}}")],
     )
     .map_err(|_| conflict(format!("{source} não existe")))?;
-    let target_ref = format!("refs/heads/{target}");
-    let Ok(old) = git_out(
+    let old = git_out(
         dir,
-        &["rev-parse", "--verify", &format!("{target_ref}^{{commit}}")],
-    ) else {
-        git_out(dir, &["branch", target, &tip])
-            .map_err(|e| conflict(format!("não consegui criar {target}: {e}")))?;
-        return Ok(tip);
-    };
-    let ancestor = |a: &str, b: &str| git_out(dir, &["merge-base", "--is-ancestor", a, b]).is_ok();
-    let new = if ancestor(&tip, &old) {
-        return Ok(old);
-    } else if ancestor(&old, &tip) {
-        tip
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("refs/heads/{target}^{{commit}}"),
+        ],
+    )
+    .ok();
+    let fast_forward = old
+        .as_deref()
+        .is_none_or(|old| git_out(dir, &["merge-base", "--is-ancestor", old, &tip]).is_ok());
+    let new = if fast_forward {
+        add_scratch(dir, scratch, &tip).map_err(|e| {
+            remove_scratch(dir, scratch);
+            conflict(format!("não consegui montar a worktree do check: {e}"))
+        })?;
+        tip.clone()
     } else {
-        let merged = merge_in_scratch(dir, scratch, &old, &tip, message);
-        let scratch_arg = scratch.to_string_lossy().into_owned();
-        let _ = git_out(dir, &["worktree", "remove", "--force", &scratch_arg]);
-        let _ = std::fs::remove_dir_all(scratch);
-        let _ = git_out(dir, &["worktree", "prune"]);
-        let name = source.trim_start_matches("refs/heads/");
-        merged.map_err(|e| {
+        let old = old.as_deref().unwrap_or_default();
+        merge_in_scratch(dir, scratch, old, &tip, message).map_err(|e| {
+            remove_scratch(dir, scratch);
+            let name = source.trim_start_matches("refs/heads/");
             conflict(format!(
                 "conflito ao juntar {name} em {target} ({e}). Nada mudou: rode `git merge \
                  {target}` no worktree, resolva, commite e valide de novo"
             ))
         })?
     };
+    Ok(Landing { old, new, tip })
+}
+
+/// Anda a `target` para o commit verificado, pela regra da F8.8: fast-forward se ela é o
+/// checkout do projeto, senão troca a ref conferindo o valor antigo. Se só o quadro andou nela
+/// durante o check (os commits do kanban vão para o checkout), junta a tarefa de novo por cima,
+/// em `scratch`: o código é o que o check viu. Outra mudança = 409, nada muda.
+fn land(
+    dir: &Path,
+    target: &str,
+    landing: &Landing,
+    scratch: &Path,
+    message: &str,
+) -> Result<String, (StatusCode, String)> {
+    let conflict = |message: String| (StatusCode::CONFLICT, message);
+    let moved_away = || {
+        conflict(format!(
+            "{target} andou durante o check. Nada mudou: valide de novo"
+        ))
+    };
+    let target_ref = format!("refs/heads/{target}");
+    let Some(old) = &landing.old else {
+        git_out(dir, &["branch", target, &landing.new]).map_err(|_| moved_away())?;
+        return Ok(landing.new.clone());
+    };
+    let current = git_out(
+        dir,
+        &["rev-parse", "--verify", &format!("{target_ref}^{{commit}}")],
+    )
+    .map_err(|_| moved_away())?;
+    let new = if current == *old {
+        landing.new.clone()
+    } else {
+        let changed = git_out(dir, &["diff", "--name-only", old, &current]).map_err(conflict)?;
+        if changed.lines().any(|path| path != hub_core::kanban::FILE) {
+            return Err(moved_away());
+        }
+        let merged = merge_in_scratch(dir, scratch, &current, &landing.tip, message);
+        remove_scratch(dir, scratch);
+        merged.map_err(|e| conflict(format!("não consegui juntar de novo em {target} ({e})")))?
+    };
     let moved = match checkout_of(dir, &target_ref) {
         Some(checkout) => git_out(&checkout, &["merge", "--ff-only", &new]),
-        None => git_out(dir, &["update-ref", &target_ref, &new, &old]),
+        None => git_out(dir, &["update-ref", &target_ref, &new, &current]),
     };
     moved.map_err(|e| {
         let why = e.lines().next().unwrap_or_default();
@@ -1102,6 +1364,18 @@ fn merge_task(
     Ok(new)
 }
 
+fn add_scratch(dir: &Path, scratch: &Path, commit: &str) -> Result<(), String> {
+    let scratch_arg = scratch.to_string_lossy().into_owned();
+    git_out(dir, &["worktree", "add", "--detach", &scratch_arg, commit]).map(drop)
+}
+
+fn remove_scratch(dir: &Path, scratch: &Path) {
+    let scratch_arg = scratch.to_string_lossy().into_owned();
+    let _ = git_out(dir, &["worktree", "remove", "--force", &scratch_arg]);
+    let _ = std::fs::remove_dir_all(scratch);
+    let _ = git_out(dir, &["worktree", "prune"]);
+}
+
 fn merge_in_scratch(
     dir: &Path,
     scratch: &Path,
@@ -1109,8 +1383,7 @@ fn merge_in_scratch(
     tip: &str,
     message: &str,
 ) -> Result<String, String> {
-    let scratch_arg = scratch.to_string_lossy().into_owned();
-    git_out(dir, &["worktree", "add", "--detach", &scratch_arg, old])?;
+    add_scratch(dir, scratch, old)?;
     let mut args = hubd_identity_args(dir);
     args.extend(["merge", "--no-ff", "-m", message, tip].map(str::to_owned));
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1165,6 +1438,234 @@ pub(super) async fn agent_reopen(
         &format!("kanban: {} reprovada no QA; volta ao backlog", card.id),
     )?;
     Ok(Json(card))
+}
+
+#[derive(Deserialize)]
+pub(super) struct MergeMainBody {
+    commit: String,
+    /// As tarefas que o commit junta; vazio = só o que a revisão mudou (as notas do backlog).
+    #[serde(default)]
+    ids: Vec<String>,
+}
+
+/// Branch que a revisão (F11.12) leva para a frente.
+const REVIEW_TARGET: &str = "main";
+
+/// POST /v1/kanban/juntar `{commit, ids}` (F11.12): a revisão juntou as tarefas `ids` numa
+/// worktree descartável e o check passou. O hubd anda com a `main` até `commit` pela regra da F8.8
+/// (só para a frente; nunca push) e as tarefas vão para "validado" com `merged`. A `main` andou
+/// desde então, ou uma tarefa não está no commit: 409, nada muda.
+pub(super) async fn agent_merge_main(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<MergeMainBody>,
+) -> Reply<Json<Vec<Card>>> {
+    let session = agent_session(&state, &headers).await?;
+    let dir = project_dir(&state, &session.profile, &session.project)?;
+    let Some(commit) = checked_commit(Some(body.commit))? else {
+        return Err(error(StatusCode::BAD_REQUEST, "commit inválido"));
+    };
+    if let Some(id) = body.ids.iter().find(|id| !worker::valid_task_id(id)) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            &format!("id de tarefa inválido: {id}"),
+        ));
+    }
+    let _guard = state.0.kanban_lock.lock().await;
+    let mut board = load(&state, &dir).await?;
+    // Confere quem segura antes de mexer no git.
+    let mut sources = Vec::new();
+    for id in &body.ids {
+        let card = board
+            .get(id)
+            .ok_or_else(|| kanban_error(KanbanError::NotFound))?;
+        if card.column != Column::Feito {
+            return Err(kanban_error(KanbanError::NotDone(card.column)));
+        }
+        if card.holder.as_deref() != Some(session.id.as_str()) {
+            return Err(kanban_error(KanbanError::NotHolder));
+        }
+        let branch = format!("refs/heads/{}", worker::branch(id));
+        let source = match &card.commit {
+            Some(commit)
+                if git_out(&dir, &["rev-parse", "--verify", "--quiet", &branch]).is_err() =>
+            {
+                commit.clone()
+            }
+            _ => branch,
+        };
+        sources.push((id.clone(), source));
+    }
+    let merged = {
+        let dir = dir.clone();
+        tokio::task::spawn_blocking(move || advance_main(&dir, &commit, &sources))
+            .await
+            .map_err(|e| internal(&e.to_string()))?
+            .map_err(|(status, message)| error(status, &message))?
+    };
+    let mut cards = Vec::new();
+    for id in &body.ids {
+        let card = board
+            .validate(
+                id,
+                &session.id,
+                Merged {
+                    branch: REVIEW_TARGET.to_owned(),
+                    commit: merged.clone(),
+                },
+            )
+            .map_err(kanban_error)?;
+        cards.push(card.clone());
+    }
+    if !cards.is_empty() {
+        persist(
+            &dir,
+            &board,
+            &format!(
+                "kanban: {} na {REVIEW_TARGET} (revisão)",
+                body.ids.join(", ")
+            ),
+        )?;
+    }
+    Ok(Json(cards))
+}
+
+/// Leva a `main` até `commit`, só para a frente, conferindo antes que cada tarefa de `sources`
+/// (`(id, branch ou commit)`) está nele. Quem tem a `main` em checkout anda com `merge --ff-only`;
+/// senão a ref troca conferindo o valor antigo (F8.8). Devolve o commit da `main` depois.
+fn advance_main(
+    dir: &Path,
+    commit: &str,
+    sources: &[(String, String)],
+) -> Result<String, (StatusCode, String)> {
+    let conflict = |message: String| (StatusCode::CONFLICT, message);
+    let new = git_out(
+        dir,
+        &["rev-parse", "--verify", &format!("{commit}^{{commit}}")],
+    )
+    .map_err(|_| conflict(format!("o commit {commit} não existe no projeto")))?;
+    let target_ref = format!("refs/heads/{REVIEW_TARGET}");
+    let old = git_out(
+        dir,
+        &["rev-parse", "--verify", &format!("{target_ref}^{{commit}}")],
+    )
+    .map_err(|_| conflict(format!("o projeto não tem a branch {REVIEW_TARGET}")))?;
+    let ancestor = |a: &str, b: &str| git_out(dir, &["merge-base", "--is-ancestor", a, b]).is_ok();
+    for (id, source) in sources {
+        if !ancestor(source, &new) {
+            return Err(conflict(format!(
+                "{id} não está no commit {commit}: junte a branch dela antes. Nada mudou."
+            )));
+        }
+    }
+    if ancestor(&new, &old) {
+        return Ok(old);
+    }
+    if !ancestor(&old, &new) {
+        return Err(conflict(format!(
+            "a {REVIEW_TARGET} andou desde o começo da revisão (está em {}). Nada mudou.",
+            &old[..old.len().min(7)]
+        )));
+    }
+    let moved = match checkout_of(dir, &target_ref) {
+        Some(checkout) => git_out(&checkout, &["merge", "--ff-only", &new]),
+        None => git_out(dir, &["update-ref", &target_ref, &new, &old]),
+    };
+    moved.map_err(|e| {
+        let why = e.lines().next().unwrap_or_default();
+        conflict(format!(
+            "não consegui avançar {REVIEW_TARGET} ({why}). Nada mudou."
+        ))
+    })?;
+    Ok(new)
+}
+
+/// Pasta dos resumos das revisões (F11.12), relativa ao projeto, fora do git (`info/exclude`).
+const REVIEWS_DIR: &str = ".assistente/revisoes";
+/// Tamanho máximo de um resumo, em caracteres.
+const MAX_SUMMARY: usize = 20_000;
+
+/// Último resumo de revisão do projeto, mostrado no quadro.
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct ReviewSummary {
+    /// Caminho relativo ao projeto (`.assistente/revisoes/<data-hora>.md`).
+    file: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+pub(super) struct SummaryBody {
+    text: String,
+}
+
+/// POST /v1/kanban/resumo `{text}` (F11.12): o resumo da revisão (o que entrou, o que voltou e
+/// por quê, ou onde parou) vai para `.assistente/revisoes/<data-hora>.md` e aparece no quadro.
+pub(super) async fn agent_review_summary(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SummaryBody>,
+) -> Reply<(StatusCode, Json<ReviewSummary>)> {
+    let session = agent_session(&state, &headers).await?;
+    let dir = project_dir(&state, &session.profile, &session.project)?;
+    let text = body.text.trim().to_owned();
+    if text.is_empty() {
+        return Err(error(StatusCode::BAD_REQUEST, "o resumo está vazio"));
+    }
+    if text.chars().count() > MAX_SUMMARY {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            &format!("resumo com mais de {MAX_SUMMARY} caracteres"),
+        ));
+    }
+    let stamp = timestamp().await?;
+    let folder = dir.join(REVIEWS_DIR);
+    std::fs::create_dir_all(&folder).map_err(|e| internal(&e.to_string()))?;
+    crate::sleep::exclude_line(&dir, worker::REVIEWS_EXCLUDE)
+        .await
+        .map_err(|e| internal(&format!("{e:#}")))?;
+    let name = format!("{stamp}.md");
+    std::fs::write(folder.join(&name), format!("{text}\n"))
+        .map_err(|e| internal(&e.to_string()))?;
+    tracing::info!(
+        "resumo da revisão de {} em {REVIEWS_DIR}/{name}",
+        session.id
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(ReviewSummary {
+            file: format!("{REVIEWS_DIR}/{name}"),
+            text,
+        }),
+    ))
+}
+
+/// Data e hora locais para o nome do resumo (`2026-10-22-153400`).
+async fn timestamp() -> Reply<String> {
+    let output = tokio::process::Command::new("date")
+        .arg("+%F-%H%M%S")
+        .output()
+        .await
+        .map_err(|e| internal(&format!("date: {e}")))?;
+    let stamp = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if stamp.is_empty() || !stamp.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        return Err(internal("date devolveu uma data estranha"));
+    }
+    Ok(stamp)
+}
+
+/// O resumo mais novo de `.assistente/revisoes` (os nomes são a data e hora), se houver.
+fn latest_review(dir: &Path) -> Option<ReviewSummary> {
+    let name = std::fs::read_dir(dir.join(REVIEWS_DIR))
+        .ok()?
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.ends_with(".md"))
+        .max()?;
+    let text = std::fs::read_to_string(dir.join(REVIEWS_DIR).join(&name)).ok()?;
+    Some(ReviewSummary {
+        file: format!("{REVIEWS_DIR}/{name}"),
+        text: text.trim().chars().take(MAX_SUMMARY).collect(),
+    })
 }
 
 #[derive(Deserialize)]
@@ -1307,7 +1808,71 @@ async fn orchestrate(
         }
         started.push(next);
     }
+    if started.is_empty() {
+        auto_review(state, &dir, profile, project).await?;
+    }
     Ok(started)
+}
+
+/// Revisão automática (F11.12): com o orquestrador ligado, sem pausa, nada em "fazendo" e
+/// nenhum card "feito" já em revisão ou QA, os "feitos" livres vão para uma revisão. Os mesmos
+/// cards (mesmo commit) não vão duas vezes: o que a revisão não tocou espera você.
+async fn auto_review(
+    state: &AppState,
+    dir: &Path,
+    profile: &str,
+    project: &str,
+) -> Result<(), String> {
+    let pending = {
+        let _guard = state.0.kanban_lock.lock().await;
+        let board = match load(state, dir).await {
+            Ok(board) => board,
+            Err(response) => return Err(reply_text(response).await),
+        };
+        let done = || {
+            board
+                .cards
+                .iter()
+                .filter(|card| card.column == Column::Feito)
+        };
+        if !board.orchestrator.enabled
+            || board.orchestrator.paused.is_some()
+            || board.in_progress() > 0
+            || done().any(|card| card.holder.is_some())
+        {
+            return Ok(());
+        }
+        let mut pending: Vec<String> = done()
+            .map(|card| format!("{}@{}", card.id, card.commit.as_deref().unwrap_or("")))
+            .collect();
+        pending.sort();
+        pending.join(" ")
+    };
+    let key = orchestrator_key(profile, project);
+    if pending.is_empty()
+        || state
+            .0
+            .auto_reviews
+            .lock()
+            .expect("lock das revisões")
+            .get(&key)
+            == Some(&pending)
+    {
+        return Ok(());
+    }
+    match hold_done_cards(state, profile, project, true).await {
+        Ok(info) => {
+            tracing::info!("orquestrador: {key} revisão com {}", info.id);
+            state
+                .0
+                .auto_reviews
+                .lock()
+                .expect("lock das revisões")
+                .insert(key, pending);
+            Ok(())
+        }
+        Err(response) => Err(format!("revisão: {}", reply_text(response).await)),
+    }
 }
 
 /// A mensagem de um erro da API (`{"error": …}`), para o log e o quadro.
@@ -1441,6 +2006,53 @@ mod tests {
     }
 
     const CARDS: &str = "/api/projects/pessoal/proj/kanban";
+
+    /// O app fingido (F11.17): espera o pedido `host` do check (pendente) e o devolve.
+    async fn pending_check(app: Router) -> serde_json::Value {
+        loop {
+            let (_, list) = send(app.clone(), "GET", "/api/exec", None, None).await;
+            let pending = list
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["state"] == "pending");
+            if let Some(view) = pending {
+                return view.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Responde o pedido do check como o app: `None` nega; `Some(código)` aprova e devolve o
+    /// resultado do PC.
+    async fn finish_check(app: Router, view: &serde_json::Value, code: Option<i32>) {
+        let id = view["id"].as_str().unwrap();
+        let Some(code) = code else {
+            let (status, _) = send(app, "POST", &format!("/api/exec/{id}/deny"), None, None).await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            return;
+        };
+        let uri = format!("/api/exec/{id}/approve");
+        let (status, _) = send(app.clone(), "POST", &uri, Some("{}"), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        // O app pega o pedido antes de rodar (F9.11): só pedido pego aceita resultado.
+        let uri = format!("/api/exec/{id}/claim");
+        let (status, _) = send(app.clone(), "POST", &uri, None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let result = json!({
+            "exit_code": code,
+            "stdout": "linha 1\nteste quebrado: falta o botão\n",
+        });
+        let uri = format!("/api/exec/{id}/result");
+        let (status, _) = send(app, "POST", &uri, Some(&result.to_string()), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    async fn answer_check(app: Router, code: Option<i32>) -> serde_json::Value {
+        let view = pending_check(app.clone()).await;
+        finish_check(app, &view, code).await;
+        view
+    }
 
     #[tokio::test]
     async fn kanban_crud_commits_each_change_alone() {
@@ -2138,6 +2750,8 @@ mod tests {
         let t1 = worker::worktree_dir(&hub.proj, "T1");
         let t3 = worker::worktree_dir(&hub.proj, "T3");
         crate::sleep::tests::commit(&t1, "b.txt", "feito por T1");
+        // O agente edita o `.assistente.toml`: um `check` lá não vale (F11.17).
+        crate::sleep::tests::commit(&t1, ".assistente.toml", "check = \"true\"\n");
         crate::sleep::tests::commit(&t3, "c.txt", "T3");
         crate::sleep::tests::commit(&hub.proj, "c.txt", "main");
         for id in ["T1", "T2", "T3"] {
@@ -2219,8 +2833,57 @@ mod tests {
         let (status, body) = validate("T1", "main", &token1).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         std::fs::remove_file(t1.join("sujo.txt")).unwrap();
-        // Aprovado: a main (o checkout do projeto) anda com o merge, sem mexer no que é seu.
-        let (status, done) = validate("T1", "main", &token1).await;
+        let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+        assert_eq!(card(&board, "T1")["column"], "feito");
+        // Check vermelho ou negado: a main não anda, o QA vê o fim da saída e o card volta.
+        let (red, view) = tokio::join!(
+            validate("T1", "main", &token1),
+            answer_check(hub.app.clone(), Some(1))
+        );
+        let (status, body) = red;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        let message = body["error"].as_str().unwrap();
+        assert!(message.contains("saiu com 1"), "{message}");
+        assert!(message.contains("falta o botão"), "{message}");
+        // O comando é o da engrenagem (padrão), nunca o do `.assistente.toml`, e roda no PC, no
+        // merge descartável dentro do projeto, que some depois.
+        assert_eq!(view["command"], "./dev just check");
+        assert_eq!(view["target"], "host");
+        let scratch = PathBuf::from(view["cwd"].as_str().unwrap());
+        assert!(
+            scratch.starts_with(hub.proj.join(".assistente/worktrees")),
+            "{view}"
+        );
+        assert!(!scratch.exists());
+        let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+        assert_eq!(card(&board, "T1")["column"], "feito");
+        assert_eq!(card(&board, "T1")["holder"], qa1.as_str());
+        let (denied, _) = tokio::join!(
+            validate("T1", "main", &token1),
+            answer_check(hub.app.clone(), None)
+        );
+        assert_eq!(denied.0, StatusCode::CONFLICT, "{}", denied.1);
+        assert!(
+            git_out(
+                &hub.proj,
+                &["merge-base", "--is-ancestor", "agente/T1", "main"]
+            )
+            .is_err(),
+            "a main não recebeu a T1"
+        );
+        // Verde: a main (o checkout do projeto) anda com o merge, sem mexer no que é seu. Enquanto
+        // o check roda, o card fica "validando".
+        let (green, _) = tokio::join!(validate("T1", "main", &token1), async {
+            let view = pending_check(hub.app.clone()).await;
+            let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+            assert_eq!(card(&board, "T1")["column"], "validando");
+            // O quadro anda na main durante o check: a tarefa entra por cima mesmo assim.
+            let body = Some(r#"{"title":"durante o check"}"#);
+            let (status, _) = send(hub.app.clone(), "POST", CARDS, body, None).await;
+            assert_eq!(status, StatusCode::CREATED);
+            finish_check(hub.app.clone(), &view, Some(0)).await;
+        });
+        let (status, done) = green;
         assert_eq!(status, StatusCode::OK, "{done}");
         assert_eq!(done["column"], "validado");
         assert_eq!(done["merged"]["branch"], "main");
@@ -2250,9 +2913,13 @@ mod tests {
             body["error"].as_str().unwrap().contains("git merge main"),
             "{body}"
         );
-        assert_eq!(git_sync(&hub.proj, &["rev-parse", "main"]), main_before);
+        // A main só ganha os commits do quadro ("validando" e de volta a "feito"): mesma árvore.
+        assert_eq!(git_sync(&hub.proj, &["diff", &main_before, "main"]), "");
         // Para outra branch que não existe: ela nasce na ponta da tarefa.
-        let (status, done) = validate("T3", "release", &token3).await;
+        let ((status, done), _) = tokio::join!(
+            validate("T3", "release", &token3),
+            answer_check(hub.app.clone(), Some(0))
+        );
         assert_eq!(status, StatusCode::OK, "{done}");
         assert_eq!(
             git_sync(&hub.proj, &["rev-parse", "release"]),
@@ -2390,6 +3057,299 @@ mod tests {
             .unwrap();
         assert_eq!(t2["column"], "feito");
         assert!(t2.get("holder").is_none(), "{t2}");
+    }
+
+    #[tokio::test]
+    async fn review_merges_what_passes_into_main_and_reopens_the_rest() {
+        let t = TestTmux::new("kanban-revisao");
+        let hub = hub(&t, true);
+        let review = || {
+            let app = hub.app.clone();
+            async move { send(app, "POST", &format!("{CARDS}/revisar"), None, None).await }
+        };
+        for title in ["um", "dois", "tres"] {
+            let body = format!(r#"{{"title":"{title}","kind":"agente"}}"#);
+            send(hub.app.clone(), "POST", CARDS, Some(&body), None).await;
+        }
+        assert_eq!(review().await.0, StatusCode::CONFLICT, "nada em feito");
+        // T1 e T2 mexem no mesmo arquivo (se cruzam); T3 não tem código próprio.
+        let (_, worker) = session(&t, AgentKind::Opencode, 1).await;
+        for id in ["T1", "T2", "T3"] {
+            send(
+                hub.agents.clone(),
+                "POST",
+                "/v1/kanban/pull",
+                None,
+                Some(&worker),
+            )
+            .await;
+            let path = worker::worktree_dir(&hub.proj, id).display().to_string();
+            let branch = worker::branch(id);
+            git_sync(
+                &hub.proj,
+                &["worktree", "add", "-q", "-b", &branch, &path, "HEAD"],
+            );
+        }
+        let t1 = worker::worktree_dir(&hub.proj, "T1");
+        let t2 = worker::worktree_dir(&hub.proj, "T2");
+        crate::sleep::tests::commit(&t1, "lista.txt", "T1");
+        crate::sleep::tests::commit(&t2, "lista.txt", "T2");
+        for id in ["T1", "T2", "T3"] {
+            let body = format!(r#"{{"id":"{id}"}}"#);
+            send(
+                hub.agents.clone(),
+                "POST",
+                "/v1/kanban/done",
+                Some(&body),
+                Some(&worker),
+            )
+            .await;
+        }
+
+        // Um clique: um Claude na raiz segura os três, com o prompt da revisão.
+        let (status, info) = review().await;
+        assert_eq!(status, StatusCode::CREATED, "{info}");
+        assert_eq!(info["agent"], "claude");
+        let reviewer = info["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            last_subject(&hub.proj),
+            format!("kanban: revisão de T1, T2, T3 com {reviewer}")
+        );
+        let prompt = hub.proj.join(format!(".assistente/prompts/{reviewer}.md"));
+        let text = std::fs::read_to_string(&prompt).unwrap();
+        assert!(text.starts_with("# Revisão do quadro"), "{text}");
+        assert!(text.contains("### T3: tres"), "{text}");
+        assert_eq!(review().await.0, StatusCode::CONFLICT, "nada livre");
+        let token = exec_token(&t, &reviewer).await;
+        let merge_main = |body: String, token: String| {
+            let agents = hub.agents.clone();
+            async move {
+                send(
+                    agents,
+                    "POST",
+                    "/v1/kanban/juntar",
+                    Some(&body),
+                    Some(&token),
+                )
+                .await
+            }
+        };
+
+        // T3 sem código próprio volta ao backlog com a nota.
+        let (status, back) = send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/reopen",
+            Some(r#"{"id":"T3","note":"a branch não tem commit próprio; falta tudo"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{back}");
+        assert_eq!(back["column"], "backlog");
+        assert!(
+            back["description"]
+                .as_str()
+                .unwrap()
+                .contains("): a branch não tem commit próprio"),
+            "{back}"
+        );
+
+        // A junção numa worktree descartável, com o conflito resolvido.
+        let scratch = hub.proj.join(".assistente/worktrees/revisao-1");
+        let scratch_arg = scratch.display().to_string();
+        git_sync(
+            &hub.proj,
+            &["worktree", "add", "-q", "--detach", &scratch_arg, "main"],
+        );
+        git_sync(
+            &scratch,
+            &["merge", "-q", "--no-ff", "-m", "Junta T1", "agente/T1"],
+        );
+        let conflict = std::process::Command::new("git")
+            .current_dir(&scratch)
+            .args(["merge", "-q", "--no-ff", "-m", "Junta T2", "agente/T2"])
+            .output()
+            .unwrap();
+        assert!(!conflict.status.success(), "T1 e T2 se cruzam");
+        std::fs::write(scratch.join("lista.txt"), "T1\nT2\n").unwrap();
+        git_sync(&scratch, &["add", "lista.txt"]);
+        git_sync(&scratch, &["commit", "-q", "--no-edit"]);
+        let head = git_sync(&scratch, &["rev-parse", "HEAD"]);
+
+        // Quem não segura não junta; tarefa que voltou ou que não está no commit também não.
+        let both = format!(r#"{{"commit":"{head}","ids":["T1","T2"]}}"#);
+        assert_eq!(
+            merge_main(both.clone(), worker.clone()).await.0,
+            StatusCode::CONFLICT
+        );
+        let with_t3 = format!(r#"{{"commit":"{head}","ids":["T1","T3"]}}"#);
+        assert_eq!(
+            merge_main(with_t3, token.clone()).await.0,
+            StatusCode::CONFLICT
+        );
+        let main_before = git_sync(&hub.proj, &["rev-parse", "main"]);
+        let only_t1 = git_sync(&t1, &["rev-parse", "HEAD"]);
+        let missing = format!(r#"{{"commit":"{only_t1}","ids":["T1","T2"]}}"#);
+        let (status, body) = merge_main(missing, token.clone()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(
+            body["error"].as_str().unwrap().contains("T2 não está"),
+            "{body}"
+        );
+
+        // A main andou por fora: nada muda, e o revisor sabe por quê.
+        let moved = crate::sleep::tests::commit(&hub.proj, "outro.txt", "por fora");
+        let (status, body) = merge_main(both.clone(), token.clone()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body["error"].as_str().unwrap().contains("andou"), "{body}");
+        assert_eq!(git_sync(&hub.proj, &["rev-parse", "main"]), moved);
+        assert_ne!(moved, main_before);
+        let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+        let column = |board: &serde_json::Value, id: &str| {
+            board["cards"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap()["column"]
+                .clone()
+        };
+        assert_eq!(column(&board, "T1"), "feito");
+
+        // Refeita sobre a main nova e com o check verde: a main anda até a junção.
+        git_sync(&scratch, &["merge", "-q", "--no-edit", "main"]);
+        let head = git_sync(&scratch, &["rev-parse", "HEAD"]);
+        let both = format!(r#"{{"commit":"{head}","ids":["T1","T2"]}}"#);
+        let (status, merged) = merge_main(both, token.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{merged}");
+        let merged = merged.as_array().unwrap();
+        assert_eq!(merged.len(), 2);
+        for card in merged {
+            assert_eq!(card["column"], "validado");
+            assert_eq!(card["merged"]["branch"], "main");
+            assert_eq!(card["merged"]["commit"], head.as_str());
+        }
+        assert_eq!(last_subject(&hub.proj), "kanban: T1, T2 na main (revisão)");
+        git_sync(&hub.proj, &["merge-base", "--is-ancestor", &head, "main"]);
+        assert_eq!(
+            std::fs::read_to_string(hub.proj.join("lista.txt")).unwrap(),
+            "T1\nT2\n"
+        );
+
+        // O resumo vai para .assistente/revisoes, fora do git, e aparece no quadro.
+        let (status, summary) = send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/resumo",
+            Some(r#"{"text":"Entrou na main: T1, T2.\nVoltou: T3, sem código próprio."}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{summary}");
+        let file = summary["file"].as_str().unwrap().to_owned();
+        assert!(file.starts_with(".assistente/revisoes/"), "{file}");
+        assert!(
+            std::fs::read_to_string(hub.proj.join(&file))
+                .unwrap()
+                .contains("Voltou: T3")
+        );
+        git_sync(&hub.proj, &["worktree", "remove", "--force", &scratch_arg]);
+        let status = git_sync(&hub.proj, &["status", "--porcelain"]);
+        assert!(status.is_empty(), "{status}");
+        let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+        assert_eq!(board["review"]["file"], file.as_str());
+        assert!(
+            board["review"]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("Entrou na main")
+        );
+
+        // A sessão acaba: worktrees e branches das juntadas saem; a T3 fica no backlog.
+        t.tmux.kill(&reviewer).await.unwrap();
+        let (_, board) = send(hub.app.clone(), "GET", CARDS, None, None).await;
+        assert_eq!(column(&board, "T1"), "validado");
+        assert_eq!(column(&board, "T3"), "backlog");
+        for id in ["T1", "T2"] {
+            assert!(!worker::worktree_dir(&hub.proj, id).exists());
+            let branch = worker::branch(id);
+            assert!(git_sync(&hub.proj, &["branch", "--list", &branch]).is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn orchestrator_reviews_done_cards_when_nothing_is_running() {
+        let t = TestTmux::new("kanban-revisao-auto");
+        let hub = hub(&t, true);
+        for title in ["um", "dois"] {
+            let body = format!(r#"{{"title":"{title}","kind":"agente"}}"#);
+            send(hub.app.clone(), "POST", CARDS, Some(&body), None).await;
+        }
+        // T1 feito; T2 em fazendo, com quem o segura.
+        let (_, worker) = session(&t, AgentKind::Opencode, 1).await;
+        send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/pull",
+            None,
+            Some(&worker),
+        )
+        .await;
+        send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/done",
+            Some(r#"{"id":"T1"}"#),
+            Some(&worker),
+        )
+        .await;
+        send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/pull",
+            None,
+            Some(&worker),
+        )
+        .await;
+        let turn = || {
+            let app = hub.app.clone();
+            async move {
+                send(
+                    app,
+                    "PUT",
+                    &format!("{CARDS}/orquestrador"),
+                    Some(r#"{"enabled":true,"max_workers":1}"#),
+                    None,
+                )
+                .await
+            }
+        };
+        let holder = |board: &serde_json::Value| board["cards"][0]["holder"].clone();
+        // Algo em fazendo: nada de revisão.
+        let (status, board) = turn().await;
+        assert_eq!(status, StatusCode::OK, "{board}");
+        assert!(holder(&board).is_null(), "{board}");
+        // O trabalhador acaba: a próxima volta abre a revisão sozinha.
+        send(
+            hub.agents.clone(),
+            "POST",
+            "/v1/kanban/done",
+            Some(r#"{"id":"T2"}"#),
+            Some(&worker),
+        )
+        .await;
+        let (_, board) = turn().await;
+        assert!(board.get("orchestrator_error").is_none(), "{board}");
+        let reviewer = holder(&board).as_str().unwrap().to_owned();
+        assert_eq!(board["cards"][1]["holder"], reviewer.as_str());
+        let prompt = hub.proj.join(format!(".assistente/prompts/{reviewer}.md"));
+        let text = std::fs::read_to_string(&prompt).unwrap();
+        assert!(text.starts_with("# Revisão do quadro"), "{text}");
+        // A revisão acaba sem tocar nos cards: os mesmos não vão para outra sozinhos.
+        t.tmux.kill(&reviewer).await.unwrap();
+        let (_, board) = turn().await;
+        assert!(holder(&board).is_null(), "{board}");
+        assert_eq!(board["cards"][0]["column"], "feito");
     }
 
     #[tokio::test]
@@ -2596,6 +3556,30 @@ mod tests {
         let out = client(&["validar", "T1", "--branch", "main"]).await;
         assert_eq!(out.status.code(), Some(1));
         assert!(String::from_utf8_lossy(&out.stderr).contains("HTTP 409"));
+
+        // Revisão (F11.12): juntar sem --commit e resumo sem --texto são uso errado. A main já
+        // tem o commit, então juntar sem tarefas não muda nada; o resumo vai com aspas e linhas.
+        assert_eq!(client(&["juntar"]).await.status.code(), Some(2));
+        assert_eq!(client(&["resumo"]).await.status.code(), Some(2));
+        let head = git_sync(&hub.proj, &["rev-parse", "HEAD"]);
+        let out = client(&["juntar", "--commit", &head, "--tarefas", "T1"]).await;
+        assert_eq!(out.status.code(), Some(1), "a T1 não está em feito");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("HTTP 409"));
+        let out = client(&["juntar", "--commit", &head]).await;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(git_sync(&hub.proj, &["rev-parse", "HEAD"]), head);
+        let out = client(&["resumo", "--texto", "Entrou: nada.\nVoltou: T1 (\"cota\")."]).await;
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let summary: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(summary["text"], "Entrou: nada.\nVoltou: T1 (\"cota\").");
     }
 
     #[tokio::test]
@@ -2656,6 +3640,10 @@ mod tests {
         let (_, board) = orchestrate().await;
         assert!(board.get("started").is_none(), "{board}");
         assert_eq!(mandar_b().await.0, StatusCode::CONFLICT);
+        // Nada em fazendo: a volta abre a revisão (F11.12) com A. Ela acaba sem juntar; o QA junta.
+        let reviewer = board["cards"][0]["holder"].as_str().unwrap().to_owned();
+        assert_ne!(reviewer, holder, "{board}");
+        t.tmux.kill(&reviewer).await.unwrap();
 
         // O QA junta A na main: B abre, num worktree que já tem o código de A.
         let (status, info) = send(
@@ -2668,14 +3656,16 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{info}");
         let qa_token = exec_token(&t, info["id"].as_str().unwrap()).await;
-        let (status, done) = send(
-            hub.agents.clone(),
-            "POST",
-            "/v1/kanban/validate",
-            Some(r#"{"id":"T1","branch":"main"}"#),
-            Some(&qa_token),
-        )
-        .await;
+        let ((status, done), _) = tokio::join!(
+            send(
+                hub.agents.clone(),
+                "POST",
+                "/v1/kanban/validate",
+                Some(r#"{"id":"T1","branch":"main"}"#),
+                Some(&qa_token),
+            ),
+            answer_check(hub.app.clone(), Some(0))
+        );
         assert_eq!(status, StatusCode::OK, "{done}");
         let (_, board) = orchestrate().await;
         assert_eq!(board["started"], json!(["T2"]), "{board}");

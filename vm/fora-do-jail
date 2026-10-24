@@ -20,7 +20,7 @@ set -euo pipefail
 die() { echo "fora-do-jail: $*" >&2; exit "${CODE:-2}"; }
 uso() { sed -n '5,7p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-# Quadro do projeto (F11.2): `fora-do-jail kanban pull|done|release|bloquear|validar|reabrir|trabalhador`. Não passa pelo
+# Quadro do projeto (F11.2): `fora-do-jail kanban pull|done|release|bloquear|validar|reabrir|juntar|resumo|trabalhador`. Não passa pelo
 # app: é coordenação entre sessões (o que vai ao PC pede aprovação; isto não roda nada). Saída:
 # o JSON da resposta; erro, a mensagem do hubd no stderr e código 1 (2 = uso errado).
 kanban() {
@@ -28,10 +28,10 @@ kanban() {
   if [ -z "$url" ] || [ -z "$token" ]; then
     die "fora de uma sessão do Assistente (sem ASSISTENTE_EXEC_URL/ASSISTENTE_EXEC_TOKEN)"
   fi
-  local acao="${1:-}" id="" commit="" modelos="" titulo="" descricao="" tipo="" prioridade="" motivo="" branch="" nota="" depende_de=""
+  local acao="${1:-}" id="" commit="" modelos="" titulo="" descricao="" tipo="" prioridade="" motivo="" branch="" nota="" tarefas="" texto="" depende_de=""
   [ $# -gt 0 ] && shift
   case "$acao" in
-    pull|listar|criar) ;;
+    pull|listar|criar|juntar|resumo) ;;
     done|release|bloquear|validar|reabrir|trabalhador)
       [ $# -gt 0 ] || die "$acao: falta o id da tarefa (ex.: T3)"
       id="$1"
@@ -50,6 +50,8 @@ kanban() {
       --motivo) [ $# -ge 2 ] || uso_kanban; motivo="$2"; shift 2 ;;
       --branch) [ $# -ge 2 ] || uso_kanban; branch="$2"; shift 2 ;;
       --nota) [ $# -ge 2 ] || uso_kanban; nota="$2"; shift 2 ;;
+      --tarefas) [ $# -ge 2 ] || uso_kanban; tarefas="$2"; shift 2 ;;
+      --texto) [ $# -ge 2 ] || uso_kanban; texto="$2"; shift 2 ;;
       --depende-de) [ $# -ge 2 ] || uso_kanban; depende_de="$2"; shift 2 ;;
       *) uso_kanban ;;
     esac
@@ -63,7 +65,13 @@ kanban() {
   if [ "$acao" = reabrir ]; then
     [ -n "$nota" ] || die "reabrir: informe --nota (o que falta)"
   fi
-  local path method=POST body
+  if [ "$acao" = juntar ]; then
+    [ -n "$commit" ] || die "juntar: informe --commit (o HEAD da worktree de revisão)"
+  fi
+  if [ "$acao" = resumo ]; then
+    [ -n "$texto" ] || die "resumo: informe --texto (o que entrou, o que voltou e por quê)"
+  fi
+  local path method=POST body timeout_kanban=60
   case "$acao" in
     pull) path=/v1/kanban/pull ;;
     listar) path=/v1/kanban; method=GET ;;
@@ -71,15 +79,17 @@ kanban() {
     done) path=/v1/kanban/done ;;
     release) path=/v1/kanban/release ;;
     bloquear) path=/v1/kanban/block ;;
-    validar) path=/v1/kanban/validate ;;
+    validar) path=/v1/kanban/validate; timeout_kanban=2700 ;;  # o check no PC: aprovação + 30 min
     reabrir) path=/v1/kanban/reopen ;;
+    juntar) path=/v1/kanban/juntar ;;
+    resumo) path=/v1/kanban/resumo ;;
     trabalhador)
       path=/v1/workers
       ;;
   esac
   body="$(python3 -c '
 import json, sys
-acao, task, commit, modelos, titulo, descricao, tipo, prioridade, motivo, branch, nota, depende_de = sys.argv[1:13]
+acao, task, commit, modelos, titulo, descricao, tipo, prioridade, motivo, branch, nota, tarefas, texto, depende_de = sys.argv[1:15]
 if acao == "done":
     body = {"id": task, "commit": commit or None}
 elif acao == "release":
@@ -90,6 +100,10 @@ elif acao == "validar":
     body = {"id": task, "branch": branch}
 elif acao == "reabrir":
     body = {"id": task, "note": nota}
+elif acao == "juntar":
+    body = {"commit": commit, "ids": [t.strip() for t in tarefas.split(",") if t.strip()]}
+elif acao == "resumo":
+    body = {"text": texto}
 elif acao == "trabalhador":
     body = {"task": task, "models": [m for m in modelos.split(",") if m]}
 elif acao == "criar":
@@ -104,13 +118,13 @@ elif acao == "criar":
         body["depends_on"] = [d.strip() for d in depende_de.split(",") if d.strip()]
 else:
     body = {}
-print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos" "$titulo" "$descricao" "$tipo" "$prioridade" "$motivo" "$branch" "$nota" "$depende_de")"
+print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos" "$titulo" "$descricao" "$tipo" "$prioridade" "$motivo" "$branch" "$nota" "$tarefas" "$texto" "$depende_de")"
   local response status json
   if [ "$method" = GET ]; then
-    response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+    response="$(curl -sS --noproxy '*' -m "$timeout_kanban" -w '\n%{http_code}' \
       -H "Authorization: Bearer $token" "$url$path")" || die "o hubd não respondeu em $url"
   else
-    response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+    response="$(curl -sS --noproxy '*' -m "$timeout_kanban" -w '\n%{http_code}' \
       -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
       --data-binary "$body" "$url$path")" || die "o hubd não respondeu em $url"
   fi
@@ -130,7 +144,8 @@ uso_kanban() {
   echo "uso: fora-do-jail kanban listar | criar --titulo T [--descricao D] [--tipo manual|agente] [--prioridade alta|normal|baixa] [--depende-de T1,T3]" >&2
   echo "     fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> [--modelos m1,m2]" >&2
   echo "     fora-do-jail kanban bloquear <id> --motivo M   (cota esgotada: pausa o orquestrador)" >&2
-  echo "     fora-do-jail kanban validar <id> --branch B | reabrir <id> --nota N   (QA de um card feito)" >&2
+  echo "     fora-do-jail kanban validar <id> --branch B | reabrir <id> --nota N   (QA de um card feito; validar espera o check no PC)" >&2
+  echo "     fora-do-jail kanban juntar --commit SHA [--tarefas T1,T2] | resumo --texto R   (revisão)" >&2
   exit 2
 }
 

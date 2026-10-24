@@ -588,6 +588,11 @@ comandos do app.
   Como testar: rota com tmux real (trabalhador falso que imprime algo e sai 1; depois de uma volta do
   orquestrador a sessão sumiu e o card tem `last_error` com o status e o texto); com o orquestrador
   desligado, a sessão continua lá; `KanbanBoard.test.tsx` com o "Último erro".
+  Revisão (2026-10-24): a branch `agente/T17` (24ff907) cobre o pedido e os pontos da revisão
+  anterior, mas o `./dev just check` fica vermelho no `cargo fmt --all --check`
+  (`crates/hubd/src/api/kanban.rs`, teste
+  `orchestrator_collects_the_failed_worker_and_keeps_its_error_on_the_card`). Falta rodar
+  `./dev cargo fmt --all` e commitar; com o fmt aplicado, o resto do check passou.
 
 ## Depois
 

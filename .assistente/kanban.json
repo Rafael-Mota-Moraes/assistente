@@ -234,6 +234,7 @@
       "priority": "normal",
       "kind": "agente",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-1",
       "commit": "bd6392ce510c31985585b09893a61cfe7ae38331",
       "created_at": 1792754931
     },
@@ -244,6 +245,7 @@
       "priority": "normal",
       "kind": "agente",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-1",
       "commit": "91d5ca01aa31fc77d75cb3bd8be6f8b20a667ee2",
       "created_at": 1792847367
     }

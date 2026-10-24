@@ -127,6 +127,12 @@ vm_provisionar() {
     die "cloud-init falhou (rc=$rc): incus exec $name -- cloud-init status --long"
   fi
   [ "$rc" -eq 2 ] && echo "cloud-init com avisos: incus exec $name -- cloud-init schema --system"
+  # Os agentes rodam ./dev na VM e os volumes Docker de build (target do Cargo) enchem o disco;
+  # sem esta checagem o push abaixo falha só com "sftp: no space left on device".
+  local livre_mb
+  livre_mb="$(incus exec "$name" -- df --output=avail -m / | tail -1 | tr -d ' ')"
+  [ "$livre_mb" -ge 1024 ] \
+    || die "disco da VM quase cheio (${livre_mb} MB livres); libere com: incus exec $name -- docker volume prune -a -f"
 
   echo "Compilando o hubd (container ./dev)..."
   "$ROOT/dev" just build-hubd

@@ -128,7 +128,8 @@ vm_provisionar() {
   fi
   [ "$rc" -eq 2 ] && echo "cloud-init com avisos: incus exec $name -- cloud-init schema --system"
   # Os agentes rodam ./dev na VM e os volumes Docker de build (target do Cargo) enchem o disco;
-  # sem esta checagem o push abaixo falha só com "sftp: no space left on device".
+  # sem esta checagem o push abaixo falha só com "sftp: no space left on device". O
+  # limpar-disco.timer (F1.7) evita chegar aqui; isto cobre a VM provisionada antes dele.
   local livre_mb
   livre_mb="$(incus exec "$name" -- df --output=avail -m / | tail -1 | tr -d ' ')"
   [ "$livre_mb" -ge 1024 ] \
@@ -143,6 +144,7 @@ vm_provisionar() {
   incus file push -q "$ROOT/vm/ai-memory.service" "$name/tmp/assistente/ai-memory.service"
   incus file push -q "$ROOT/vm/fora-do-jail" "$name/tmp/assistente/fora-do-jail"
   incus file push -q "$ROOT/vm/trabalhador" "$name/tmp/assistente/trabalhador"
+  incus file push -q "$ROOT/vm/limpar-disco" "$name/tmp/assistente/limpar-disco"
   # O atualizador (F8.5) precisa do repo com git: manda um bundle com os commits e a VM clona.
   local bundle_dir
   bundle_dir="$(mktemp -d)"

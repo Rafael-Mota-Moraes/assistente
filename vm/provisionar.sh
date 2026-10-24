@@ -224,6 +224,35 @@ fi
 ln -sfn "$(basename "$nova")" "$versoes/atual"
 chown -h "$USER_NAME:" "$versoes/atual"
 
+echo "==> limpeza do disco (F1.7)"
+# Os target do Cargo que os agentes deixam nos volumes Docker enchem o disco da VM. A cada hora,
+# abaixo de 10G livres, o timer apaga os volumes sem uso e o cache de build.
+install -d /usr/local/lib/assistente
+install -m755 /tmp/assistente/limpar-disco /usr/local/lib/assistente/limpar-disco
+cat > /etc/systemd/system/limpar-disco.service <<'EOF'
+[Unit]
+Description=Libera o disco da VM (volumes Docker sem uso) quando ele está quase cheio
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/assistente/limpar-disco
+EOF
+cat > /etc/systemd/system/limpar-disco.timer <<'EOF'
+[Unit]
+Description=Confere o disco da VM a cada hora
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now limpar-disco.timer
+
 echo "==> journal do hubd sem sudo (F14.2)"
 # A VM tem a senha travada (lock_passwd no cloud-init): sem o grupo systemd-journal o
 # `journalctl -u hubd` pede sudo e não há quem digite a senha. `usermod -aG` é idempotente

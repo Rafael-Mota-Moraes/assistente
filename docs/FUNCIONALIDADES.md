@@ -40,6 +40,13 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `./dev just check` roda na VM pela pasta do projeto (`fora-do-jail './dev just
   check'` sai 0), ou a causa e o porquê de não haver correção ficam na spec 01. Como testar: na VM
   real, `/home/…/projetos/assistente/dev imagem` sai 0.
+- [x] **F1.7 Disco da VM não enche.** Os `target` do Cargo dos agentes nos volumes Docker do `./dev`
+  encheram o disco da VM (47G de 58G em 2026-10-24) e o `atualizar.sh` falhava no push do hubd.
+  `vm/limpar-disco` + `limpar-disco.timer` (root, de hora em hora): abaixo de 10G livres, apaga
+  volumes sem uso e cache de build. `vm provisionar` para com mensagem clara abaixo de 1G livre.
+  Pronto quando: `systemctl list-timers limpar-disco.timer` na VM mostra o timer e o teste passa.
+  Como testar: `just teste-limpar-disco` (df e docker falsos); na VM, `systemctl start limpar-disco`
+  e `journalctl -u limpar-disco`.
 
 ## F2 — Sessões
 

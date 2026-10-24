@@ -148,7 +148,6 @@
       "priority": "alta",
       "kind": "agente",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-1",
       "commit": "f3a56ecaad041bce342f2a4a6bd28ee7a0354b3e",
       "failures": 1,
       "merged": {
@@ -207,7 +206,6 @@
       "priority": "alta",
       "kind": "agente",
       "column": "validado",
-      "holder": "pessoal--assistente--claude-1",
       "commit": "77aa2f438462131340392c0999bb9819a38c6fcb",
       "merged": {
         "branch": "main",

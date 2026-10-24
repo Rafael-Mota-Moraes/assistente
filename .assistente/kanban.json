@@ -243,6 +243,7 @@
       "priority": "normal",
       "kind": "manual",
       "column": "feito",
+      "holder": "pessoal--assistente--claude-1",
       "commit": "9b29eb59a5f9577838b8c3352337896c97718252",
       "created_at": 1792847367
     }

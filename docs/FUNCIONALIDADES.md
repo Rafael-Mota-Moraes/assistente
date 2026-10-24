@@ -453,6 +453,21 @@ hubd); F11.2 antes de F11.4.
   `./dev just check` inteiro até ficar verde antes de marcar feita. Ao reabrir, faça merge da
   `main` (entrou a F14.5/T17: `Card.last_error`, `Draft.last_error`, `collect_failed_workers` em
   `api/kanban.rs` e `types.ts`).
+  Revisão (2026-10-24): a branch `agente/T18` (da896f2) corrigiu o `opencode_providers`, o `Check`
+  e o `title` do ícone, e ganhou o teste `merge_selection_with_automatic_skips_missing_and_deduplicates`,
+  mas não fez merge da `main` (entra sem conflito) e o `./dev just check` segue vermelho:
+  (1) `cargo fmt --check` em `crates/hub-core/src/worker.rs` (o teste novo); (2) clippy
+  `field_reassign_with_default` continua em `kanban.rs` (`orchestrator_serde_includes_models_and_only_selected`:
+  o `..Default::default()` foi parar dentro do `Orchestrator`, não do `Board`) e aparece no teste novo
+  de `worker.rs`; (3) `unused_variables`: `let dir = project_dir(…)` em `list_models`
+  (`api/kanban.rs`); (4) testes: `worker::tests::merge_selection_with_automatic_skips_missing_and_deduplicates`
+  espera `9router/gpt-5` no automático, mas `free_models` só traz grátis do provedor `opencode`;
+  `api::kanban::tests::orchestrator_models_and_catalog_endpoint` (o catálogo não lista
+  `opencode/big-pickle`) e `api::kanban::tests::mandar_uses_orchestrator_models` (409 em vez de 201);
+  (5) `tsc`: TS2345 em `KanbanBoard.test.tsx` linhas 581 e 585 (`HTMLElement | null`);
+  (6) `biome`: 3 erros (formatação de `OrchestratorDialog.tsx`, entre outros); (7) os mesmos 2
+  testes do `KanbanBoard.test.tsx` falham. Rode `./dev just fmt`, depois o `./dev just check`
+  inteiro, e só marque feita com ele verde.
 
 ## F12 — Apontar e pedir na tela
 

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Libera o disco da VM quando ele está quase cheio (F1.7). Roda como root pelo
+# limpar-disco.timer, instalado por vm/provisionar.sh.
+#   limpar-disco            limpa só se houver menos de LIMPAR_DISCO_MIN_GB livres (padrão 10)
+# Os agentes rodam ./dev na VM e cada worktree deixa um target do Cargo nos volumes Docker
+# (visto em 2026-10-24: 47G em volumes, disco de 58G cheio, o atualizar.sh falhando no push
+# do hubd). Tudo ali se recompila sozinho; o Docker não apaga volume de container rodando.
+set -euo pipefail
+
+MIN_GB="${LIMPAR_DISCO_MIN_GB:-10}"
+
+livre_gb() { df --output=avail -B1G / | tail -1 | tr -d ' '; }
+
+antes="$(livre_gb)"
+if [ "$antes" -ge "$MIN_GB" ]; then
+  echo "disco ok: ${antes}G livres (mínimo ${MIN_GB}G)"
+  exit 0
+fi
+
+echo "disco com ${antes}G livres (mínimo ${MIN_GB}G): apagando volumes Docker sem uso e cache de build"
+docker volume prune -a -f
+docker builder prune -a -f
+echo "agora: $(livre_gb)G livres"

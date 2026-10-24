@@ -100,15 +100,16 @@ saídas na VM (a VM continua sendo a fronteira) e uma no PC, a mais restrita de 
   truncada — F9.10) e a saída e o código voltam ao agente pelo hubd
   (`POST /api/exec/{id}/result`). Caminho de trabalho = pasta do projeto: a VM o monta por
   virtiofs no mesmo caminho do PC, então o `cwd` pedido pelo agente vale dos dois lados.
-  É a fronteira mais forte do sistema (R3): nada roda no PC sem clique, não existe
-  "sempre permitir" para `host` e tudo que rodou fica no registro do host (F9.11).
+  É a fronteira mais forte do sistema (R3): nada roda no PC sem clique (fora de uma lista
+  curta de comandos exatos por projeto, guardada no host), não existe "sempre permitir" para
+  `host` e tudo que rodou fica no registro do host (F9.11).
 - **Diagnóstico sem aprovação (F14.1).** Para **ler** o estado da VM, o agente usa
   `"$ASSISTENTE_FORA_DO_JAIL" diagnostico <comando>`: o hubd roda uma leitura de uma lista
   fechada (journal do hubd, sessões, painel de uma sessão, prompts do quadro, `claude` no PATH)
   e devolve a saída. Como nada é escrito, isso não passa pelo app — o caminho é `POST
   /v1/diagnostico` na API dos agentes (spec 02). Comando fora da lista é recusado com 400.
 
-### No PC (F9.9–F9.10)
+### No PC (F9.9–F9.11)
 
 Para o que só funciona no PC (a chave SSH do GitHub, os logins), o pedido sai da VM mas a
 decisão é do app:
@@ -117,12 +118,15 @@ decisão é do app:
   case com `allowed_commands`), `approve` só muda o estado para `running` e não gera job, e
   `always` responde 400. Quem executa é o app, via comando de host (F9.10), que devolve o
   resultado ao hubd; sem app (ou sem aprovação), o pedido expira como qualquer pendente.
-- **O card no app** mostra `target` (`ExecView`), o comando e a pasta por inteiro; a UI
-  distingue "no PC" de "na VM" e esconde "sempre permitir" (o card em vermelho e o registro
-  local são a F9.11).
-- **O app roda o que o hubd aprovou (F9.10).** O comando de host `host_exec` não recebe
-  comando nem pasta da UI: ele pergunta ao hubd (`GET /api/exec/{id}`) o que foi aprovado e
-  roda exatamente aquilo, e só se o alvo for `host` e o estado `running` (aprovado). A pasta
+- **O card no app (F9.11)** do pedido `host` é vermelho, diz "Vai rodar no seu PC" e mostra
+  o comando e a pasta por inteiro (sem cortar nem esconder atrás de rolagem própria); não tem
+  "sempre permitir". O da VM continua âmbar.
+- **O app pega o pedido uma vez só (F9.10/F9.11).** O comando de host `host_exec` não recebe
+  comando nem pasta da UI: ele pega no hubd (`POST /api/exec/{id}/claim`) o que foi aprovado
+  e roda exatamente aquilo. O claim só sai para pedido `host` em `running` (aprovado) e uma
+  vez: o hubd marca o pedido como pego (`picked_up`) e um segundo `host_exec` do mesmo id
+  recebe 409 e não roda de novo. Resultado com saída só entra em pedido pego; a falha antes
+  de pegar (config, hubd fora) também fecha o pedido, para o agente não esperar à toa. A pasta
   tem que estar dentro de uma raiz de perfil (como no `open_in_cursor`). Roda `bash -lc` com
   o timeout do pedido (o grupo de processos morre junto, inclusive o que ficou em segundo
   plano) e guarda o fim da saída (64 KiB por stream). O resultado volta ao hubd
@@ -130,6 +134,20 @@ decisão é do app:
   o código. Se o app não conseguir rodar, ele devolve o motivo: o pedido fecha como `failed`
   em vez de ficar esperando. Pedido `host` aprovado e sem resultado expira depois do timeout
   (mais a folga): app fechado no meio da execução não segura o agente para sempre.
+- **Lista do PC (F9.11).** No lugar de "sempre permitir", a engrenagem do projeto (F9.3) tem
+  "Comandos sem clique no PC": no máximo 10 comandos de uma linha, comparados por **texto
+  exato** (`git push` não libera `git push --force` nem `git push; …`). A lista fica no host,
+  em `~/.config/assistente/pc-permitidos.toml` (perfil → projeto → comandos, 0600), que a VM
+  só monta como leitura: nem o agente nem o hubd conseguem se dar permissão. Quem confere é
+  o app (`host_auto_exec`): para cada pedido `host` pendente, ele lê o pedido no hubd, confere
+  a lista do projeto e, só se casar, aprova, pega e confere de novo o comando entregue no
+  claim antes de rodar. Fora da lista, o card espera o clique. Aprovar pela API do hubd sem o
+  app não roda nada no PC: só o app executa, e só depois do clique ou da lista dele.
+- **Registro do PC (F9.11).** Tudo que roda no PC fica em
+  `~/.local/state/assistente/pc-exec.log` (só no host, 0600): uma linha `início` antes de
+  rodar (hora UTC, id, `aprovado="clique"` ou `"lista do PC"`, pasta e comando entre aspas,
+  com quebras de linha escapadas) e uma `fim` com código, timeout, truncado e duração (ou o
+  erro). Se a linha de início não puder ser escrita, nada roda.
 
 ### Segurança do "fora do jail"
 
@@ -141,10 +159,11 @@ decisão é do app:
   e expiração evitam enxurrada.
 - **"Sempre permitir" é casamento exato**, e é uma fuga quando o comando roda arquivos do
   projeto (`./dev`, `make`, `npm run`, scripts): o agente edita o arquivo e roda o que quiser.
-  A UI avisa antes de gravar. Não existe para pedidos `host`: o PC não tem "sempre" (F9.11).
+  A UI avisa antes de gravar. Não existe para pedidos `host`: o PC só tem a lista curta e
+  exata da engrenagem, guardada no host (F9.11).
 - **O comando aprovado roda como o seu usuário na VM:** enxerga os dados de todos os perfis
   (como a aba Terminal). Pedidos `host` não rodam na VM de forma alguma: o hubd só os
-  encaminha ao app, que decide no PC (F9.9–F9.10).
+  encaminha ao app, que decide no PC (F9.9–F9.11).
 - **Rede completa** tira os `--forward-port`; se o `--network` compartilhar a rede da VM, o
   agente alcança a 7878 (exige token), a 7879 e a LAN. A validar (F9.8).
 

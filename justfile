@@ -24,6 +24,7 @@ check: deps
     just teste-atualizar
     just teste-trabalhador
     just teste-journal
+    just teste-limpar-disco
     just idade-crates
 
 # Formata Rust e frontend
@@ -38,7 +39,7 @@ test: deps
 
 # Lint dos scripts bash
 shellcheck:
-    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh vm/atualizar.sh vm/teste-atualizar.sh vm/fora-do-jail vm/trabalhador vm/teste-trabalhador.sh vm/teste-journal.sh notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
+    shellcheck dev instalar.sh atualizar.sh bin/assistente bin/teste-backup.sh vm/provisionar.sh vm/configurar-agentes.sh vm/atualizar.sh vm/teste-atualizar.sh vm/fora-do-jail vm/trabalhador vm/teste-trabalhador.sh vm/teste-journal.sh vm/limpar-disco vm/teste-limpar-disco.sh notebook/instalar.sh notebook/dorme notebook/teste-dorme.sh
 
 # Loop do modo dormir com agentes falsos, sem IA (F6.1)
 teste-dorme:
@@ -55,6 +56,10 @@ teste-trabalhador:
 # Journal do hubd sem sudo: o grupo systemd-journal na conta (F14.2)
 teste-journal:
     bash vm/teste-journal.sh
+
+# Limpeza do disco da VM com df e docker falsos (F1.7)
+teste-limpar-disco:
+    bash vm/teste-limpar-disco.sh
 
 # Atualizador da VM com repositório e serviço falsos, sem VM (F8.5)
 teste-atualizar:

@@ -113,6 +113,16 @@ rodá-lo fora do jail:
 - Sem `ASSISTENTE_FORA_DO_JAIL` no ambiente, a sessão é de antes desse recurso: peça ao
   usuário para rodar o comando na aba Terminal do app.
 
+## Verificação do projeto (Assistente, F9.13)
+
+O `./dev` (e o check do projeto) **roda no PC**, não na VM. Para rodar as verificações:
+
+    "$ASSISTENTE_FORA_DO_JAIL" --pc --timeout 1500 './dev just check'
+
+- Use `--pc` para executar no computador principal (host). Não peça `sudo` nem `systemctl start docker`.
+- **Sem check verde, não diga que está pronto** e não valide a tarefa. O QA só aprova com o check
+  passando.
+
 ## Quadro do projeto (Assistente, F11)
 
 O quadro é `.assistente/kanban.json` no repo. Cada card tem um tipo: `manual` só roda quando o

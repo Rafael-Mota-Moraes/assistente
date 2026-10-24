@@ -47,6 +47,29 @@ export function hostExec(id: string): Promise<ExecResult> {
   return invoke<ExecResult>("host_exec", { id });
 }
 
+/** Pedido `host` pendente cujo comando está, texto exato, na lista do PC do projeto
+ * (F9.11): o app confere a lista no host e roda sem clique. `null` = fora da lista (ou fora
+ * do app desktop): o card espera você. */
+export function hostAutoExec(id: string): Promise<ExecResult | null> {
+  if (!isTauri()) return Promise.resolve(null);
+  return invoke<ExecResult | null>("host_auto_exec", { id });
+}
+
+/** Lista do PC do projeto (F9.11), guardada no host. `null` fora do app desktop. */
+export function pcAllowedCommands(profile: string, project: string): Promise<string[] | null> {
+  if (!isTauri()) return Promise.resolve(null);
+  return invoke<string[]>("pc_allowed_commands", { profile, project }).catch(() => null);
+}
+
+export function setPcAllowedCommands(
+  profile: string,
+  project: string,
+  commands: string[],
+): Promise<void> {
+  if (!isTauri()) return Promise.reject(new Error("só funciona no app desktop"));
+  return invoke("set_pc_allowed_commands", { profile, project, commands });
+}
+
 /** Retângulo do âncora do painel em pixels lógicos (igual ao px do CSS). */
 export type PanelRect = { x: number; y: number; width: number; height: number };
 

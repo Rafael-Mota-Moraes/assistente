@@ -11,6 +11,7 @@ Cobre R3 (VM) e R9 (reinstalar fácil). Funcionalidades F1.x e F7.x.
 | `vm/cloud-init.yaml` | Primeira inicialização: usuário com UID do host, pacotes (git, tmux, bubblewrap, docker, autossh) |
 | `vm/provisionar.sh` | Reexecutável, como root na VM: ai-jail, claude, opencode, ai-memory (cliente), pastas de perfil, hubd, grupo `systemd-journal` (F14.2) |
 | `vm/hubd.service` | systemd do hubd, como o usuário |
+| `vm/limpar-disco` | Timer de hora em hora (root): abaixo de 10G livres, apaga volumes Docker sem uso e cache de build (F1.7) |
 
 ## A VM
 
@@ -30,6 +31,12 @@ Cobre R3 (VM) e R9 (reinstalar fácil). Funcionalidades F1.x e F7.x.
 - **Não montado**: o resto do home do host (chaves SSH, navegador, etc.). Dentro da VM, as
   credenciais ficam em `~/.assistente/perfis/<perfil>/` (ver spec 05).
 - **Docker dentro da VM**, para os projetos que usam `./dev` (como o game).
+  Cada worktree dos agentes deixa um `target` do Cargo nos volumes do `./dev`: em 2026-10-24
+  eles somavam 47G e encheram o disco de 58G (o `atualizar.sh` falhava com `sftp: no space left
+  on device`). O `limpar-disco.timer` confere a cada hora e, abaixo de `LIMPAR_DISCO_MIN_GB`
+  (10G), roda `docker volume prune -a` e `docker builder prune -a`. Volume de container rodando
+  fica; o resto se recompila no próximo `./dev`. O `vm provisionar` também para com uma mensagem
+  clara se a VM tiver menos de 1G livre.
 
 ## Ciclo de vida
 

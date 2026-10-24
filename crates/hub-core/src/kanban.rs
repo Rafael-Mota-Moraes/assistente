@@ -37,6 +37,8 @@ pub enum Column {
     Backlog,
     Fazendo,
     Feito,
+    /// Check rodando via pedido `host` (F11.17).
+    Validando,
     /// Passou no QA e foi juntado numa branch (F11.15).
     Validado,
 }
@@ -285,6 +287,12 @@ impl Board {
         if let Some(column) = draft.column
             && column != card.column
         {
+            // Só o check do `validar` põe e tira um card de "validando" (F11.17).
+            if Column::Validando == column || Column::Validando == card.column {
+                return Err(KanbanError::Invalid(
+                    "\"validando\" é só do check do QA".to_owned(),
+                ));
+            }
             card.column = column;
             if column != Column::Fazendo {
                 card.holder = None;
@@ -475,6 +483,22 @@ impl Board {
         Ok(card)
     }
 
+    /// O QA aprovou e o check do projeto vai rodar (F11.17): o card fica "validando", ainda
+    /// com quem o segura, até o resultado. Um card já "validando" (o hubd reiniciou no meio)
+    /// pode começar de novo.
+    pub fn start_check(&mut self, id: &str, holder: &str) -> Result<&Card, KanbanError> {
+        let card = self.reviewing(id, holder)?;
+        card.column = Column::Validando;
+        Ok(card)
+    }
+
+    /// Check vermelho, negado ou expirado (F11.17): volta a "feito", com o mesmo QA.
+    pub fn check_failed(&mut self, id: &str, holder: &str) -> Result<&Card, KanbanError> {
+        let card = self.reviewing(id, holder)?;
+        card.column = Column::Feito;
+        Ok(card)
+    }
+
     /// Passou no QA e foi juntada em `merged`. A sessão continua segurando até acabar: o worktree
     /// só sai depois (`validated_worktrees`).
     pub fn validate(
@@ -544,18 +568,24 @@ impl Board {
                 continue;
             }
             card.holder = None;
-            if card.column == Column::Fazendo {
-                card.column = Column::Backlog;
-                card.failures += 1;
+            match card.column {
+                Column::Fazendo => {
+                    card.column = Column::Backlog;
+                    card.failures += 1;
+                }
+                // O check morreu com a sessão: nada foi juntado.
+                Column::Validando => card.column = Column::Feito,
+                _ => {}
             }
             released.push(card.id.clone());
         }
         released
     }
 
+    /// Card em QA: "feito" ou com o check rodando ("validando"), segurado por `holder`.
     fn reviewing(&mut self, id: &str, holder: &str) -> Result<&mut Card, KanbanError> {
         let card = self.get_mut(id)?;
-        if card.column != Column::Feito {
+        if !matches!(card.column, Column::Feito | Column::Validando) {
             return Err(KanbanError::NotDone(card.column));
         }
         if card.holder.as_deref() != Some(holder) {
@@ -852,6 +882,32 @@ mod tests {
             board.validate("T1", "qa2", merged.clone()),
             Err(KanbanError::NotHolder)
         );
+        // O check (F11.17): "validando" com o mesmo QA; vermelho volta a "feito".
+        assert_eq!(board.start_check("T1", "qa2"), Err(KanbanError::NotHolder));
+        let card = board.start_check("T1", "qa1").unwrap();
+        assert_eq!(
+            (card.column, card.holder.as_deref()),
+            (Column::Validando, Some("qa1"))
+        );
+        let card = board.check_failed("T1", "qa1").unwrap();
+        assert_eq!(
+            (card.column, card.holder.as_deref()),
+            (Column::Feito, Some("qa1"))
+        );
+        board.start_check("T1", "qa1").unwrap();
+        // Arrastar não põe nem tira de "validando": isso é do check.
+        let to = |column| Draft {
+            column: Some(column),
+            ..Draft::default()
+        };
+        assert!(matches!(
+            board.update("T1", to(Column::Feito)),
+            Err(KanbanError::Invalid(_))
+        ));
+        assert!(matches!(
+            board.update("T2", to(Column::Validando)),
+            Err(KanbanError::Invalid(_))
+        ));
         let card = board.validate("T1", "qa1", merged.clone()).unwrap().clone();
         assert_eq!(card.column, Column::Validado);
         assert_eq!(card.merged, Some(merged));
@@ -878,6 +934,20 @@ mod tests {
         assert_eq!((card.column, card.failures), (Column::Validado, 0));
         assert_eq!(board.validated_worktrees().count(), 1);
         assert_eq!(Board::parse(&board.to_json()).unwrap(), board);
+    }
+
+    #[test]
+    fn check_that_dies_with_the_qa_goes_back_to_done() {
+        let mut board = Board::default();
+        board.create(agent_draft("a", Priority::Normal), 1).unwrap();
+        board.claim("T1", "w").unwrap();
+        board.done("T1", "w", None).unwrap();
+        board.start_qa("T1", "qa").unwrap();
+        board.start_check("T1", "qa").unwrap();
+        assert_eq!(board.release_dead(|_| false), vec!["T1".to_owned()]);
+        let card = board.get("T1").unwrap();
+        assert_eq!((card.column, card.holder.as_deref()), (Column::Feito, None));
+        assert_eq!(card.failures, 0);
     }
 
     #[test]

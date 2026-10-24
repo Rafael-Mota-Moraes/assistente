@@ -151,6 +151,11 @@ export class HubClient {
     return this.request("POST", `${kanbanPath(profile, project)}/qa`);
   }
 
+  /** Revisão (F11.12): um Claude junta na `main` os cards feitos que passam e devolve os outros. */
+  reviewBoard(profile: string, project: string): Promise<SessionInfo> {
+    return this.request("POST", `${kanbanPath(profile, project)}/revisar`);
+  }
+
   /** Abre um Claude que monta o quadro a partir do backlog em markdown (F11.9). */
   explorarBacklog(profile: string, project: string): Promise<SessionInfo> {
     return this.request("POST", `${kanbanPath(profile, project)}/explorar`);

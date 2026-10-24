@@ -40,6 +40,13 @@ Itens marcados *(humano)* dependem de você (VM real, notebook, logins) e o agen
   Pronto quando: `./dev just check` roda na VM pela pasta do projeto (`fora-do-jail './dev just
   check'` sai 0), ou a causa e o porquê de não haver correção ficam na spec 01. Como testar: na VM
   real, `/home/…/projetos/assistente/dev imagem` sai 0.
+- [x] **F1.7 Disco da VM não enche.** Os `target` do Cargo dos agentes nos volumes Docker do `./dev`
+  encheram o disco da VM (47G de 58G em 2026-10-24) e o `atualizar.sh` falhava no push do hubd.
+  `vm/limpar-disco` + `limpar-disco.timer` (root, de hora em hora): abaixo de 10G livres, apaga
+  volumes sem uso e cache de build. `vm provisionar` para com mensagem clara abaixo de 1G livre.
+  Pronto quando: `systemctl list-timers limpar-disco.timer` na VM mostra o timer e o teste passa.
+  Como testar: `just teste-limpar-disco` (df e docker falsos); na VM, `systemctl start limpar-disco`
+  e `journalctl -u limpar-disco`.
 
 ## F2 — Sessões
 
@@ -175,16 +182,12 @@ nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" 
   Pronto quando: um pedido `--pc` aparece em `/api/exec` com `target: "host"` e o hubd nunca o roda na VM. Como testar: `exec::tests` + `client_script_round_trip` com `--pc`.
 - [x] **F9.10 App executa no PC.** Comando Tauri `host_exec`: só para pedidos `host` aprovados no `ExecApprovals`, `bash -lc` na pasta do projeto (precisa estar dentro de uma raiz de perfil, como no `open_in_cursor`), com timeout e saída truncada; o resultado volta ao hubd (`POST /api/exec/{id}/result`, com o token do hub) e de lá ao agente. App fechado = o pedido espera ou expira. Feito: o app pergunta ao hubd (`GET /api/exec/{id}`) o que foi aprovado e roda exatamente aquilo (comando e pasta saem do hubd, não da UI); hubd recebe o resultado só de pedido `host` aprovado (409 nos outros) e fecha como `failed` se o app não conseguiu rodar; pedido `host` aprovado sem resultado expira depois do timeout. Testes: `api::tests::host_result_from_the_app_reaches_the_agent`, `exec::tests::host_result_is_only_accepted_for_an_approved_host_request`, `features/exec/hostExec.test.ts`, o caso no `ExecApprovals.test.tsx` e os do app (`app/src-tauri`: id do pedido, pasta do comando, timeout e saída truncada).
   Pronto quando: aprovar um `git push` pedido com `--pc` empurra do PC e o agente recebe saída e código. Como testar: vitest com hub fake + teste de rota do resultado.
-- [ ] **F9.11 Cuidados do modo PC.** Card em vermelho com "vai rodar no seu PC", comando e pasta por inteiro; sem "aprovar e sempre permitir" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).
+- [x] **F9.11 Cuidados do modo PC.** Card em vermelho com "vai rodar no seu PC", comando e pasta por inteiro; sem "aprovar e sempre permitir" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).
   Pronto quando: nenhum caminho aprova pedido `host` sem clique (fora da lista exata) e todo pedido executado fica no registro. Como testar: vitest do card e da lista; revisão da spec 05.
-  Revisão (2026-10-22): a T3 do quadro fechou sem código (o único commit era o merge da F9.9). Já
-  existe, da F9.9: nada de "sempre permitir" para `host`, na UI e no hubd (`approve` com `always`
-  responde 400). Falta o resto acima e mais: o hubd marca o pedido `host` como pego pelo app (estado
-  ou campo novo em `exec.rs`, devolvido só uma vez ao `host_exec`), para um segundo `host_exec` do
-  mesmo pedido aprovado não rodar o comando de novo (hoje só o `busy` do `ExecApprovals` segura).
+  Feito: `POST /api/exec/{id}/claim` entrega o pedido `host` aprovado uma vez só (`claim_host` em `exec.rs`, `picked_up`; o segundo dá 409) e a saída só entra em pedido pego. Lista do PC em `hub_core::pc_allow` (`~/.config/assistente/pc-permitidos.toml`, ≤ 10, texto exato), editada na engrenagem pelos comandos `pc_allowed_commands`/`set_pc_allowed_commands`; `host_auto_exec` confere a lista no host antes de aprovar. `host_exec`/`host_auto_exec` escrevem `início`/`fim` no `pc-exec.log` (sem a linha de início, nada roda). Testes: `exec::tests` (claim), `host_result_from_the_app_reaches_the_agent` com claim, `pc_allow::tests`, registro e hora no app, `ExecApprovals.test.tsx`, `hostExec.test.ts`, `ProjectSettingsDialog.test.tsx`. Spec 05 revista.
 - [ ] **F9.12 Validação no PC real** *(humano)*. Do jail, `fora-do-jail --pc 'git push'` empurra com a chave do PC após aprovar; negar devolve 126; com o app fechado o pedido expira.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
-- [ ] **F9.13 Verificação do projeto vai para o PC.** Enquanto a F1.6 não sai, o `./dev` não roda
+- [x] **F9.13 Verificação do projeto vai para o PC.** Enquanto a F1.6 não sai, o `./dev` não roda
   na VM: nem no jail, nem fora dele (`Bad address` do virtiofs), e com Docker ligado ou não. Um
   agente que precisava do check pediu `sudo systemctl start docker` e parou. As instruções passam a
   dizer o caminho certo. No bloco "Fora do jail" do `vm/configurar-agentes.sh`: "`./dev` (e o check
@@ -196,6 +199,7 @@ nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" 
   Pronto quando: as três instruções trazem o `--pc` e a regra "sem check verde, não valida". Como
   testar: `worker::tests` (os prompts de QA têm `--pc` e `./dev just check`; o do trabalhador não
   pede `./dev`) e `bash vm/configurar-agentes.sh` num home falso, se o teste dele existir.
+  Feito: `worker::tests` cobre os três prompts (QA, QA geral, trabalhador); `vm/configurar-agentes.sh` ganhou a seção "Verificação do projeto" com `--pc` e a regra "sem check verde, não diga que está pronto"; nos prompts de QA e de QA geral, o check no PC ficou dentro do `kanban validar` (F11.17), que só junta com ele verde; `./dev just check` passa.
 
 ## F10 — Editor com diff
 
@@ -302,7 +306,7 @@ hubd); F11.2 antes de F11.4.
   preenchida pela próxima, e o card que falhou fica no backlog. Como testar:
   `api::kanban::tests::orchestrator_fills_up_to_the_limit…`, `…orchestrator_error_shows_on_the_board`,
   `kanban::tests::auto_skips…` e `KanbanBoard.test.tsx`. Na VM real, junto com F11.8.
-- [ ] **F11.12 Revisar e juntar o que os trabalhadores fizeram.** Hoje um card "feito" só tem commit
+- [x] **F11.12 Revisar e juntar o que os trabalhadores fizeram.** Hoje um card "feito" só tem commit
   na branch `agente/<id>`: nada chega à `main` sem uma conversa à mão (revisar cada branch, juntar,
   resolver conflito, rodar o check, devolver o que ficou ruim). Botão "Revisar" no quadro abre um
   Claude (como o "Popular pelo backlog", F11.9) com um prompt de revisão; o orquestrador (F11.11)
@@ -394,7 +398,7 @@ hubd); F11.2 antes de F11.4.
   `api::kanban::tests::qa_all_holds_every_free_done_card_in_one_session`,
   `worker::tests::qa_all_prompt…` e `KanbanBoard.test.tsx` (botão com a contagem, sem botão quando
   nada está livre). Na VM real, junto com a F11.8.
-- [ ] **F11.17 `validar` só com o check verde.** Hoje o `kanban validar` junta a branch confiando
+- [x] **F11.17 `validar` só com o check verde.** Hoje o `kanban validar` junta a branch confiando
   na palavra do QA de que o check passou. Agora quem roda o check é o hubd, no commit que a
   `target` vai receber: na worktree descartável do merge (`.assistente/qa-juntar-*`, já dentro da
   pasta do projeto) ou, no fast-forward, numa worktree do commit da tarefa. Enquanto a F1.6 não
@@ -411,6 +415,27 @@ hubd); F11.2 antes de F11.4.
   `api::kanban::tests` com repo git real e o app fingido (resultado do pedido `host` via
   `POST /api/exec/{id}/result`: código 0 junta, 1 não muda nada, negado = nada muda),
   `ProjectSettingsDialog` com o campo e `KanbanBoard.test.tsx` (estado "validando").
+- [ ] **F11.18 Escolher os modelos que o orquestrador prioriza.** Hoje o trabalhador usa o modelo
+  do pedido ("Outro modelo…"), senão o `[workers] models` do `.assistente.toml` (que precisa ser
+  editado à mão e com o nome exato do opencode), senão os grátis em ordem de histórico (F11.10).
+  Não dá para dizer pelo app "use estes primeiro". O `Orchestrator` do quadro ganha `models` (ids
+  do opencode, em ordem, até `MAX_MODELS`), editado no mesmo diálogo das instruções (F11.11): uma
+  lista com os modelos do catálogo (`~/.cache/opencode/models.json`, todos os provedores do perfil,
+  com o selo "grátis" e a taxa de sucesso do histórico), em que você marca os que quer e arrasta
+  para mudar a ordem. Os marcados vão na frente; as vagas que sobram até `MAX_MODELS` são
+  preenchidas pela escolha automática (sem repetir), a não ser que "Só estes" esteja marcado. Vale
+  para o orquestrador automático, o "Mandar" e o reinício; o pedido com modelo explícito ("Outro
+  modelo…", `--modelos`) continua na frente. Ordem: pedido > seleção do quadro > `[workers] models`
+  > automático. Modelo marcado que sumiu do catálogo aparece riscado e é pulado, com aviso no
+  quadro. Rota nova para o catálogo (`GET …/kanban/modelos`: id, provedor, grátis, taxa) e o
+  `PUT …/kanban/orquestrador` aceita `models` e `only_selected`. Tipos novos em `api.rs` e
+  `app/src/bridge/types.ts` juntos.
+  Pronto quando: marcar dois modelos no diálogo faz o próximo trabalhador do orquestrador tentar
+  esses dois primeiro, na ordem escolhida, e depois os grátis; com "Só estes", só os dois.
+  Como testar: `kanban::tests` (serde de `models`/`only_selected`, limite), `worker::tests` (juntar
+  seleção + automático sem repetir, pular o que sumiu do catálogo), `api::kanban::tests` (o
+  `WorkerRun` do orquestrador sai com os modelos na ordem; catálogo listado) e
+  `KanbanBoard.test.tsx` (marcar, reordenar, salvar, modelo sumido riscado).
 
 ## F12 — Apontar e pedir na tela
 

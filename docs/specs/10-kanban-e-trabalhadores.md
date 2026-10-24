@@ -14,7 +14,9 @@ reaproveitado), `title`, `description`, `priority` (`alta` · `normal` · `baixa
 `holder` (a sessão que segura: o trabalhador em "fazendo", o QA em "feito"/"validando"/"validado"), `commit` (o
 que fechou a tarefa, em "feito"), `merged` `{branch, commit}` (onde o QA juntou, em "validado"), `failures` (vezes que voltou do
 "fazendo" sem concluir: `release` ou sessão morta; omitido quando zero), `blocked` (a linha de erro
-de quando parou por cota, F11.14; some quando a tarefa começa de novo), `depends_on` (ids `T<n>`
+de quando parou por cota, F11.14; some quando a tarefa começa de novo), `last_error`
+`{session, status, output, log}` (o trabalhador recolhido, F14.5; some no "Mandar" e no
+`failures: 0`), `depends_on` (ids `T<n>`
 das tarefas das quais esta depende, F11.13; omitido quando vazio). No nível do quadro,
 `orchestrator` (`enabled`, `max_workers`, `instructions`, `paused` `{reason, at}`), omitido enquanto
 estiver no padrão (desligado, 1, sem instruções, sem pausa).
@@ -133,6 +135,13 @@ decisão, porque o modelo já é escolhido sozinho (F11.10).
   o "Parar" da UI e a sessão que morreu (inclusive VM reiniciada) devolvem o card com `failures + 1`,
   e ele fica no backlog com "Voltou N× sem concluir". "Tentar de novo" (`PATCH {failures: 0}`) ou
   "Mandar" põem de volta. O `pull` explícito (orquestrador Claude, `dorme`) não olha `failures`.
+- **Recolhe quem falhou** (F14.5): antes de abrir, a volta procura as sessões mortas de
+  trabalhador do projeto (as que têm o registro `worker::files(...).run`; Claude e OpenCode
+  interativo nunca entram). O trabalhador que desiste fica morto com o painel (F14.4); a volta
+  guarda no card que ele segurava ou acabou de soltar o `last_error` (status de saída, as últimas
+  50 linhas do `capture-pane` em até 4 KiB, o caminho do `.log`), salva o quadro e só então
+  encerra a sessão. A UI mostra "Último erro" no card do backlog. Com o orquestrador desligado a
+  aba morta fica até você encerrar.
 - **Instruções dos trabalhadores** (`orchestrator.instructions`, botão ao lado do limite): texto
   livre que `worker::render_prompt` põe no fim do prompt, como "## Instruções do projeto", depois
   das regras padrão. Vale para todo trabalhador do projeto (automático, Mandar, Reiniciar). `PUT`

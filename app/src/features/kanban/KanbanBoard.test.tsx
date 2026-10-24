@@ -358,23 +358,42 @@ describe("KanbanBoard", () => {
   it("card que voltou do fazendo pede Tentar de novo", async () => {
     const hub = connect({
       next: 3,
-      cards: [
-        card("T1", { kind: "agente", failures: 2, last_error: "exit 1\n\nalgo falhou" }),
-        card("T2", { failures: 1 }),
-      ],
+      cards: [card("T1", { kind: "agente", failures: 2 }), card("T2", { failures: 1 })],
     });
     const backlog = await column("Backlog");
     expect(within(backlog).getAllByText(/Voltou .*× sem concluir/)).toHaveLength(2);
-    expect(within(backlog).getByText("Último erro")).toBeInTheDocument();
     const retry = within(backlog).getAllByRole("button", { name: /Tentar de novo/ });
     expect(retry).toHaveLength(1);
     fireEvent.click(retry[0]);
     await waitFor(() =>
-      expect(hub.updateCard).toHaveBeenCalledWith("pessoal", "game", "T1", {
-        failures: 0,
-        last_error: undefined,
-      }),
+      expect(hub.updateCard).toHaveBeenCalledWith("pessoal", "game", "T1", { failures: 0 }),
     );
+  });
+
+  it("trabalhador recolhido deixa o Último erro no card, com a saída e o log", async () => {
+    const log = "/home/u/.assistente/perfis/pessoal/trabalhadores/pessoal--game--opencode-1.log";
+    connect({
+      next: 3,
+      cards: [
+        card("T1", {
+          kind: "agente",
+          failures: 1,
+          last_error: {
+            session: "pessoal--game--opencode-1",
+            status: 1,
+            output: "passo 1 ok\ndeu ruim: teste quebrado",
+            log,
+          },
+        }),
+        card("T2", { column: "fazendo", holder: "s9" }),
+      ],
+    });
+    const backlog = await column("Backlog");
+    const t1 = within(backlog).getByRole("article", { name: /^T1 / });
+    expect(within(t1).getByText(/Último erro · saiu com 1/)).toBeInTheDocument();
+    expect(within(t1).getByText(/deu ruim: teste quebrado/)).toBeInTheDocument();
+    expect(within(t1).getByText(log)).toBeInTheDocument();
+    expect(within(await column("Fazendo")).queryByText(/Último erro/)).toBeNull();
   });
 
   it("cota esgotada: faixa com Retomar e o card parado termina com outro harness", async () => {

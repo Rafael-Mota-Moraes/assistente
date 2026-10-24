@@ -572,7 +572,7 @@ comandos do app.
   `releasing_a_task_keeps_the_panel_of_the_session`, `worker_session_dies_with_its_process`,
   `keep_panel_leaves_the_dead_pane_on_screen`,
   `only_interactive_agents_keep_the_panel_after_the_process_dies` e `SessionArea.test.tsx`.
-- [ ] **F14.5 O orquestrador recolhe o trabalhador que falhou.** Depende da F14.4, que deixa a sessão
+- [x] **F14.5 O orquestrador recolhe o trabalhador que falhou.** Depende da F14.4, que deixa a sessão
   do trabalhador que falha aberta e morta. Com o orquestrador ligado (F11.11), cada volta
   (`orchestrate` em `api/kanban.rs`) também procura as sessões mortas dos trabalhadores do projeto.
   Para cada uma, o orquestrador guarda no card que ela segurava (ou que acabou de soltar) o status de
@@ -588,6 +588,15 @@ comandos do app.
   Como testar: rota com tmux real (trabalhador falso que imprime algo e sai 1; depois de uma volta do
   orquestrador a sessão sumiu e o card tem `last_error` com o status e o texto); com o orquestrador
   desligado, a sessão continua lá; `KanbanBoard.test.tsx` com o "Último erro".
+  Feito: `collect_failed_workers` roda no começo de `orchestrate`, sob o `kanban_lock`, só com o
+  orquestrador ligado; trabalhador é a sessão com o registro de `start_worker` (o `.json` de
+  `worker::files`). `last_error` é `{session, status, output, log}` (`WorkerError` no hub-core,
+  `KanbanWorkerError` no `types.ts`), gravado por `Board::record_worker_error` (o card que a
+  sessão segura ou o que já está no backlog sem dono; o quadro só é salvo se mudou). A sessão sai
+  depois do commit. `PATCH {failures: 0}` ("Tentar de novo") e o `claim` ("Mandar") limpam.
+  Testes: `orchestrator_collects_the_failed_worker_and_keeps_its_error_on_the_card`,
+  `worker_error_goes_to_the_card_it_held_or_just_released`,
+  `retry_and_a_new_start_clear_the_last_error` e `KanbanBoard.test.tsx`.
 
 ## Depois
 

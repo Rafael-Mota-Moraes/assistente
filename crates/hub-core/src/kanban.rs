@@ -89,10 +89,10 @@ pub struct Card {
     /// a tarefa começa de novo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked: Option<String>,
-    /// Último erro de um trabalhador recolhido pelo orquestrador (F14.5): status de saída e
-    /// últimas ~50 linhas da saída (cortadas em 4 KiB). Limpo ao "Tentar de novo" ou "Mandar".
+    /// Último erro de um trabalhador recolhido pelo orquestrador (F14.5). Some quando a tarefa
+    /// começa de novo ("Mandar") ou com o "Tentar de novo" (`failures: 0`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
+    pub last_error: Option<WorkerError>,
     /// Onde o QA juntou a tarefa (`validado`, F11.15).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merged: Option<Merged>,
@@ -108,6 +108,19 @@ pub struct Card {
 pub struct Merged {
     pub branch: String,
     pub commit: String,
+}
+
+/// O que sobrou de um trabalhador que falhou (F14.5): a sessão morta sai do tmux e isto fica.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerError {
+    /// A sessão que falhou (já encerrada).
+    pub session: String,
+    /// Código de saída; `None` quando o tmux não soube (morreu por sinal).
+    pub status: Option<i32>,
+    /// O fim da saída do painel (as últimas linhas, no máximo 4 KiB).
+    pub output: String,
+    /// Log completo do trabalhador (`worker::files(...).log`).
+    pub log: String,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -249,6 +262,7 @@ impl Board {
             commit: None,
             failures: 0,
             blocked: None,
+            last_error: None,
             merged: None,
             depends_on: checked_depends_on(draft.depends_on.unwrap_or_default())?,
             created_at: now,
@@ -274,6 +288,10 @@ impl Board {
         }
         if let Some(failures) = draft.failures {
             card.failures = failures;
+            // "Tentar de novo": o erro da volta anterior não vale mais (F14.5).
+            if failures == 0 {
+                card.last_error = None;
+            }
         }
         if let Some(depends_on) = draft.depends_on {
             let depends_on = checked_depends_on(depends_on)?;
@@ -548,6 +566,29 @@ impl Board {
         Ok(card)
     }
 
+    /// Guarda o erro do trabalhador recolhido (F14.5) no card `id`, que ele segurava ou acabou de
+    /// soltar. Ainda em "fazendo" com ele, volta ao backlog com uma falha. Card que outro já
+    /// puxou, ou que saiu do backlog, fica como está. Devolve se o card mudou.
+    pub fn record_worker_error(&mut self, id: &str, error: WorkerError) -> bool {
+        let Ok(card) = self.get_mut(id) else {
+            return false;
+        };
+        let holds_it = card.holder.as_deref() == Some(error.session.as_str());
+        if card.column == Column::Fazendo && holds_it {
+            card.column = Column::Backlog;
+            card.holder = None;
+            card.failures += 1;
+        }
+        if card.column != Column::Backlog || card.holder.is_some() {
+            return false;
+        }
+        if card.last_error.as_ref() == Some(&error) {
+            return false;
+        }
+        card.last_error = Some(error);
+        true
+    }
+
     /// Tarefas validadas que ninguém segura mais: o worktree delas pode sair.
     pub fn validated_worktrees(&self) -> impl Iterator<Item = &Card> {
         self.cards
@@ -814,6 +855,68 @@ mod tests {
         };
         board.update("T2", retry).unwrap();
         assert_eq!(board.next_auto(|_| true).unwrap().id, "T2");
+    }
+
+    #[test]
+    fn retry_and_a_new_start_clear_the_last_error() {
+        let mut board = Board::default();
+        board.create(agent_draft("a", Priority::Normal), 1).unwrap();
+        board.create(agent_draft("b", Priority::Normal), 2).unwrap();
+        let error = WorkerError {
+            session: "s1".to_owned(),
+            status: Some(1),
+            output: "falhou".to_owned(),
+            log: "/tmp/s1.log".to_owned(),
+        };
+        for id in ["T1", "T2"] {
+            let card = board.get_mut(id).unwrap();
+            card.failures = 1;
+            card.last_error = Some(error.clone());
+        }
+        // Editar outra coisa não apaga o erro; o "Tentar de novo" (failures: 0) apaga.
+        board.update("T1", draft("a2")).unwrap();
+        assert_eq!(board.get("T1").unwrap().last_error, Some(error));
+        let retry = Draft {
+            failures: Some(0),
+            ..Draft::default()
+        };
+        board.update("T1", retry).unwrap();
+        assert_eq!(board.get("T1").unwrap().last_error, None);
+        // "Mandar" puxa o card: o erro antigo sai.
+        board.claim("T2", "s2").unwrap();
+        assert_eq!(board.get("T2").unwrap().last_error, None);
+    }
+
+    #[test]
+    fn worker_error_goes_to_the_card_it_held_or_just_released() {
+        let mut board = Board::default();
+        for title in ["a", "b", "c"] {
+            board.create(agent_draft(title, Priority::Normal), 1).unwrap();
+        }
+        let error = |session: &str| WorkerError {
+            session: session.to_owned(),
+            status: Some(1),
+            output: "saída".to_owned(),
+            log: format!("/tmp/{session}.log"),
+        };
+        // Ainda segura: volta ao backlog com uma falha.
+        board.claim("T1", "s1").unwrap();
+        assert!(board.record_worker_error("T1", error("s1")));
+        let card = board.get("T1").unwrap();
+        assert_eq!((card.column, card.failures), (Column::Backlog, 1));
+        assert_eq!(card.last_error, Some(error("s1")));
+        // A mesma volta de novo não muda nada.
+        assert!(!board.record_worker_error("T1", error("s1")));
+        // Já soltou (release): só o erro entra, sem outra falha.
+        board.claim("T2", "s2").unwrap();
+        board.release("T2", "s2").unwrap();
+        assert!(board.record_worker_error("T2", error("s2")));
+        assert_eq!(board.get("T2").unwrap().failures, 1);
+        // Outro trabalhador já puxou: o erro da sessão velha não entra.
+        board.claim("T3", "s4").unwrap();
+        assert!(!board.record_worker_error("T3", error("s3")));
+        assert!(!board.record_worker_error("T9", error("s3")));
+        assert_eq!(board.get("T3").unwrap().last_error, None);
     }
 
     #[test]

@@ -436,6 +436,23 @@ hubd); F11.2 antes de F11.4.
   seleção + automático sem repetir, pular o que sumiu do catálogo), `api::kanban::tests` (o
   `WorkerRun` do orquestrador sai com os modelos na ordem; catálogo listado) e
   `KanbanBoard.test.tsx` (marcar, reordenar, salvar, modelo sumido riscado).
+  Revisão (2026-10-24): a branch `agente/T18` (968c68c) passa no `cargo fmt` e tem o que o pedido
+  descreve (`Orchestrator.models`/`only_selected`, `Board::orchestrator_models`,
+  `all_model_ids_from_catalogue`, `GET …/kanban/modelos`, `PUT …/orquestrador`, diálogo e
+  testes), mas o `./dev just check` fica vermelho, também na branch sozinha: (1) clippy
+  `field_reassign_with_default` em `crates/hub-core/src/kanban.rs`, teste
+  `orchestrator_serde_includes_models_and_only_selected` (monte o `Board { orchestrator: …,
+  ..Default::default() }`); (2) o `hubd` não compila: `list_models` (`api/kanban.rs`) usa
+  `Profile.providers`, mas o campo é `opencode_providers` (`Vec<String>`, não mapa); (3) `tsc`:
+  `OrchestratorDialog.tsx` importa `Check` sem usar e passa `title` a um ícone do lucide (TS2322,
+  linha ~233; ponha o `title` num `span` em volta); (4) `biome`: formatação de
+  `OrchestratorDialog.tsx` e `KanbanBoard.test.tsx`, imports desorganizados e
+  `noNonNullAssertion` em `KanbanBoard.test.tsx:577`; (5) 2 testes do `KanbanBoard.test.tsx`
+  falham ("instruções dos trabalhadores vão para o orquestrador sem mexer no resto" e "modelo
+  sumido do catálogo aparece riscado no diálogo e aviso no quadro"). Rode `./dev just fmt` e o
+  `./dev just check` inteiro até ficar verde antes de marcar feita. Ao reabrir, faça merge da
+  `main` (entrou a F14.5/T17: `Card.last_error`, `Draft.last_error`, `collect_failed_workers` em
+  `api/kanban.rs` e `types.ts`).
 
 ## F12 — Apontar e pedir na tela
 

@@ -431,12 +431,11 @@ export function KanbanBoard() {
             Última revisão
             <span className="truncate font-mono text-xs text-slate-400">{board.review.file}</span>
           </summary>
-          <pre
-            aria-label="Resumo da revisão"
-            className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-slate-300"
-          >
-            {board.review.text}
-          </pre>
+          <section aria-label="Resumo da revisão" className="mt-2 max-h-60 overflow-y-auto">
+            <pre className="whitespace-pre-wrap font-sans text-xs text-slate-300">
+              {board.review.text}
+            </pre>
+          </section>
         </details>
       )}
       <div className="flex min-h-0 flex-1 flex-col">

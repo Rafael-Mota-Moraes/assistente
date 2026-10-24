@@ -245,5 +245,9 @@
       "column": "backlog",
       "created_at": 1792847367
     }
-  ]
+  ],
+  "orchestrator": {
+    "enabled": true,
+    "max_workers": 1
+  }
 }

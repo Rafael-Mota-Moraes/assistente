@@ -191,6 +191,9 @@ pub struct Draft {
     /// IDs das tarefas das quais esta depende. Na edição, `None` = não muda; vetor vazio = limpa.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depends_on: Option<Vec<String>>,
+    /// Limpar o último erro do trabalhador (F14.5): `null` apaga, ausente = não muda.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<Option<WorkerError>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,10 +305,14 @@ impl Board {
             }
             card.depends_on = depends_on;
         }
+        if let Some(last_error) = draft.last_error {
+            // `Some(None)` = limpar, `Some(Some(...))` = definir (não usado pela API), `None` = não muda.
+            card.last_error = last_error;
+        }
         if let Some(column) = draft.column
             && column != card.column
         {
-            // Só o check do `validar` põe e tira um card de "validando" (F11.17).
+            // Só o check do `validar` pôe e tira um card de "validando" (F11.17).
             if Column::Validando == column || Column::Validando == card.column {
                 return Err(KanbanError::Invalid(
                     "\"validando\" é só do check do QA".to_owned(),
@@ -891,7 +898,9 @@ mod tests {
     fn worker_error_goes_to_the_card_it_held_or_just_released() {
         let mut board = Board::default();
         for title in ["a", "b", "c"] {
-            board.create(agent_draft(title, Priority::Normal), 1).unwrap();
+            board
+                .create(agent_draft(title, Priority::Normal), 1)
+                .unwrap();
         }
         let error = |session: &str| WorkerError {
             session: session.to_owned(),

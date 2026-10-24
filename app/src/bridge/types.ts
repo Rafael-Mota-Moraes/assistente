@@ -258,6 +258,8 @@ export type KanbanDraft = {
   failures?: number;
   /** IDs das tarefas das quais esta depende (F11.13). Na edição, ausente = não muda; vazio = limpa. */
   depends_on?: string[];
+  /** Limpar o último erro do trabalhador (F14.5): `null` apaga, ausente = não muda. */
+  last_error?: KanbanWorkerError | null;
 };
 
 export type CollectedCommit = { hash: string; subject: string };

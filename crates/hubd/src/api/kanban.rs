@@ -20,7 +20,7 @@ use crate::sessions::PaneState;
 use axum::extract::Path as Params;
 use hub_core::kanban::{Board, Card, Column, Draft, KanbanError, Merged, WorkerError};
 use hub_core::worker::{self, WorkerRun};
-use hub_core::{profile_data_dir, workers_config_at};
+use hub_core::{AgentKind, profile_data_dir, workers_config_at};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -1802,7 +1802,11 @@ async fn collect_failed_workers(
     let mut collected = Vec::new();
     let mut changed = Vec::new();
     for session in sessions {
-        if !session.dead || session.profile != profile || session.project != project {
+        if !session.dead
+            || session.profile != profile
+            || session.project != project
+            || session.agent != AgentKind::Opencode
+        {
             continue;
         }
         let files = worker::files(&data, &session.id);
@@ -3864,7 +3868,14 @@ mod tests {
         .unwrap();
         git_sync(&hub.proj, &["add", ".assistente.toml"]);
         git_sync(&hub.proj, &["commit", "-q", "-m", "config do projeto"]);
-        send(hub.app.clone(), "POST", CARDS, Some(r#"{"title":"um"}"#), None).await;
+        send(
+            hub.app.clone(),
+            "POST",
+            CARDS,
+            Some(r#"{"title":"um"}"#),
+            None,
+        )
+        .await;
         // Um Claude que sai com erro: fica morto, com o painel.
         let spec = r#"{"profile":"pessoal","project":"proj","agent":"claude"}"#;
         let (status, body) = send(hub.app.clone(), "POST", "/api/sessions", Some(spec), None).await;
@@ -3895,7 +3906,12 @@ mod tests {
         std::fs::write(worker::worktree_dir(&hub.proj, "T1").join("sair"), "").unwrap();
         let mut dead = false;
         for _ in 0..50 {
-            dead = t.tmux.find(&worker).await.unwrap().is_some_and(|session| session.dead);
+            dead = t
+                .tmux
+                .find(&worker)
+                .await
+                .unwrap()
+                .is_some_and(|session| session.dead);
             if dead {
                 break;
             }
@@ -3924,7 +3940,10 @@ mod tests {
             t.tmux.find(&worker).await.unwrap().is_none(),
             "a sessão do trabalhador que falhou tem de sair"
         );
-        assert!(t.tmux.find(claude).await.unwrap().is_some(), "o Claude nunca é recolhido");
+        assert!(
+            t.tmux.find(claude).await.unwrap().is_some(),
+            "o Claude nunca é recolhido"
+        );
         let t1 = card(&board);
         assert_eq!(t1["column"], "backlog", "{board}");
         assert_eq!(t1["failures"], 1, "{board}");

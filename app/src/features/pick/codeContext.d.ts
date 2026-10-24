@@ -3,24 +3,10 @@
  * O script (`codeContext.js`) é um script clássico: ele deixa a API em
  * `globalThis.__assistenteCodeContext` para o script do modo apontar (F12.2) chamar. */
 
-/** Arquivo e linha do JSX (só em dev; em build de produção não existe). */
-export type CodeContextSource = {
-  file: string;
-  line: number | null;
-  column: number | null;
-};
+import type { PickCodeContext } from "../../bridge/types";
 
-/** Contexto de código de um elemento apontado. */
-export type CodeContext = {
-  /** A página usa React? */
-  react: boolean;
-  /** Componente mais próximo do elemento. */
-  component: string | null;
-  /** Pilha de componentes, do mais interno ao mais externo. */
-  stack: string[];
-  /** Arquivo e linha do JSX (null sem dev). */
-  source: CodeContextSource | null;
-};
+/** Contexto de código de um elemento apontado: o mesmo tipo do pick (`PickedElement.code`). */
+export type CodeContext = PickCodeContext;
 
 /** API que o script deixa na página. */
 export type CodeContextApi = {

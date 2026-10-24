@@ -73,7 +73,13 @@ describe("HubClient", () => {
 
   it("configurações do projeto: GET e PUT no caminho escapado", async () => {
     const view = {
-      settings: { docker: true, allow_hosts: [], full_network: false, allowed_commands: [] },
+      settings: {
+        docker: true,
+        allow_hosts: [],
+        full_network: false,
+        allowed_commands: [],
+        check: "./dev just check",
+      },
       docker_from_project_file: false,
     };
     const fetchFn = fakeFetch(200, view);

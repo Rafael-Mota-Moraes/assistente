@@ -8,7 +8,7 @@ import {
   type PanelRect,
   updateMemoryPanelBounds,
 } from "../../bridge/host";
-import { useAppStore } from "../../store";
+import { anyModalOpen, useAppStore } from "../../store";
 
 /** Retângulo do âncora em pixels lógicos (igual ao px do CSS). */
 function rectOf(anchor: HTMLElement): PanelRect {
@@ -23,8 +23,7 @@ export function MemoryPanel() {
   const hub = useAppStore((s) => s.hub);
   const memory = useAppStore((s) => s.memory);
   const open = useAppStore((s) => s.memoryPanelOpen);
-  const morning = useAppStore((s) => s.morning);
-  const projectSettings = useAppStore((s) => s.projectSettings);
+  const modalOpen = useAppStore(anyModalOpen);
   const pending = useAppStore((s) =>
     s.execRequests
       .filter((r) => r.state === "pending")
@@ -32,27 +31,29 @@ export function MemoryPanel() {
       .join(","),
   );
   const anchorRef = useRef<HTMLDivElement | null>(null);
-  /** Modais React (Bom dia, configurações) e cartões de aprovação ficariam ATRÁS da webview
-   * filha; então sobrepõem → fecha o painel. `seen` guarda o que já estava pendente no
-   * instante da abertura: pendência nova sim fecha o painel. */
-  const seen = useRef<string[]>([]);
+  /** Modais React (Bom dia, configurações, Assistente, estado do ai-memory, caixa do apontar)
+   * e cartões de aprovação ficariam ATRÁS da webview filha; então sobrepõem → fecha o painel
+   * (F12.6). Aqui o painel fecha (a webview é o painel inteiro); no preview (F12.1), que tem
+   * chrome em volta, a webview é que some e volta. `seen` guarda o que já estava pendente no
+   * instante da abertura: pendência nova sim fecha o painel. O aviso (toast) não fecha: some
+   * sozinho, e os erros do próprio painel viram aviso. */
+  const seen = useRef<string[] | null>(null);
 
   useEffect(() => {
     if (!open) {
-      seen.current = [];
+      seen.current = null;
       return;
     }
-    if (morning || projectSettings) {
+    if (seen.current === null) seen.current = pending.split(",").filter(Boolean);
+    if (modalOpen) {
       useAppStore.setState({ memoryPanelOpen: false });
       return;
     }
-    const fresh = pending.split(",").filter((id) => id && !seen.current.includes(id));
-    if (fresh.length > 0) {
+    const known = seen.current;
+    if (pending.split(",").some((id) => id && !known.includes(id))) {
       useAppStore.setState({ memoryPanelOpen: false });
-      return;
     }
-    if (!seen.current.length && pending) seen.current = pending.split(",");
-  }, [open, morning, projectSettings, pending]);
+  }, [open, modalOpen, pending]);
 
   const url = hub ? hub.memoryLoginUrl() : "";
 

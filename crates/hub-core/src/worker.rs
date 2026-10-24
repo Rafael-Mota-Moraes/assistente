@@ -274,7 +274,8 @@ pub fn render_finish_prompt(card: &Card, branch: &str, instructions: &str) -> St
 }
 
 /// Prompt do QA de uma tarefa "feita" (F11.15): pergunta onde juntar, confere o que foi feito
-/// contra o pedido e valida (o hubd junta) ou reabre com o que falta. Não implementa nada.
+/// contra o pedido e valida (o hubd roda o check e junta, F11.17) ou reabre com o que falta. Não
+/// implementa nada.
 pub fn render_qa_prompt(card: &Card, branch: &str, instructions: &str) -> String {
     let description = if card.description.is_empty() {
         "(sem descrição: o título é o pedido)".to_owned()
@@ -297,16 +298,18 @@ pub fn render_qa_prompt(card: &Card, branch: &str, instructions: &str) -> String
          1. Antes de tudo, pergunte ao usuário onde juntar: na `main` ou em outra branch (qual).\n   \
             Espere a resposta. Chame a escolhida de ALVO.\n\
          2. Veja o que foi feito: `git log --oneline ALVO..HEAD` e `git diff ALVO...HEAD`. Confira\n   \
-            item por item com o pedido (e o \"Pronto quando\", se houver). Rode as verificações do\n   \
-            projeto (ex.: `./dev just check`).\n\
-         3. Não atende (falta algo, quebra as verificações, faz outra coisa): não junte. Rode\n   \
+            item por item com o pedido (e o \"Pronto quando\", se houver).\n\
+         3. Não atende (falta algo, faz outra coisa): não junte. Rode\n   \
             `\"$ASSISTENTE_FORA_DO_JAIL\" kanban reabrir {id} --nota \"<o que já existe e o que falta>\"`.\n   \
             O card volta ao backlog com a nota na descrição, e o próximo trabalhador continua\n   \
             desta branch. Não implemente o que falta: isso é dele.\n\
          4. Atende: rode `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar {id} --branch ALVO`. O hubd\n   \
-            junta `{branch}` na ALVO (merge local, nunca push) e move o card para \"validado\". Se\n   \
-            ele responder conflito, rode `git merge ALVO` aqui, resolva, rode as verificações de\n   \
-            novo, commite e chame `validar` outra vez.\n\
+            roda o check do projeto no PC, no commit que a ALVO vai receber (o usuário aprova o\n   \
+            pedido no app; o comando espera). Verde: junta `{branch}` na ALVO (merge local, nunca\n   \
+            push) e o card vai para \"validado\". Vermelho: nada muda e a resposta traz o fim da\n   \
+            saída; reabra (passo 3) com o que quebrou na nota, sem consertar aqui. Negado ou sem\n   \
+            resposta: pergunte ao usuário. Conflito: rode `git merge ALVO` aqui, resolva, commite\n   \
+            e chame `validar` outra vez.\n\
          5. Termine dizendo ao usuário, em poucas linhas, o resultado e por quê.\n\n\
          ## Regras\n\n\
          - Só corrija aqui o que nasce da junção (conflito). Não faça push nem troque de branch.\n\
@@ -340,13 +343,14 @@ pub fn render_qa_all_prompt(cards: &[Card], instructions: &str) -> String {
          2. Uma tarefa por vez, na ordem da lista (a que depende de outra vem depois dela):\n   \
             - Veja o que foi feito: `git log --oneline ALVO..agente/<id>` e\n     \
               `git diff ALVO...agente/<id>`. Confira com o pedido (e o \"Pronto quando\", se houver).\n   \
-            - Rode as verificações do projeto no worktree dela (ex.: `./dev just check`).\n   \
             - Não atende: `\"$ASSISTENTE_FORA_DO_JAIL\" kanban reabrir <id> --nota \"<o que já existe\n     \
               e o que falta>\"`. Volta ao backlog com a nota; não implemente o que falta.\n   \
-            - Atende: `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar <id> --branch ALVO`. O hubd junta\n     \
-              (merge local, nunca push) e o card vai para \"validado\". Se ele responder conflito\n     \
-              (a ALVO andou com as anteriores), no worktree da tarefa rode `git merge ALVO`,\n     \
-              resolva, rode as verificações, commite e chame `validar` de novo.\n\
+            - Atende: `\"$ASSISTENTE_FORA_DO_JAIL\" kanban validar <id> --branch ALVO`. O hubd roda\n     \
+              o check do projeto no PC (o usuário aprova; o comando espera). Verde: junta (merge\n     \
+              local, nunca push) e o card vai para \"validado\". Vermelho: nada muda e a resposta\n     \
+              traz o fim da saída; reabra com o que quebrou na nota. Conflito (a ALVO andou com as\n     \
+              anteriores): no worktree da tarefa rode `git merge ALVO`, resolva, commite e chame\n     \
+              `validar` de novo.\n\
          3. No fim, um resumo curto ao usuário: o que entrou, o que voltou e por quê.\n\n\
          ## Regras\n\n\
          - Só corrija o que nasce da junção (conflito), e só no worktree da tarefa. Não faça push,\n  \
@@ -500,6 +504,7 @@ mod tests {
             failures: 0,
             blocked: None,
             merged: None,
+            depends_on: Vec::new(),
             created_at: 1,
         }
     }

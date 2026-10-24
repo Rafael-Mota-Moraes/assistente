@@ -81,6 +81,16 @@ executa() { # <modelo>
 }
 
 # A tarefa é marcada pelo resultado do git, não pelo texto do agente (ver o prompt).
+# Merge não é progresso (F11.13): conta só um commit da linha da tarefa (primeiro pai), que não
+# seja merge e mude algum arquivo. O diff de um merge contra o primeiro pai é o da outra branch.
+tem_mudanca_propria() {
+  local c
+  for c in $(git rev-list --first-parent --no-merges "$antes..HEAD"); do
+    git diff-tree --quiet --no-commit-id -r "$c" || return 0
+  done
+  return 1
+}
+
 antes="$(git rev-parse HEAD)"
 log "trabalhador na tarefa $TAREFA; modelos: $MODELOS"
 
@@ -93,10 +103,15 @@ for modelo in $MODELOS; do
     log "opencode terminou com rc=$rc (124 = timeout, 125 = erro de provedor, 126 = cota esgotada)"
     if [[ -z "$(git status --porcelain)" && "$(git rev-parse HEAD)" != "$antes" ]]; then
       commit="$(git rev-parse HEAD)"
-      echo "$modelo ok" >>"$RESULTADOS"
-      log "tarefa $TAREFA concluída em $commit"
-      "$FORA" kanban "done" "$TAREFA" --commit "$commit" >>"$LOG" 2>&1
-      exit 0
+      if tem_mudanca_propria; then
+        echo "$modelo ok" >>"$RESULTADOS"
+        log "tarefa $TAREFA concluída em $commit"
+        "$FORA" kanban "done" "$TAREFA" --commit "$commit" >>"$LOG" 2>&1
+        exit 0
+      else
+        log "commit $commit sem mudança própria (só merge); desfeito, não é progresso"
+        git reset -q --hard "$antes" >>"$LOG" 2>&1
+      fi
     fi
     if [ "$rc" = 126 ]; then
       # Não conta contra o modelo: a cota é do provedor, não dele.

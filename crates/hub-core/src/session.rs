@@ -51,6 +51,12 @@ pub struct LaunchPlan {
     pub env: Vec<(String, String)>,
     /// Comando que roda dentro do tmux.
     pub argv: Vec<String>,
+    /// Se `true`, a janela da sessão fica com `remain-on-exit` ligado (o painel permanece na tela
+    /// depois que o processo morre). Só os agentes interativos (Claude, OpenCode) usam: a saída e
+    /// o status de saída ficam visíveis na aba. O trabalhador e o Terminal não: o trabalhador que
+    /// sai com 0 fecha a própria sessão (o que falha fica, com o painel, para ver o erro) e o
+    /// Terminal fecha no `exit` (F14.4).
+    pub remain_on_exit: bool,
     /// Prompt inicial do Claude (exploração, "Terminar com", QA), que o hubd grava antes de
     /// criar a sessão. Não vai inteiro no `argv`: o tmux recusa comando grande ("command too
     /// long"), e o QA geral com vários cards passa disso.
@@ -264,6 +270,10 @@ impl LaunchPlan {
         let mut cwd = profile.root.join(&spec.project);
         let mut extra_maps: Vec<PathBuf> = Vec::new();
         let mut rw_maps: Vec<PathBuf> = Vec::new();
+        // F14.4: o `remain-on-exit` é só dos agentes interativos (Claude, OpenCode): o painel
+        // fica na tela com a saída e o status de saída. O Terminal fecha no `exit` e o
+        // trabalhador que termina bem fecha a própria sessão.
+        let mut remain_on_exit = false;
         let mut prompt_text: Option<&str> = None;
         let argv = if spec.agent == AgentKind::Shell {
             // Login: pega o PATH do usuário (~/.local/bin) como num terminal comum.
@@ -298,6 +308,10 @@ impl LaunchPlan {
                 }
                 Mode::Agent => agent_command(spec.agent),
             };
+            // O trabalhador não fica com o painel: quando ele desiste da tarefa, o hubd liga o
+            // `remain-on-exit` da janela (o erro precisa ficar visível) e, quando ele termina
+            // bem, a sessão morre junto com ele.
+            remain_on_exit = !matches!(mode, Mode::Worker(_));
             let settings = &options.settings;
             let jail = JailOptions {
                 docker: settings.docker || jail_config_at(&cwd).docker,
@@ -319,6 +333,7 @@ impl LaunchPlan {
             cwd,
             argv,
             env,
+            remain_on_exit,
             prompt,
         })
     }
@@ -1163,6 +1178,49 @@ mod tests {
         } else {
             Err(format!("ai-jail saiu com {status}"))
         }
+    }
+
+    /// F14.4: o `remain-on-exit` é só dos agentes interativos. O trabalhador e o Terminal
+    /// fecham a própria sessão quando o processo acaba.
+    #[test]
+    fn only_interactive_agents_keep_the_panel_after_the_process_dies() {
+        let (config, home) = setup();
+        let options = LaunchOptions::default();
+        for agent in [AgentKind::Claude, AgentKind::Opencode] {
+            let plan =
+                LaunchPlan::build_with(&config, &home, &spec("pessoal", "x", agent), 1, &options)
+                    .unwrap();
+            assert!(plan.remain_on_exit, "{agent:?} tem de guardar o painel");
+        }
+        // A aba Terminal fecha no `exit`.
+        let shell = LaunchPlan::build_with(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Shell),
+            1,
+            &options,
+        )
+        .unwrap();
+        assert!(!shell.remain_on_exit);
+        // O trabalhador que termina bem fecha a própria sessão (o que falha pede o painel).
+        let run = WorkerRun {
+            task: "T1".into(),
+            models: vec!["x/a".into()],
+            attempts: 1,
+            max_minutes: 5,
+            wait_secs: 0,
+            worktree: PathBuf::from("/home/rafa/projetos/x/.assistente/worktrees/T1"),
+        };
+        let worker = LaunchPlan::build_worker(
+            &config,
+            &home,
+            &spec("pessoal", "x", AgentKind::Opencode),
+            1,
+            &options,
+            &run,
+        )
+        .unwrap();
+        assert!(!worker.remain_on_exit);
     }
 
     #[test]

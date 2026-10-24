@@ -16,6 +16,12 @@ const pick: PickedElement = {
   viewport: { width: 1280, height: 720 },
   scroll: { x: 0, y: 140 },
   url: "http://localhost:5173/",
+  code: {
+    react: true,
+    component: "Botao",
+    stack: ["Botao", "Card", "App"],
+    source: { file: "/src/features/x/Botao.tsx", line: 42, column: 7 },
+  },
 };
 
 describe("toPickDetail", () => {
@@ -31,6 +37,9 @@ describe("toPickDetail", () => {
       aria_label: "Salvar",
       dom_path: "body > main > button#salvar",
       rect: { x: 10, y: 20, width: 120, height: 32 },
+      component: "Botao",
+      source: "src/features/x/Botao.tsx:42",
+      components: ["Botao", "Card", "App"],
     });
   });
 
@@ -39,5 +48,22 @@ describe("toPickDetail", () => {
     expect(detail.text).toBe("");
     expect(detail.html).toBe("");
     expect(detail.aria_label).toBeNull();
+  });
+
+  it("sem contexto de código não popula component/source/components", () => {
+    const detail = toPickDetail({ ...pick, code: null });
+    expect(detail.component).toBeNull();
+    expect(detail.source).toBeNull();
+    expect(detail.components).toEqual([]);
+  });
+
+  it("sem fonte (build de produção) popula component/components mas não source", () => {
+    const detail = toPickDetail({
+      ...pick,
+      code: { react: true, component: "Botao", stack: ["Botao", "App"], source: null },
+    });
+    expect(detail.component).toBe("Botao");
+    expect(detail.source).toBeNull();
+    expect(detail.components).toEqual(["Botao", "App"]);
   });
 });

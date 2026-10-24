@@ -28,7 +28,7 @@ kanban() {
   if [ -z "$url" ] || [ -z "$token" ]; then
     die "fora de uma sessão do Assistente (sem ASSISTENTE_EXEC_URL/ASSISTENTE_EXEC_TOKEN)"
   fi
-  local acao="${1:-}" id="" commit="" modelos="" titulo="" descricao="" tipo="" prioridade="" motivo="" branch="" nota="" tarefas="" texto=""
+  local acao="${1:-}" id="" commit="" modelos="" titulo="" descricao="" tipo="" prioridade="" motivo="" branch="" nota="" tarefas="" texto="" depende_de=""
   [ $# -gt 0 ] && shift
   case "$acao" in
     pull|listar|criar|juntar|resumo) ;;
@@ -52,6 +52,7 @@ kanban() {
       --nota) [ $# -ge 2 ] || uso_kanban; nota="$2"; shift 2 ;;
       --tarefas) [ $# -ge 2 ] || uso_kanban; tarefas="$2"; shift 2 ;;
       --texto) [ $# -ge 2 ] || uso_kanban; texto="$2"; shift 2 ;;
+      --depende-de) [ $# -ge 2 ] || uso_kanban; depende_de="$2"; shift 2 ;;
       *) uso_kanban ;;
     esac
   done
@@ -70,7 +71,7 @@ kanban() {
   if [ "$acao" = resumo ]; then
     [ -n "$texto" ] || die "resumo: informe --texto (o que entrou, o que voltou e por quê)"
   fi
-  local path method=POST body
+  local path method=POST body timeout_kanban=60
   case "$acao" in
     pull) path=/v1/kanban/pull ;;
     listar) path=/v1/kanban; method=GET ;;
@@ -78,7 +79,7 @@ kanban() {
     done) path=/v1/kanban/done ;;
     release) path=/v1/kanban/release ;;
     bloquear) path=/v1/kanban/block ;;
-    validar) path=/v1/kanban/validate ;;
+    validar) path=/v1/kanban/validate; timeout_kanban=2700 ;;  # o check no PC: aprovação + 30 min
     reabrir) path=/v1/kanban/reopen ;;
     juntar) path=/v1/kanban/juntar ;;
     resumo) path=/v1/kanban/resumo ;;
@@ -88,7 +89,7 @@ kanban() {
   esac
   body="$(python3 -c '
 import json, sys
-acao, task, commit, modelos, titulo, descricao, tipo, prioridade, motivo, branch, nota, tarefas, texto = sys.argv[1:14]
+acao, task, commit, modelos, titulo, descricao, tipo, prioridade, motivo, branch, nota, tarefas, texto, depende_de = sys.argv[1:15]
 if acao == "done":
     body = {"id": task, "commit": commit or None}
 elif acao == "release":
@@ -113,15 +114,17 @@ elif acao == "criar":
         body["kind"] = tipo
     if prioridade:
         body["priority"] = prioridade
+    if depende_de:
+        body["depends_on"] = [d.strip() for d in depende_de.split(",") if d.strip()]
 else:
     body = {}
-print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos" "$titulo" "$descricao" "$tipo" "$prioridade" "$motivo" "$branch" "$nota" "$tarefas" "$texto")"
+print(json.dumps(body))' "$acao" "$id" "$commit" "$modelos" "$titulo" "$descricao" "$tipo" "$prioridade" "$motivo" "$branch" "$nota" "$tarefas" "$texto" "$depende_de")"
   local response status json
   if [ "$method" = GET ]; then
-    response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+    response="$(curl -sS --noproxy '*' -m "$timeout_kanban" -w '\n%{http_code}' \
       -H "Authorization: Bearer $token" "$url$path")" || die "o hubd não respondeu em $url"
   else
-    response="$(curl -sS --noproxy '*' -m 60 -w '\n%{http_code}' \
+    response="$(curl -sS --noproxy '*' -m "$timeout_kanban" -w '\n%{http_code}' \
       -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
       --data-binary "$body" "$url$path")" || die "o hubd não respondeu em $url"
   fi
@@ -138,10 +141,10 @@ except ValueError:
   esac
 }
 uso_kanban() {
-  echo "uso: fora-do-jail kanban listar | criar --titulo T [--descricao D] [--tipo manual|agente] [--prioridade alta|normal|baixa]" >&2
+  echo "uso: fora-do-jail kanban listar | criar --titulo T [--descricao D] [--tipo manual|agente] [--prioridade alta|normal|baixa] [--depende-de T1,T3]" >&2
   echo "     fora-do-jail kanban pull | done <id> [--commit SHA] | release <id> | trabalhador <id> [--modelos m1,m2]" >&2
   echo "     fora-do-jail kanban bloquear <id> --motivo M   (cota esgotada: pausa o orquestrador)" >&2
-  echo "     fora-do-jail kanban validar <id> --branch B | reabrir <id> --nota N   (QA de um card feito)" >&2
+  echo "     fora-do-jail kanban validar <id> --branch B | reabrir <id> --nota N   (QA de um card feito; validar espera o check no PC)" >&2
   echo "     fora-do-jail kanban juntar --commit SHA [--tarefas T1,T2] | resumo --texto R   (revisão)" >&2
   exit 2
 }

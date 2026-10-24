@@ -232,7 +232,7 @@ export function SessionArea() {
                   onClick={() => selectSession(session.id)}
                   className={`flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 ${
                     session.agent === "shell" ? "text-amber-200" : ""
-                  }`}
+                  } ${session.dead ? "opacity-70" : ""}`}
                 >
                   {tabLabel(session)}
                   {execRequests.some((r) => r.state === "pending" && r.session === session.id) && (
@@ -241,10 +241,20 @@ export function SessionArea() {
                       title="Esperando você aprovar um comando fora do jail"
                     />
                   )}
+                  {session.dead && (
+                    <span
+                      className="size-2 rounded-full bg-rose-500"
+                      title="Sessão morta: o processo já saiu (o painel ficou com a saída)"
+                    />
+                  )}
                 </button>
                 <button
                   type="button"
-                  title="Encerrar a sessão (mata o agente)"
+                  title={
+                    session.dead
+                      ? "Encerrar a sessão (o processo já saiu)"
+                      : "Encerrar a sessão (mata o agente)"
+                  }
                   onClick={() => {
                     if (
                       window.confirm(`Encerrar ${tabLabel(session)}? O agente será finalizado.`)

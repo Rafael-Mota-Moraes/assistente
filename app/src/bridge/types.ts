@@ -109,6 +109,8 @@ export type SessionInfo = {
   agent: AgentKind;
   created_at: number;
   attached: number;
+  /** F14.4: o processo do painel já saiu; a sessão existe mas está morta. A UI usa para marcar a aba. */
+  dead: boolean;
 };
 
 export type SessionSpec = { profile: string; project: string; agent: AgentKind };
@@ -121,6 +123,8 @@ export type ProjectSettings = {
   allowed_commands: string[];
   /** F12.1: endereço do dev server, visto do PC. Ausente = sem preview. */
   preview_url?: string | null;
+  /** F11.17: comando de verificação do projeto. Padrão `./dev just check`. */
+  check: string;
 };
 
 /** Pedido de um agente para rodar um comando fora do jail (F9.5). */
@@ -158,6 +162,8 @@ export type ExecView = {
   state: ExecState;
   auto_approved: boolean;
   result: ExecResult | null;
+  /** Pedido `host` já foi pego pelo app para execução no PC (F9.11). */
+  picked_up?: boolean;
 };
 
 /** GET/PUT /api/projects/{profile}/{project}/settings. */
@@ -169,7 +175,8 @@ export type ProjectSettingsView = {
 
 /** Quadro do projeto (F11): `.assistente/kanban.json` no repo, espelho de hubd `kanban`. */
 /** `validado` = passou no QA e foi juntado numa branch (F11.15). */
-export type KanbanColumn = "backlog" | "fazendo" | "feito" | "validado";
+/** `validando` = check rodando via host exec (F11.17). */
+export type KanbanColumn = "backlog" | "fazendo" | "feito" | "validando" | "validado";
 /** `manual` só roda quando você manda; `agente` é puxado pelo orquestrador (F11.2). */
 export type KanbanKind = "manual" | "agente";
 export type KanbanPriority = "alta" | "normal" | "baixa";
@@ -190,6 +197,8 @@ export type KanbanCard = {
   blocked?: string;
   /** Onde o QA juntou a tarefa (`validado`, F11.15). */
   merged?: KanbanMerged;
+  /** IDs das tarefas das quais esta depende (F11.13). */
+  depends_on?: string[];
   created_at: number;
 };
 
@@ -233,6 +242,8 @@ export type KanbanDraft = {
   column?: KanbanColumn;
   /** `0` = "Tentar de novo": o orquestrador automático volta a puxar. */
   failures?: number;
+  /** IDs das tarefas das quais esta depende (F11.13). Na edição, ausente = não muda; vazio = limpa. */
+  depends_on?: string[];
 };
 
 export type CollectedCommit = { hash: string; subject: string };
@@ -278,6 +289,18 @@ export type GitStatus = { files: GitFileStatus[] };
 /** F10.1: diff de um arquivo (HEAD × árvore de trabalho). */
 export type GitDiff = { path: string; head: string | null; working: string | null };
 
+/** Contexto de código do elemento apontado (F12.3). */
+export type PickCodeContext = {
+  /** A página usa React? */
+  react: boolean;
+  /** Componente mais próximo do elemento (null se a página não usa React). */
+  component: string | null;
+  /** Pilha de componentes, do mais interno ao mais externo. */
+  stack: string[];
+  /** Arquivo e linha do JSX (null em build de produção). */
+  source: { file: string; line: number | null; column: number | null } | null;
+};
+
 /** Elemento apontado na página do preview (F12.2). Espelha `app/src-tauri/src/pick.rs`. */
 export type PickedElement = {
   /** Tag do elemento (`button`, `div`…). */
@@ -306,6 +329,8 @@ export type PickedElement = {
   scroll: { x: number; y: number };
   /** URL real da webview (o Rust troca pela URL carregada; a do payload não vale). */
   url: string;
+  /** Contexto de código (F12.3). */
+  code?: PickCodeContext | null;
 };
 
 /** Elemento apontado na página (F12.2) e contexto de código (F12.3). */

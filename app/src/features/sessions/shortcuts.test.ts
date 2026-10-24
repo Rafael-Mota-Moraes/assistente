@@ -47,6 +47,7 @@ const session = (id: string, project = "game"): SessionInfo => ({
   agent: "claude",
   created_at: 0,
   attached: 0,
+  dead: false,
 });
 
 const profiles: ProfileView[] = [

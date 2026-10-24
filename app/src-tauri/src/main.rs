@@ -1,7 +1,7 @@
 //! Casca desktop do Assistente: a UI fala direto com o hubd (HTTP/WS). Aqui só ficam as
 //! coisas que precisam do HOST: ler a config local, ver o estado da VM, abrir o Cursor,
 //! ancorar a webview da memória na janela principal e rodar no PC o pedido que o agente
-//! fez e você aprovou (F9.10).
+//! fez e você aprovou (F9.10), com a lista do PC e o registro local (F9.11).
 //! Spec: docs/specs/03-interface.md
 
 // Sem janela de console extra no Windows em release.
@@ -235,27 +235,37 @@ fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("não consegui abrir o navegador: {e}"))
 }
 
-// ---- Pedido no PC (F9.10) ----
+// ---- Pedido no PC (F9.10/F9.11) ----
 //
 // O agente pede (`fora-do-jail --pc`), o hubd guarda o pedido e **não** executa nada na
-// VM. Quem executa no PC é o app, e só depois que você aprovou no painel de pedidos.
-// O app pergunta ao hubd o que foi aprovado e roda exatamente aquilo: nem o comando nem a
-// pasta saem da UI, e o resultado volta ao hubd (`POST /api/exec/{id}/result`).
+// VM. Quem executa no PC é o app, e só depois que você aprovou no painel de pedidos (ou o
+// comando está, texto exato, na lista do PC do projeto, guardada no host).
+// O app pega no hubd o que foi aprovado (uma vez só) e roda exatamente aquilo: nem o
+// comando nem a pasta saem da UI, tudo fica no registro do PC e o resultado volta ao hubd
+// (`POST /api/exec/{id}/result`).
 
-/// O que o hubd guardou do pedido (o app roda exatamente isto).
+/// O que o hubd mostra do pedido: o app confere a lista do PC com isto (F9.11).
 #[derive(Deserialize)]
 struct ExecView {
     /// `host` = pedido para o PC (F9.9).
     #[serde(default)]
     target: String,
-    /// `running` = aprovado e esperando o app rodar.
+    /// `pending` = ninguém clicou ainda.
     #[serde(default)]
     state: String,
     #[serde(default)]
+    profile: String,
+    #[serde(default)]
+    project: String,
+    #[serde(default)]
     command: String,
-    #[serde(default)]
+}
+
+/// O que o hubd entrega, uma vez só, quando o app pega o pedido aprovado (F9.11).
+#[derive(Deserialize)]
+struct ClaimedJob {
+    command: String,
     cwd: String,
-    #[serde(default)]
     timeout_secs: u64,
 }
 
@@ -289,8 +299,14 @@ fn hub_url_and_token(config: &Config) -> Result<(String, String), String> {
     Ok((url, token))
 }
 
-/// GET no hubd (o app não inventa comando: pergunta o que foi aprovado).
-async fn hub_get(url: &str, token: &str, path: &str) -> Result<serde_json::Value, String> {
+/// GET/POST no hubd (o app não inventa comando: pergunta o que foi aprovado). O POST leva
+/// `{}` (o `approve` lê JSON). Resposta sem corpo (204) vira `null`.
+async fn hub_call(
+    url: &str,
+    token: &str,
+    method: &str,
+    path: &str,
+) -> Result<serde_json::Value, String> {
     let parsed = tauri::Url::parse(url).map_err(|e| format!("URL do hubd inválida: {e}"))?;
     let host = parsed
         .host_str()
@@ -310,10 +326,18 @@ async fn hub_get(url: &str, token: &str, path: &str) -> Result<serde_json::Value
         let _ = conn.await;
     });
     let request = hyper::Request::builder()
-        .method("GET")
+        .method(method)
         .uri(path)
+        .header(hyper::header::HOST, format!("{host}:{port}"))
         .header(hyper::header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(http_body_util::Empty::<hyper::body::Bytes>::new())
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .body(http_body_util::Full::new(hyper::body::Bytes::from_static(
+            if method == "POST" {
+                &b"{}"[..]
+            } else {
+                &b""[..]
+            },
+        )))
         .map_err(|e| format!("requisição inválida: {e}"))?;
     let response = sender
         .send_request(request)
@@ -327,7 +351,16 @@ async fn hub_get(url: &str, token: &str, path: &str) -> Result<serde_json::Value
         .map_err(|e| format!("resposta do hubd ilegível: {e}"))?
         .to_bytes();
     if !status.is_success() {
-        return Err(format!("o hubd respondeu {status}"));
+        let detail = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned))
+            .unwrap_or_default();
+        return Err(format!("o hubd respondeu {status} {detail}")
+            .trim_end()
+            .to_owned());
+    }
+    if body.is_empty() {
+        return Ok(serde_json::Value::Null);
     }
     serde_json::from_slice(&body).map_err(|e| format!("resposta do hubd ilegível: {e}"))
 }
@@ -337,7 +370,7 @@ fn valid_request_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/// Comando do app: roda no PC o pedido `host` que você aprovou (F9.10).
+/// Comando do app: roda no PC o pedido `host` que você aprovou com um clique (F9.10).
 #[tauri::command]
 async fn host_exec(id: String) -> Result<HostExecResult, String> {
     if !valid_request_id(&id) {
@@ -345,32 +378,151 @@ async fn host_exec(id: String) -> Result<HostExecResult, String> {
     }
     let config = load_config()?;
     let (url, token) = hub_url_and_token(&config)?;
-    // Nada roda sem aprovação: o hubd diz o que foi aprovado (alvo, estado, comando e pasta).
-    let value = hub_get(&url, &token, &format!("/api/exec/{id}")).await?;
+    let job = claim(&url, &token, &id).await?;
+    run_claimed(&config, &id, job, "clique").await
+}
+
+/// Comando do app: pedido `host` ainda pendente cujo comando está, texto exato, na lista
+/// do PC deste projeto (F9.11) roda sem clique. `None` = fora da lista, o card espera você.
+/// Quem decide é o app, com a lista guardada no host: o hubd e a UI não têm como liberar.
+#[tauri::command]
+async fn host_auto_exec(id: String) -> Result<Option<HostExecResult>, String> {
+    if !valid_request_id(&id) {
+        return Err("id de pedido inválido".into());
+    }
+    let config = load_config()?;
+    let (url, token) = hub_url_and_token(&config)?;
+    let value = hub_call(&url, &token, "GET", &format!("/api/exec/{id}")).await?;
     let view: ExecView =
         serde_json::from_value(value).map_err(|e| format!("pedido do hubd ilegível: {e}"))?;
-    if view.target != "host" {
-        return Err("este pedido não é para o PC".into());
+    if view.target != "host" || view.state != "pending" {
+        return Ok(None);
     }
-    if view.state != "running" {
-        return Err(format!(
-            "o pedido {id} não está aprovado ({}); aprove no app primeiro",
-            view.state
-        ));
+    let list = hub_core::load_pc_allow(&home()?)?;
+    if !list.allows(&view.profile, &view.project, &view.command) {
+        return Ok(None);
+    }
+    hub_call(&url, &token, "POST", &format!("/api/exec/{id}/approve")).await?;
+    let job = claim(&url, &token, &id).await?;
+    // O que vai rodar é o que o hubd entrega agora: confere de novo com a lista.
+    if job.command != view.command {
+        return Err("o comando mudou entre a consulta e a execução; nada rodou".into());
+    }
+    run_claimed(&config, &id, job, "lista do PC")
+        .await
+        .map(Some)
+}
+
+/// Pega o pedido aprovado no hubd: o comando sai de lá uma vez só (F9.11).
+async fn claim(url: &str, token: &str, id: &str) -> Result<ClaimedJob, String> {
+    let value = hub_call(url, token, "POST", &format!("/api/exec/{id}/claim")).await?;
+    serde_json::from_value(value).map_err(|e| format!("pedido do hubd ilegível: {e}"))
+}
+
+/// Roda o pedido pego e deixa tudo no registro do PC: nada roda sem a linha de início.
+async fn run_claimed(
+    config: &Config,
+    id: &str,
+    job: ClaimedJob,
+    approved_by: &str,
+) -> Result<HostExecResult, String> {
+    if job.command.trim().is_empty() {
+        return Err("comando vazio".into());
     }
     // A pasta de trabalho precisa estar dentro de uma raiz de perfil (como no `open_in_cursor`).
-    let cwd = PathBuf::from(&view.cwd);
-    if !inside_profile_root(&config, &cwd) {
-        return Err(format!(
-            "{} não está dentro de uma raiz de perfil",
-            view.cwd
-        ));
+    let cwd = PathBuf::from(&job.cwd);
+    if !inside_profile_root(config, &cwd) {
+        return Err(format!("{} não está dentro de uma raiz de perfil", job.cwd));
     }
-    let command = view.command.clone();
-    let timeout = Duration::from_secs(view.timeout_secs.clamp(1, 3600));
-    tauri::async_runtime::spawn_blocking(move || run_on_host(&cwd, &command, timeout))
+    let log = pc_exec_log()?;
+    append_log(
+        &log,
+        &format!(
+            "início id={id} aprovado={approved_by:?} cwd={:?} cmd={:?}",
+            job.cwd, job.command
+        ),
+    )
+    .map_err(|e| format!("não consegui escrever o registro do PC; nada rodou: {e}"))?;
+    let command = job.command;
+    let timeout = Duration::from_secs(job.timeout_secs.clamp(1, 3600));
+    let result = tauri::async_runtime::spawn_blocking(move || run_on_host(&cwd, &command, timeout))
         .await
-        .map_err(|e| format!("a execução no PC falhou: {e}"))?
+        .map_err(|e| format!("a execução no PC falhou: {e}"))
+        .and_then(|r| r);
+    let end = match &result {
+        Ok(r) => format!(
+            "fim id={id} exit={} timeout={} truncado={} ms={}",
+            r.exit_code.map_or("-".into(), |c| c.to_string()),
+            r.timed_out,
+            r.truncated,
+            r.duration_ms
+        ),
+        Err(e) => format!("fim id={id} erro={e:?}"),
+    };
+    if let Err(e) = append_log(&log, &end) {
+        eprintln!("registro do PC: {e}");
+    }
+    result
+}
+
+/// Registro de tudo que rodou no PC (F9.11). Fica só no host, fora de toda pasta da VM.
+fn pc_exec_log() -> Result<PathBuf, String> {
+    Ok(home()?.join(".local/state/assistente/pc-exec.log"))
+}
+
+/// Uma linha com a hora (UTC); cria a pasta e o arquivo (0600) na primeira vez.
+fn append_log(path: &Path, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    writeln!(file, "{} {line}", utc_timestamp(now))
+}
+
+/// `AAAA-MM-DDTHH:MM:SSZ` a partir dos segundos desde 1970 (algoritmo civil de H. Hinnant).
+fn utc_timestamp(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rest = secs % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    )
+}
+
+/// Comando do app: a lista do PC de um projeto, para a engrenagem (F9.11).
+#[tauri::command]
+fn pc_allowed_commands(profile: String, project: String) -> Result<Vec<String>, String> {
+    Ok(hub_core::load_pc_allow(&home()?)?.get(&profile, &project))
+}
+
+/// Comando do app: grava a lista do PC de um projeto (no host, nunca na VM).
+#[tauri::command]
+fn set_pc_allowed_commands(
+    profile: String,
+    project: String,
+    commands: Vec<String>,
+) -> Result<(), String> {
+    hub_core::save_pc_commands(&home()?, &profile, &project, commands)
 }
 
 /// Roda `bash -lc <comando>` no PC: na pasta do projeto, com timeout e saída truncada.
@@ -803,6 +955,9 @@ fn main() {
             open_in_cursor,
             open_url,
             host_exec,
+            host_auto_exec,
+            pc_allowed_commands,
+            set_pc_allowed_commands,
             open_memory_panel,
             update_memory_panel_bounds,
             close_memory_panel,
@@ -843,6 +998,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn hora_do_registro_em_utc() {
+        assert_eq!(utc_timestamp(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_timestamp(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(utc_timestamp(1_792_679_155), "2026-10-22T14:25:55Z");
+    }
+
+    #[test]
+    fn registro_do_pc_acumula_linhas_so_para_voce() {
+        use std::os::unix::fs::PermissionsExt;
+        let log = temp_dir("registro").join("estado/pc-exec.log");
+        append_log(&log, "início id=a cmd=\"git push\"").unwrap();
+        append_log(&log, "fim id=a exit=0").unwrap();
+        let text = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].ends_with("início id=a cmd=\"git push\""));
+        assert!(lines[1].ends_with("fim id=a exit=0"));
+        let mode = std::fs::metadata(&log).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     /// O id vem da UI: só o id do hubd (hex) vale, para não virar outra rota.

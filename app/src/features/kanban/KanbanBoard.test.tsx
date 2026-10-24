@@ -28,6 +28,7 @@ const claude: SessionInfo = {
   agent: "claude",
   created_at: 0,
   attached: 1,
+  dead: false,
 };
 
 function connect(board: Board) {
@@ -65,7 +66,7 @@ describe("KanbanBoard", () => {
     vi.restoreAllMocks();
   });
 
-  it("mostra as quatro colunas; só o card manual do backlog tem Mandar", async () => {
+  it("mostra as cinco colunas; só o card manual do backlog tem Mandar", async () => {
     connect({
       next: 3,
       cards: [
@@ -73,6 +74,7 @@ describe("KanbanBoard", () => {
         card("T2", { kind: "agente" }),
         card("T3", { column: "fazendo", holder: claude.id }),
         card("T4", { column: "feito", commit: "abc1234def" }),
+        card("T5", { column: "validando" }),
       ],
     });
     const backlog = await column("Backlog");
@@ -83,6 +85,12 @@ describe("KanbanBoard", () => {
     expect(within(fazendo).getByRole("button", { name: /Reiniciar/ })).toBeInTheDocument();
     const feito = await column("Feito");
     expect(within(feito).getByText("abc1234")).toBeInTheDocument();
+    // O check do QA rodando no PC (F11.17): sem QA nem arrasto.
+    const validando = await column("Validando");
+    const checking = within(validando).getByRole("article", { name: /^T5/ });
+    expect(within(checking).getByRole("img", { name: "Check rodando no PC" })).toBeInTheDocument();
+    expect(within(checking).queryByRole("button", { name: /QA/ })).not.toBeInTheDocument();
+    expect(checking).toHaveAttribute("draggable", "false");
     expect(await column("Validado")).toBeInTheDocument();
   });
 
@@ -192,6 +200,7 @@ describe("KanbanBoard", () => {
         description: "",
         priority: "normal",
         kind: "agente",
+        depends_on: [],
       }),
     );
   });
@@ -414,5 +423,25 @@ describe("KanbanBoard", () => {
     });
     expect(await screen.findByRole("alert", {}, { timeout: 4000 })).toBeInTheDocument();
     expect(useAppStore.getState().toast).toMatch(/Cota do provedor esgotada/);
+  });
+
+  it("mostra as dependências e só manda depois que elas entram na main", async () => {
+    connect({
+      next: 5,
+      cards: [
+        card("T1", { column: "validado", merged: { branch: "main", commit: "abc" } }),
+        card("T2"),
+        card("T3", { depends_on: ["T1", "T2"] }),
+        card("T4", { depends_on: ["T1"] }),
+      ],
+    });
+    const backlog = await column("Backlog");
+    expect(within(backlog).getByText("T1, T2")).toBeInTheDocument();
+    const t3 = within(backlog).getByRole("article", { name: /^T3 / });
+    const mandar = within(t3).getByRole("button", { name: /Mandar/ });
+    expect(mandar).toBeDisabled();
+    expect(mandar).toHaveAttribute("title", "Espera T2 entrar na main (QA)");
+    const t4 = within(backlog).getByRole("article", { name: /^T4 / });
+    expect(within(t4).getByRole("button", { name: /Mandar/ })).toBeEnabled();
   });
 });

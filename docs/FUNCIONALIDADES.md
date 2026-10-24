@@ -175,13 +175,9 @@ nada roda no PC sem aprovação explícita, e a spec 05 ganha a seção "No PC" 
   Pronto quando: um pedido `--pc` aparece em `/api/exec` com `target: "host"` e o hubd nunca o roda na VM. Como testar: `exec::tests` + `client_script_round_trip` com `--pc`.
 - [x] **F9.10 App executa no PC.** Comando Tauri `host_exec`: só para pedidos `host` aprovados no `ExecApprovals`, `bash -lc` na pasta do projeto (precisa estar dentro de uma raiz de perfil, como no `open_in_cursor`), com timeout e saída truncada; o resultado volta ao hubd (`POST /api/exec/{id}/result`, com o token do hub) e de lá ao agente. App fechado = o pedido espera ou expira. Feito: o app pergunta ao hubd (`GET /api/exec/{id}`) o que foi aprovado e roda exatamente aquilo (comando e pasta saem do hubd, não da UI); hubd recebe o resultado só de pedido `host` aprovado (409 nos outros) e fecha como `failed` se o app não conseguiu rodar; pedido `host` aprovado sem resultado expira depois do timeout. Testes: `api::tests::host_result_from_the_app_reaches_the_agent`, `exec::tests::host_result_is_only_accepted_for_an_approved_host_request`, `features/exec/hostExec.test.ts`, o caso no `ExecApprovals.test.tsx` e os do app (`app/src-tauri`: id do pedido, pasta do comando, timeout e saída truncada).
   Pronto quando: aprovar um `git push` pedido com `--pc` empurra do PC e o agente recebe saída e código. Como testar: vitest com hub fake + teste de rota do resultado.
-- [ ] **F9.11 Cuidados do modo PC.** Card em vermelho com "vai rodar no seu PC", comando e pasta por inteiro; sem "aprovar e sempre permitir" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).
+- [x] **F9.11 Cuidados do modo PC.** Card em vermelho com "vai rodar no seu PC", comando e pasta por inteiro; sem "aprovar e sempre permitir" (no máximo uma lista curta de comandos exatos por projeto, ex.: `git push`, na engrenagem F9.3, guardada no host e não na VM); registro local de tudo que rodou no PC (`~/.local/state/assistente/pc-exec.log`).
   Pronto quando: nenhum caminho aprova pedido `host` sem clique (fora da lista exata) e todo pedido executado fica no registro. Como testar: vitest do card e da lista; revisão da spec 05.
-  Revisão (2026-10-22): a T3 do quadro fechou sem código (o único commit era o merge da F9.9). Já
-  existe, da F9.9: nada de "sempre permitir" para `host`, na UI e no hubd (`approve` com `always`
-  responde 400). Falta o resto acima e mais: o hubd marca o pedido `host` como pego pelo app (estado
-  ou campo novo em `exec.rs`, devolvido só uma vez ao `host_exec`), para um segundo `host_exec` do
-  mesmo pedido aprovado não rodar o comando de novo (hoje só o `busy` do `ExecApprovals` segura).
+  Feito: `POST /api/exec/{id}/claim` entrega o pedido `host` aprovado uma vez só (`claim_host` em `exec.rs`, `picked_up`; o segundo dá 409) e a saída só entra em pedido pego. Lista do PC em `hub_core::pc_allow` (`~/.config/assistente/pc-permitidos.toml`, ≤ 10, texto exato), editada na engrenagem pelos comandos `pc_allowed_commands`/`set_pc_allowed_commands`; `host_auto_exec` confere a lista no host antes de aprovar. `host_exec`/`host_auto_exec` escrevem `início`/`fim` no `pc-exec.log` (sem a linha de início, nada roda). Testes: `exec::tests` (claim), `host_result_from_the_app_reaches_the_agent` com claim, `pc_allow::tests`, registro e hora no app, `ExecApprovals.test.tsx`, `hostExec.test.ts`, `ProjectSettingsDialog.test.tsx`. Spec 05 revista.
 - [ ] **F9.12 Validação no PC real** *(humano)*. Do jail, `fora-do-jail --pc 'git push'` empurra com a chave do PC após aprovar; negar devolve 126; com o app fechado o pedido expira.
   Pronto quando: os itens acima conferem. Como testar: sessão real.
 - [ ] **F9.13 Verificação do projeto vai para o PC.** Enquanto a F1.6 não sai, o `./dev` não roda
@@ -324,7 +320,7 @@ hubd); F11.2 antes de F11.4.
   apaga os worktrees, sem conversa à mão. Como testar: `api::kanban::tests` com repo git real
   (`init_repo`): sessão do revisor aberta com o prompt, `reabrir` com nota, `merged`, `main` movida =
   nada muda; `KanbanBoard.test.tsx` (botão, selo, resumo).
-- [ ] **F11.13 Cards com dependência e progresso de verdade.** O card ganha `depends_on` (ids). O
+- [x] **F11.13 Cards com dependência e progresso de verdade.** O card ganha `depends_on` (ids). O
   "Popular pelo backlog" (F11.9) preenche pela "Ordem:" das seções e pelos "Depende de" dos itens, e
   a engrenagem do card deixa editar. O orquestrador e o "Mandar" não abrem trabalhador para card
   cuja dependência ainda não está na `main` (F11.12): o worktree nasce do `HEAD`, então já sai com o
@@ -334,7 +330,11 @@ hubd); F11.2 antes de F11.4.
   Pronto quando: um quadro com A → B abre só A, e B abre depois que A entra na `main`, num worktree
   com o código de A; um trabalhador que só faz merge volta ao backlog. Como testar:
   `kanban::tests` (a fila respeita `depends_on`), `api::kanban::tests::orchestrator_…` e
-  `vm/teste-trabalhador.sh` (merge sem diff não é progresso).
+  `vm/teste-trabalhador.sh` (merge sem diff não é progresso). Feito: "na `main`" = validado pelo
+  QA (F11.15) com o commit juntado no `HEAD` do projeto (`git merge-base --is-ancestor`); "feito"
+  não basta, o commit só está na branch da tarefa. Testes: `kanban::tests::queue_waits_…`,
+  `api::kanban::tests::orchestrator_opens_a_dependent_card_…` e o caso 9 do
+  `teste-trabalhador.sh`. `fora-do-jail kanban criar --depende-de T1,T3`.
 - [x] **F11.14 Cota esgotada pausa tudo e deixa escolher outro harness.** Antes, a cota grátis do
   opencode acabar parecia "modelo recusado" (F11.10): o `trabalhador` passava por todos os grátis
   (que dividem a mesma cota), devolvia o card com `failures` + 1, e o orquestrador puxava o próximo a
@@ -390,7 +390,7 @@ hubd); F11.2 antes de F11.4.
   `api::kanban::tests::qa_all_holds_every_free_done_card_in_one_session`,
   `worker::tests::qa_all_prompt…` e `KanbanBoard.test.tsx` (botão com a contagem, sem botão quando
   nada está livre). Na VM real, junto com a F11.8.
-- [ ] **F11.17 `validar` só com o check verde.** Hoje o `kanban validar` junta a branch confiando
+- [x] **F11.17 `validar` só com o check verde.** Hoje o `kanban validar` junta a branch confiando
   na palavra do QA de que o check passou. Agora quem roda o check é o hubd, no commit que a
   `target` vai receber: na worktree descartável do merge (`.assistente/qa-juntar-*`, já dentro da
   pasta do projeto) ou, no fast-forward, numa worktree do commit da tarefa. Enquanto a F1.6 não
@@ -437,26 +437,22 @@ comandos do app.
   `PreviewPanel` escuta o evento e abre a caixa do F12.4 (`features/pick/detail.ts` converte o pick),
   esconde a webview enquanto ela está aberta, e o botão de apontar da barra liga o script por
   `setEnabled`. Testes: `pick::tests`, `pickScript.test.ts`, `detail.test.ts` e `PreviewPanel.test.tsx`.
-- [ ] **F12.3 Contexto de código.** No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.
+- [x] **F12.3 Contexto de código.** No pick, subir pelo fiber do React (`__reactFiber$…`) para colher a pilha de componentes e `_debugSource` (`arquivo:linha`, presente no dev com Vite/React), mapeando `/src/...` para o caminho do projeto. Sem fonte (build de produção, inclusive a UI servida pelo hubd na F8.3), o pick leva componente, seletor e texto, e o prompt manda o agente procurar antes de editar (grep pelo texto/classe/componente) em vez de chutar. Testes: extração com DOM fake (jsdom) cobrindo fiber com e sem `_debugSource` e página sem React; caso no `PickDialog`.
   Pronto quando: apontar um botão em dev mostra `src/features/x/Botao.tsx:42` no pedido; no build de produção mostra o componente e o agente acha o arquivo pelo texto.
   Como testar: vitest com DOM fake + um build de produção.
-  Revisão (2026-10-22): o código existe e tem testes, mas não está ligado. `codeContext.js` (sobe
-  pelo fiber; `_debugSource` até o React 18, `_debugStack` no 19), `context.ts` (`toProjectPath`,
-  aviso de busca), `prompt.ts` e `PickCodeContext.tsx`, todos em `app/src/features/pick/`. Falta:
-  injetar `codeContext.js` antes do `pick.js` (no `SCRIPT` do `pick.rs`); o `pick.js` mandar
-  `code: window.__assistenteCodeContext.extract(element)`; `PickedElement` (TS e `pick.rs`) ganhar
-  `code`; o `toPickDetail` preencher `source` (`toProjectPath`, com a raiz do projeto),
-  `component` e `components`; a caixa do F12.4 mostrar o `PickCodeContext`. E arrumar o que sobrou
-  da T6: um tipo de pick só (hoje `PickedElement`, `PickElement` de `pick/types.ts` e `PickDetail`)
-  e um prompt só (o do hubd, `hub_core::pick`; `prompt.ts` sai, e o aviso de busca do hubd usa o
-  texto/classe/componente como o `searchInstruction`).
+  Feito: `codeContext.js` (sobe pelo fiber; `_debugSource` até o React 18, `_debugStack` no 19)
+  em `app/src/features/pick/` é injetado antes do `pick.js` (`pick::SCRIPT`, `concat!` dos dois);
+  o pick leva `code`, o `toPickDetail` vira `source` (`arquivo:linha` relativo à raiz do
+  projeto), `component` e `components`, e a caixa da F12.4 mostra o `PickCodeContext`. Um tipo de
+  pick (`PickedElement` → `PickDetail`) e um prompt só (`hub_core::pick`): sem fonte, o aviso do
+  hubd manda procurar pelo texto, pela classe e pelo componente (`PickDetail::search_hint`).
 - [x] **F12.4 Enviar ao agente.** `POST /api/projects/{perfil}/{projeto}/picks`: escreve `.assistente/picks/<data-hora>.md` com o detalhe do pick (fora do git via `.git/info/exclude`, como o `.ai-jail` da F0.5), monta o prompt curto (URL, onde, seletor, texto, pedido) e entrega no alvo escolhido no modal: **sessão** (só de agente, nunca a aba Terminal; confere que é do projeto e está viva, cola no prompt com `set-buffer` + `paste-buffer` **sem Enter** — Enter é seu, para não aprovar pergunta pendente nem executar texto no shell) ou **quadro** (card no backlog da F11.1, autossuficiente: o clone do notebook não tem o arquivo local). O modal mostra o prompt que será enviado, deixa editar o texto e escolher a sessão (padrão: a aba ativa do projeto); ao colar, a UI leva para a aba e avisa "confirme no terminal". Testes: rota com tmux real (colar e ler de volta, sem o pedido rodar sozinho), card fake, guards (texto vazio, sessão de outro projeto ou tipo shell, sessão/projeto inexistente), `PickDialog.test.tsx` (envio, erro, troca de alvo).
   Pronto quando: apontar um botão, escrever "deixa verde" e enviar faz o texto aparecer no prompt da sessão; depois do seu Enter, o agente edita o arquivo certo.
   Como testar: rota com tmux real + manual.
   Feito: `crates/hubd/src/api/picks.rs` + `hub_core::pick` (prompt, card e arquivo) e a caixa em
   `features/pick/PickDialog.tsx`, aberta pelo pick da F12.2 (ligada no merge da revisão de
   2026-10-22: a T7 tinha a caixa, mas nada a abria). Sessão com painel morto (F14.3) responde 409.
-- [ ] **F12.6 O preview não cobre o app.** A webview do preview é um widget nativo por cima de toda a
+- [x] **F12.6 O preview não cobre o app.** A webview do preview é um widget nativo por cima de toda a
   UI: hoje ela só some com a engrenagem e com a caixa do apontar. Ficam por baixo dela o painel de
   pedidos (`ExecApprovals`, no canto inferior direito, inclusive os pedidos para o PC da F9.10), o
   `Toast`, o "Bom dia" (F6.6) e o painel do Assistente (F8). Esconder a webview enquanto qualquer
@@ -525,7 +521,7 @@ comandos do app.
   `exec_token_of_a_dead_session_is_refused`, `pane_state_knows_the_status_of_a_dead_pane`,
   `pane_state_tells_alive_from_dead`, `dead_session_shows_the_output_and_the_exit_status`,
   `session_that_dies_with_the_tab_open_sends_the_status` e `TerminalView.test.tsx`.
-- [ ] **F14.4 Sessão morta não fica para sempre.** O `remain-on-exit` da F14.3 vale para toda sessão do
+- [x] **F14.4 Sessão morta não fica para sempre.** O `remain-on-exit` da F14.3 vale para toda sessão do
   `Tmux::create`, não só para os agentes: o trabalhador (F11.6) que termina e a aba Terminal (F9.1)
   depois do `exit` também ficam no tmux, mortos, até alguém encerrar. Com o orquestrador ligado
   (F11.11), cada tarefa concluída deixa uma aba morta. Ligar o `remain-on-exit` só no Claude e no
@@ -536,6 +532,17 @@ comandos do app.
   Pronto quando: o orquestrador com 2 tarefas concluídas não deixa sessão morta, e um Claude que sai
   com erro continua mostrando a saída e o status. Como testar: rota com tmux real (trabalhador falso
   que sai 0 some; Claude que sai 127 fica) + `SessionArea.test.tsx`.
+  Feito: o `LaunchPlan` ganhou `remain_on_exit`, ligado só no Claude e no OpenCode interativos
+  (e no explorar); o trabalhador e o Terminal nascem sem ele e a sessão some com o processo. O
+  trabalhador que desiste chama `kanban release`, e o hubd liga o `remain-on-exit` da janela dele
+  ali (`Tmux::keep_panel`), antes do `exit 1`: o erro fica na aba. `SessionInfo.dead` substitui o
+  `Listed`; a aba morta ganha um ponto vermelho. O `pane-died` ficou de fora: é um hook do tmux
+  (um comando, não um fluxo de eventos), valeria para o servidor inteiro do usuário e pediria
+  uma rota interna para o tmux chamar; a pergunta de 500 ms só roda com o terminal aberto.
+  Testes: `worker_that_finishes_leaves_no_dead_session_and_a_failing_claude_stays`,
+  `releasing_a_task_keeps_the_panel_of_the_session`, `worker_session_dies_with_its_process`,
+  `keep_panel_leaves_the_dead_pane_on_screen`,
+  `only_interactive_agents_keep_the_panel_after_the_process_dies` e `SessionArea.test.tsx`.
 - [ ] **F14.5 O orquestrador recolhe o trabalhador que falhou.** Depende da F14.4, que deixa a sessão
   do trabalhador que falha aberta e morta. Com o orquestrador ligado (F11.11), cada volta
   (`orchestrate` em `api/kanban.rs`) também procura as sessões mortas dos trabalhadores do projeto.

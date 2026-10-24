@@ -115,6 +115,12 @@ async fn bridge(socket: &mut WebSocket, tmux: &Tmux, id: &str) -> Result<(), Str
     // F14.3: o painel da sessão fica na tela quando o processo morre (`remain-on-exit`), então
     // o attach não termina: o terminal pergunta ao tmux se o processo ainda vive e avisa a
     // UI com o status de saída.
+    //
+    // F14.4: o evento `pane-died` do tmux foi avaliado no lugar desta pergunta e não serve:
+    // ele é um *hook* (um comando do tmux, não um fluxo de eventos), dispararia para todo
+    // painel do servidor do usuário e, para o hubd saber, precisaria de uma rota interna
+    // para o tmux chamar e de um mapa de sessão → terminais abertos. A pergunta de meio em
+    // meio segundo já responde, e só roda com o terminal aberto.
     let mut verificacao =
         tokio::time::interval_at(tokio::time::Instant::now() + PRIMEIRA, VERIFICA);
     // Com saída correndo, o tick atrasa: uma pergunta por vez, sem acumular.

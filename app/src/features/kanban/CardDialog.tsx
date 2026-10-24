@@ -39,6 +39,7 @@ export function CardDialog({
   const [description, setDescription] = useState(target?.description ?? "");
   const [priority, setPriority] = useState<KanbanPriority>(target?.priority ?? "normal");
   const [kind, setKind] = useState<KanbanKind>(target?.kind ?? "manual");
+  const [dependsOn, setDependsOn] = useState<string>(target?.depends_on?.join(", ") ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,7 +49,11 @@ export function CardDialog({
     setSaving(true);
     setError(null);
     try {
-      await onSave({ title, description, priority, kind });
+      const depends_on = dependsOn
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      await onSave({ title, description, priority, kind, depends_on });
     } catch (e) {
       setError(message(e));
       setSaving(false);
@@ -146,6 +151,19 @@ export function CardDialog({
             </label>
           ))}
         </fieldset>
+
+        <label className="flex flex-col gap-1 text-sm text-slate-300">
+          Depende de (IDs separados por vírgula, ex.: T1, T3)
+          <input
+            value={dependsOn}
+            onChange={(event) => setDependsOn(event.target.value)}
+            placeholder="T1, T3"
+            className="rounded-lg border border-line bg-black/30 px-3 py-2 font-mono text-sm text-white outline-none focus:border-accent/60"
+          />
+          <span className="text-xs text-slate-500">
+            O trabalhador só abre quando todas as dependências estiverem na main (F11.13).
+          </span>
+        </label>
 
         {error && <p className="font-mono text-xs text-rose-300">{error}</p>}
         <div className="flex justify-end gap-2">

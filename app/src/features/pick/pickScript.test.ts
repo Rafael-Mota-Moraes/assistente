@@ -18,6 +18,12 @@ type PickPayload = {
   viewport: { width: number; height: number };
   scroll: { x: number; y: number };
   url: string;
+  code: {
+    react: boolean;
+    component: string | null;
+    stack: string[];
+    source: { file: string; line: number | null; column: number | null } | null;
+  } | null;
 };
 
 type PickApi = {
@@ -31,17 +37,21 @@ type PickApi = {
 };
 
 /** O script mora na casca (Rust); o teste da UI o procura a partir da raiz do projeto. */
-function scriptPath(): string {
+function findFile(...parts: string[]): string {
   let dir = process.cwd();
   for (let nivel = 0; nivel < 5; nivel += 1) {
-    const candidate = join(dir, "src-tauri", "src", "pick.js");
+    const candidate = join(dir, ...parts);
     if (existsSync(candidate)) return candidate;
     dir = dirname(dir);
   }
-  throw new Error("pick.js não encontrado");
+  throw new Error(`${parts.join("/")} não encontrado`);
 }
 
-const SCRIPT = readFileSync(scriptPath(), "utf8");
+/** Como o Rust injeta (`pick::SCRIPT`): o extrator do contexto de código (F12.3) antes. */
+const SCRIPT = [
+  readFileSync(findFile("src", "features", "pick", "codeContext.js"), "utf8"),
+  readFileSync(findFile("src-tauri", "src", "pick.js"), "utf8"),
+].join("\n");
 
 function api(): PickApi {
   return (window as unknown as { __assistentePick: PickApi }).__assistentePick;
@@ -143,6 +153,34 @@ describe("script do modo apontar", () => {
 
     expect(api().last?.id).toBe("link");
     expect(api().last?.tag).toBe("a");
+  });
+
+  it("o pick leva o contexto de código do fiber do React (F12.3)", () => {
+    const { alvo } = install();
+    function Botao() {}
+    Object.defineProperty(alvo, "__reactFiber$teste", {
+      value: {
+        type: "button",
+        _debugSource: { fileName: "/src/features/x/Botao.tsx", lineNumber: 42 },
+        return: { type: Botao, return: null },
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    api().enable();
+    alvo.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+
+    expect(api().last?.code?.component).toBe("Botao");
+    expect(api().last?.code?.source?.file).toBe("/src/features/x/Botao.tsx");
+    expect(api().last?.code?.source?.line).toBe(42);
+  });
+
+  it("página sem React manda o pick sem componente nem arquivo", () => {
+    const { alvo } = install();
+    api().enable();
+    alvo.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+
+    expect(api().last?.code).toMatchObject({ react: false, component: null, source: null });
   });
 
   it("o botão da barra do preview liga e desliga pelo setEnabled (F12.1)", () => {
